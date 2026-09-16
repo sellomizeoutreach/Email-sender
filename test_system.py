@@ -7,6 +7,7 @@ negative keyword scanner, and scheduler polling workflows.
 import os
 import json
 import unittest
+from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
 
 from database import (
@@ -33,7 +34,19 @@ from database import (
     get_approved_due_emails,
     mark_email_sent,
     mark_email_error,
-    delete_email
+    delete_email,
+    add_smtp_account,
+    get_smtp_accounts,
+    get_smtp_account_by_id,
+    update_smtp_account,
+    delete_smtp_account,
+    get_next_available_smtp_account,
+    increment_smtp_sent
+)
+from smtp_dispatcher import (
+    test_smtp_connection,
+    send_smtp_email,
+    html_to_plain_text
 )
 from contacts_handler import (
     generate_csv_template,
@@ -48,7 +61,12 @@ from llm_engine import (
     parse_spintax,
     scan_negative_keywords
 )
-from scheduler import run_scheduler_cycle, dispatch_email
+from scheduler import (
+    run_scheduler_cycle,
+    dispatch_email_hostinger,
+    dispatch_email_outlook,
+    dispatch_email
+)
 
 TEST_DB = "test_email_system.db"
 
@@ -257,6 +275,120 @@ class TestEmailAutomationSystem(unittest.TestCase):
         exported_csv = export_contacts_to_csv(contacts)
         self.assertIn("jessica@glowlab.com", exported_csv)
         self.assertIn("alice@beautyco.com", exported_csv)
+
+    def test_11_smtp_account_crud(self):
+        """Test adding, retrieving, updating, and deleting SMTP accounts."""
+        acc_id = add_smtp_account(
+            sender_name="Alex Morgan",
+            email="alex@sellomize.com",
+            password="secretpassword123",
+            smtp_host="smtp.hostinger.com",
+            smtp_port=465,
+            daily_limit=75,
+            db_path=TEST_DB
+        )
+        self.assertIsNotNone(acc_id)
+
+        acc = get_smtp_account_by_id(acc_id, db_path=TEST_DB)
+        self.assertEqual(acc["email"], "alex@sellomize.com")
+        self.assertEqual(acc["daily_limit"], 75)
+        self.assertEqual(acc["is_active"], 1)
+
+        # Update daily limit and pause
+        update_smtp_account(acc_id, daily_limit=100, is_active=False, db_path=TEST_DB)
+        updated = get_smtp_account_by_id(acc_id, db_path=TEST_DB)
+        self.assertEqual(updated["daily_limit"], 100)
+        self.assertEqual(updated["is_active"], 0)
+
+        # Reactivate
+        update_smtp_account(acc_id, is_active=True, db_path=TEST_DB)
+        reactivated = get_smtp_account_by_id(acc_id, db_path=TEST_DB)
+        self.assertEqual(reactivated["is_active"], 1)
+
+        # Clean up
+        delete_smtp_account(acc_id, db_path=TEST_DB)
+        self.assertIsNone(get_smtp_account_by_id(acc_id, db_path=TEST_DB))
+
+    def test_12_smtp_rotation_and_limits(self):
+        """Test multi-account round-robin load balancing and daily limit rollover."""
+        acc1 = add_smtp_account(
+            sender_name="Sender 1",
+            email="sender1@domain.com",
+            password="pass1",
+            daily_limit=2,
+            db_path=TEST_DB
+        )
+        acc2 = add_smtp_account(
+            sender_name="Sender 2",
+            email="sender2@domain.com",
+            password="pass2",
+            daily_limit=2,
+            db_path=TEST_DB
+        )
+
+        # Next account should pick sender1 or sender2 (both have sent_today = 0)
+        next_acc = get_next_available_smtp_account(db_path=TEST_DB)
+        self.assertIsNotNone(next_acc)
+        self.assertEqual(next_acc["sent_today"], 0)
+
+        # Increment sent for acc1
+        increment_smtp_sent(acc1, db_path=TEST_DB)
+
+        # Next account must now be acc2 because acc2 has sent_today=0 while acc1 has 1
+        next_acc2 = get_next_available_smtp_account(db_path=TEST_DB)
+        self.assertEqual(next_acc2["id"], acc2)
+
+        # Exhaust both accounts to limit (2 each)
+        increment_smtp_sent(acc1, db_path=TEST_DB)  # acc1 now at 2/2
+        increment_smtp_sent(acc2, db_path=TEST_DB)  # acc2 now at 1/2
+        increment_smtp_sent(acc2, db_path=TEST_DB)  # acc2 now at 2/2
+
+        # Both full -> next account should be None
+        exhausted = get_next_available_smtp_account(db_path=TEST_DB)
+        self.assertIsNone(exhausted)
+
+        # Clean up
+        delete_smtp_account(acc1, db_path=TEST_DB)
+        delete_smtp_account(acc2, db_path=TEST_DB)
+
+    def test_13_smtp_dispatch_and_mime(self):
+        """Test plain text conversion and mocked SMTP dispatch."""
+        html_input = "<p>Hello <b>World</b>!</p><br><p>Check <a href='https://example.com'>this link</a>.</p>"
+        plain = html_to_plain_text(html_input)
+        self.assertIn("Hello World!", plain)
+        self.assertNotIn("<p>", plain)
+
+        mock_acc = {
+            "id": 99,
+            "sender_name": "Test Agency",
+            "email": "outreach@testagency.com",
+            "password": "fake_password",
+            "smtp_host": "smtp.hostinger.com",
+            "smtp_port": 465
+        }
+
+        # Mock smtplib.SMTP_SSL
+        with patch("smtplib.SMTP_SSL") as mock_smtp_ssl:
+            mock_server_instance = MagicMock()
+            mock_smtp_ssl.return_value.__enter__.return_value = mock_server_instance
+
+            success, msg = send_smtp_email(
+                smtp_account=mock_acc,
+                recipient="client@prospectivebrand.com",
+                subject="Partnership Opportunity",
+                html_content="<p>Hi Client, let's connect.</p>",
+                bcc_email="archive@testagency.com"
+            )
+
+            self.assertTrue(success)
+            self.assertIn("Sent via Hostinger SMTP", msg)
+            mock_server_instance.login.assert_called_once_with("outreach@testagency.com", "fake_password")
+            mock_server_instance.send_message.assert_called_once()
+
+            # Verify connection test with mock
+            test_ok, test_msg = test_smtp_connection("smtp.hostinger.com", 465, "outreach@testagency.com", "fake_password")
+            self.assertTrue(test_ok)
+            self.assertIn("Authentication successful", test_msg)
 
 if __name__ == "__main__":
     unittest.main()

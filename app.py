@@ -49,8 +49,13 @@ from database import (
     approve_email,
     flag_email,
     get_approved_due_emails,
+    add_smtp_account,
+    get_smtp_accounts,
+    delete_smtp_account,
+    update_smtp_account,
     delete_email
 )
+from smtp_dispatcher import test_smtp_connection
 from contacts_handler import (
     generate_csv_template,
     export_contacts_to_csv,
@@ -399,7 +404,7 @@ col_m1.metric("Saved Leads", len(all_contacts))
 col_m2.metric("Templates", len(all_templates))
 col_m3.metric("Pending Review", pending_count)
 col_m4.metric("🚨 Flagged Drafts", flagged_count, delta="Action Required" if flagged_count > 0 else None, delta_color="inverse")
-col_m5.metric("Sent via Outlook", sent_count)
+col_m5.metric("Total Emails Sent", sent_count)
 
 st.divider()
 
@@ -768,7 +773,7 @@ with tab_campaign:
 # ==============================================================================
 with tab_review:
     st.subheader("📥 Review Queue & Flag Handling")
-    st.caption("Review drafts, resolve flagged negative keywords via Auto-Rewrite, edit copy in Visual/HTML modes, and schedule for Outlook dispatch.")
+    st.caption("Review drafts, resolve flagged negative keywords via Auto-Rewrite, edit copy in Visual/HTML modes, and schedule for automated dispatch.")
 
     review_filter = st.radio(
         "Queue Filter",
@@ -952,7 +957,7 @@ with tab_review:
                         key=f"approve_{draft_id}",
                         type="primary",
                         disabled=is_flagged,
-                        help="Flagged emails must have negative keywords removed before approval." if is_flagged else "Approve and schedule for Outlook dispatch."
+                        help="Flagged emails must have negative keywords removed before approval." if is_flagged else "Approve and schedule for automated dispatch."
                     )
                     if approve_btn:
                         if not updated_recipient.strip():
@@ -1023,14 +1028,134 @@ with tab_review:
 # ==============================================================================
 with tab_settings:
     st.subheader("⚙️ System Configuration & Outbox")
-    st.caption("Manage AI provider credentials, negative keywords, spam blocklists, Outlook sender bindings, and monitor dispatch history.")
+    st.caption("Manage Hostinger SMTP mailboxes, AI provider credentials, negative keywords, Outlook sender bindings, and monitor dispatch history.")
 
     current_configs = get_all_configs()
 
+    # ==============================================================================
+    # HOSTINGER DIRECT SMTP MAILBOXES (MULTI-ACCOUNT ROTATION)
+    # ==============================================================================
+    st.markdown("### ⚡ Hostinger Mailbox Accounts (Multi-Account Rotation)")
+    st.caption("Connect and scale multiple Hostinger agency email accounts. The outbound engine automatically load-balances and rotates mailboxes to prevent daily quota exhaustion and bypass spam filters.")
+
+    smtp_accounts = get_smtp_accounts(active_only=False)
+    active_accounts = [acc for acc in smtp_accounts if acc.get("is_active")]
+    total_capacity = sum(acc.get("daily_limit", 80) for acc in active_accounts)
+    total_sent_today = sum(acc.get("sent_today", 0) for acc in active_accounts)
+
+    col_h1, col_h2, col_h3, col_h4 = st.columns(4)
+    col_h1.metric("Connected Mailboxes", len(smtp_accounts))
+    col_h2.metric("Active in Rotation", len(active_accounts))
+    col_h3.metric("Daily Sending Quota", f"{total_capacity} emails/day")
+    col_h4.metric("Sent Today", f"{total_sent_today} / {total_capacity}")
+
+    with st.expander("➕ Connect New Hostinger Mailbox", expanded=len(smtp_accounts) == 0):
+        with st.form("add_smtp_account_form", clear_on_submit=True):
+            st.markdown("##### Mailbox Credentials & Limits")
+            hc1, hc2 = st.columns(2)
+            with hc1:
+                new_acc_name = st.text_input("Sender Display Name *", placeholder="e.g. Alex Morgan | Sellomize")
+                new_acc_email = st.text_input("Hostinger Email Address *", placeholder="alex@sellomize.com")
+                new_acc_pass = st.text_input("Hostinger Webmail / App Password *", type="password", help="The email password configured in Hostinger hPanel.")
+            with hc2:
+                new_acc_host = st.text_input("SMTP Host", value="smtp.hostinger.com", help="Default: smtp.hostinger.com")
+                new_acc_port = st.number_input("SMTP Port (SSL: 465 / STARTTLS: 587)", min_value=1, max_value=65535, value=465, step=1)
+                new_acc_limit = st.number_input("Daily Send Limit (per mailbox)", min_value=1, max_value=500, value=80, help="Hostinger allows ~100/hr or up to 500/day. Recommended cold outreach limit: 50-80 per mailbox/day.")
+
+            st.caption("🔒 Credentials are stored locally in your SQLite database.")
+            add_acc_submit = st.form_submit_button("Verify & Connect Hostinger Mailbox", type="primary")
+
+            if add_acc_submit:
+                if not new_acc_name.strip() or not new_acc_email.strip() or not new_acc_pass.strip():
+                    st.error("Display Name, Email Address, and Password are all required.")
+                else:
+                    with st.spinner(f"Verifying SMTP connection to {new_acc_host}:{new_acc_port}..."):
+                        success, test_msg = test_smtp_connection(
+                            host=new_acc_host.strip(),
+                            port=int(new_acc_port),
+                            username=new_acc_email.strip(),
+                            password=new_acc_pass.strip()
+                        )
+                    if success:
+                        try:
+                            acc_id = add_smtp_account(
+                                sender_name=new_acc_name.strip(),
+                                email=new_acc_email.strip(),
+                                password=new_acc_pass.strip(),
+                                smtp_host=new_acc_host.strip(),
+                                smtp_port=int(new_acc_port),
+                                daily_limit=int(new_acc_limit)
+                            )
+                            st.success(f"✅ Connection verified! Mailbox '{new_acc_email}' successfully connected (ID #{acc_id})!")
+                            st.rerun()
+                        except Exception as add_err:
+                            st.error(f"Failed to save mailbox: {add_err}")
+                    else:
+                        st.error(f"❌ SMTP Connection Failed: {test_msg}. Please check your Hostinger credentials or port settings.")
+
+    if smtp_accounts:
+        st.markdown("##### Configured Mailbox Fleet")
+        for acc in smtp_accounts:
+            acc_id = acc["id"]
+            status_color = "#10B981" if acc["is_active"] else "#6B7280"
+            status_text = "ACTIVE" if acc["is_active"] else "INACTIVE"
+            sent_today = acc.get("sent_today", 0)
+            d_limit = acc.get("daily_limit", 80)
+            pct = min(1.0, float(sent_today) / max(1.0, float(d_limit)))
+
+            with st.container():
+                st.markdown(f"""
+                <div style="background-color: #0F3832; border: 1px solid #164E43; border-radius: 8px; padding: 12px 18px; margin-bottom: 8px; margin-top: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="background-color: {status_color}; color: #FFFFFF; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; margin-right: 8px;">{status_text}</span>
+                            <strong style="color: #FFFFFF; font-size: 1.05rem;">{acc['email']}</strong>
+                            <span style="color: #A7D7C5; font-size: 0.9rem; margin-left: 8px;">({acc['sender_name']})</span>
+                        </div>
+                        <div style="color: #A7D7C5; font-size: 0.85rem;">
+                            Host: <code>{acc['smtp_host']}:{acc['smtp_port']}</code>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                col_bar, col_act1, col_act2, col_act3 = st.columns([3.5, 1.2, 1.2, 1.2])
+                with col_bar:
+                    st.progress(pct, text=f"Today: {sent_today} / {d_limit} sent ({d_limit - sent_today} remaining)")
+                with col_act1:
+                    if st.button("🧪 Test", key=f"test_acc_{acc_id}", help="Verify connection with current credentials"):
+                        with st.spinner(f"Testing {acc['email']}..."):
+                            ok, msg = test_smtp_connection(acc["smtp_host"], acc["smtp_port"], acc["email"], acc["password"])
+                        if ok:
+                            st.success(f"Verified: {msg}")
+                        else:
+                            st.error(f"Failed: {msg}")
+                with col_act2:
+                    if acc["is_active"]:
+                        if st.button("⏸️ Pause", key=f"pause_acc_{acc_id}", help="Temporarily exclude from rotation"):
+                            update_smtp_account(acc_id, is_active=False)
+                            st.rerun()
+                    else:
+                        if st.button("▶️ Activate", key=f"act_acc_{acc_id}", help="Include in rotation"):
+                            update_smtp_account(acc_id, is_active=True)
+                            st.rerun()
+                with col_act3:
+                    if st.button("🗑️ Delete", key=f"del_acc_{acc_id}", help="Remove mailbox from system"):
+                        delete_smtp_account(acc_id)
+                        st.success(f"Deleted mailbox #{acc_id}")
+                        st.rerun()
+
+    st.markdown("---")
+
+    # ==============================================================================
+    # SYSTEM CONFIGURATION FORM (AI, DISPATCH ENGINE, DELAYS, SIGNATURE)
+    # ==============================================================================
+    st.markdown("### ⚙️ System Settings & AI Providers")
     with st.form("config_form"):
         col_api1, col_api2 = st.columns(2)
 
         with col_api1:
+            st.markdown("#### 🤖 AI Engine & Provider Keys")
             secrets = getattr(st, "secrets", {})
             gemini_key = st.text_input(
                 "Google Gemini API Key",
@@ -1068,12 +1193,41 @@ with tab_settings:
             )
 
         with col_api2:
-            st.markdown("### 📧 Outlook Dispatch Settings")
+            st.markdown("#### 🚀 Outbound Dispatch Engine")
+            current_engine = current_configs.get("dispatch_method", "hostinger_smtp")
+            dispatch_engine_choice = st.radio(
+                "Primary Outbound Dispatch Engine",
+                ["⚡ Hostinger Direct SMTP (Multi-Account Rotation)", "📧 Desktop Microsoft Outlook"],
+                index=0 if current_engine == "hostinger_smtp" else 1,
+                help="Hostinger Direct SMTP sends without needing Outlook running. Outlook uses local Windows Outlook app."
+            )
+
+            st.markdown("#### ⏱️ Anti-Spam Human Delay Throttling")
+            st.caption("Randomized delay between consecutive emails to mimic human sending and prevent domain flagging.")
+            col_del1, col_del2 = st.columns(2)
+            with col_del1:
+                min_delay_val = st.number_input(
+                    "Min Delay (Seconds)",
+                    min_value=5,
+                    max_value=300,
+                    value=int(current_configs.get("min_delay_seconds", "20")),
+                    help="Minimum seconds to wait between dispatches."
+                )
+            with col_del2:
+                max_delay_val = st.number_input(
+                    "Max Delay (Seconds)",
+                    min_value=10,
+                    max_value=600,
+                    value=int(current_configs.get("max_delay_seconds", "45")),
+                    help="Maximum seconds to wait between dispatches."
+                )
+
+            st.markdown("#### 📧 Outlook Fallback Settings")
             sender_email = st.text_input(
-                "Designated Sender Email Address",
+                "Designated Outlook Sender Email",
                 value=current_configs.get("sender_email", ""),
                 placeholder="sales@yourdomain.com",
-                help="Must match an account.SmtpAddress in local desktop Microsoft Outlook."
+                help="Only used if dispatch engine is set to Desktop Microsoft Outlook."
             )
             bcc_email = st.text_input(
                 "Verification BCC Address",
@@ -1082,17 +1236,17 @@ with tab_settings:
                 help="Pre-configured BCC address attached to every outgoing email for verification."
             )
 
-            st.markdown("### 🛡️ Negative Keywords & Spam Lists")
+            st.markdown("#### 🛡️ Negative Keywords & Spam Lists")
             negative_keywords_val = st.text_area(
                 "Restricted Negative Keywords (comma separated)",
                 value=current_configs.get("negative_keywords", "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash"),
-                height=70,
+                height=65,
                 help="Drafts containing any of these words will be automatically tagged as 'Flagged' and require Auto-Rewrite."
             )
             spam_blocklist_val = st.text_area(
                 "Restricted Spam Words (comma separated)",
                 value=current_configs.get("spam_blocklist", "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast"),
-                height=70,
+                height=65,
                 help="LiteLLM will inject a strict forbidding instruction during prompt execution."
             )
 
@@ -1147,6 +1301,7 @@ with tab_settings:
         submit_config = st.form_submit_button("💾 Save All Configurations", type="primary", use_container_width=True)
 
         if submit_config:
+            engine_key = "hostinger_smtp" if "Hostinger" in dispatch_engine_choice else "outlook"
             new_configs = {
                 "gemini_api_key": gemini_key,
                 "gcp_project_id": gcp_project,
@@ -1154,6 +1309,9 @@ with tab_settings:
                 "anthropic_api_key": anthropic_key,
                 "primary_model": primary_model,
                 "fallback_model": fallback_model,
+                "dispatch_method": engine_key,
+                "min_delay_seconds": str(min_delay_val),
+                "max_delay_seconds": str(max_delay_val),
                 "sender_email": sender_email,
                 "bcc_email": bcc_email,
                 "negative_keywords": negative_keywords_val,
@@ -1169,7 +1327,7 @@ with tab_settings:
     with col_outbox_hdr:
         st.markdown("### 📊 Outbox & Dispatch History")
     with col_dry_run:
-        dry_run_btn = st.button("🧪 Dry Run (Check Due)", key="dry_run_outbox", help="Check approved emails due for dispatch without launching Outlook.")
+        dry_run_btn = st.button("🧪 Dry Run (Check Due)", key="dry_run_outbox", help="Check approved emails due for dispatch without sending.")
         if dry_run_btn:
             curr_local_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
             due = get_approved_due_emails(curr_local_time)
@@ -1208,6 +1366,8 @@ with tab_settings:
                 with c1:
                     st.markdown(f"**Status:** <span class='{st_class}'>{item['status']}</span>", unsafe_allow_html=True)
                     st.markdown(f"**Recipient:** `{item.get('recipient')}`")
+                    if item.get("sent_via"):
+                        st.markdown(f"**Dispatched Via:** `{item['sent_via']}`")
                     st.markdown(f"**Scheduled Send Time:** `{item.get('scheduled_time')}`")
                     st.markdown(f"**Created:** `{item.get('created_at')}`")
                 with c2:

@@ -23,17 +23,19 @@ A robust, locally hosted email generation and dispatch platform for Windows. The
                                 │  - contacts table               │
                                 │  - templates table              │
                                 │  - system_config table          │
+                                │  - smtp_accounts table          │
                                 │  - emails queue table           │
                                 └────────────────┬────────────────┘
                                                  ▲
                                                  │ Polls every 60s (Local System Time)
                               ┌──────────────────┴──────────────────┐
-                              │     Scheduler Daemon (scheduler.py) │
-                              │  - pythoncom.CoInitialize() safety  │
-                              │  - Matches Outlook SmtpAddress      │
+                              │    Scheduler Daemon (scheduler.py)  │
+                              │  - ⚡ Hostinger Direct SMTP Dispatch │
+                              │    (Multi-account round-robin)      │
+                              │  - ⏱️ Anti-spam 20-45s human delay   │
+                              │  - 📧 Desktop Outlook via pywin32   │
                               │  - Injects HTML Body + Signature    │
                               │  - Attaches Verification BCC        │
-                              │  - Dispatches via pywin32           │
                               └─────────────────────────────────────┘
 ```
 
@@ -94,8 +96,15 @@ python scheduler.py
 - **Local Time Scheduling**: Date & time pickers strictly aligned with Local System Time.
 
 ### ⚙️ Tab 5: Configuration & Outbox
+- **⚡ Hostinger Direct SMTP Multi-Account Fleet**:
+  - Connect multiple Hostinger mailboxes (`smtp.hostinger.com:465` SSL / `587` STARTTLS).
+  - Real-time connection testing & credential verification directly in UI.
+  - Automatic load balancing and round-robin mailbox rotation with configurable daily limits (default 80/day per mailbox).
+  - Daily quota utilization tracking and automated midnight reset.
+- **⏱️ Anti-Spam Human Delay Throttling**: Configurable randomized 20–45s gaps between outgoing emails to protect domain reputation and prevent spam filters.
+- **Dual Outbound Engines**: Seamlessly switch between `⚡ Hostinger Direct SMTP` and `📧 Desktop Microsoft Outlook`.
 - Pre-configured with Google Gemini / Vertex credentials (`AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw` and project `606768026327`), OpenAI, and Anthropic.
 - Manage **Restricted Negative Keywords** and **Restricted Spam Words**.
-- Manage Outlook Sender account and verification BCC address.
+- Manage Outlook fallback sender account and verification BCC address.
 - Dual-mode HTML Signature Manager.
-- Outbox monitor for `Approved`, `Sent`, `Flagged`, and `Account Mismatch` records.
+- Outbox monitor for `Approved`, `Sent`, `Flagged`, and `Account Mismatch` records with `Dispatched Via` auditing.

@@ -85,8 +85,37 @@ def init_db(db_path: str = DB_FILE):
             revision_notes TEXT,
             variation_num INTEGER DEFAULT 1,
             error_message TEXT,
+            sent_via TEXT DEFAULT '',
+            smtp_account_id INTEGER DEFAULT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        )
+    """)
+
+    # Schema migration: ensure sent_via and smtp_account_id exist in emails table
+    try:
+        cursor.execute("ALTER TABLE emails ADD COLUMN sent_via TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE emails ADD COLUMN smtp_account_id INTEGER DEFAULT NULL")
+    except Exception:
+        pass
+
+    # 5. SMTP Accounts table for Hostinger / direct SMTP multi-account rotation
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS smtp_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            smtp_host TEXT NOT NULL DEFAULT 'smtp.hostinger.com',
+            smtp_port INTEGER NOT NULL DEFAULT 465,
+            password TEXT NOT NULL,
+            daily_limit INTEGER NOT NULL DEFAULT 80,
+            sent_today INTEGER NOT NULL DEFAULT 0,
+            last_reset_date TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
         )
     """)
 
@@ -98,6 +127,9 @@ def init_db(db_path: str = DB_FILE):
         "anthropic_api_key": "",
         "primary_model": "gemini/gemini-1.5-flash",
         "fallback_model": "gpt-4o-mini",
+        "dispatch_method": "hostinger_smtp",
+        "min_delay_seconds": "20",
+        "max_delay_seconds": "45",
         "sender_email": "",
         "bcc_email": "",
         "spam_blocklist": "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast",
@@ -613,6 +645,165 @@ def delete_email(email_id: int, db_path: str = DB_FILE):
     conn.commit()
     conn.close()
 
+# ------------------------------------------------------------------------------
+# SMTP ACCOUNTS HELPERS (HOSTINGER / MULTI-ACCOUNT ROTATION)
+# ------------------------------------------------------------------------------
+
+def add_smtp_account(
+    sender_name: str,
+    email: str,
+    password: str,
+    smtp_host: str = "smtp.hostinger.com",
+    smtp_port: int = 465,
+    daily_limit: int = 80,
+    is_active: bool = True,
+    db_path: str = DB_FILE
+) -> int:
+    """Add a new SMTP account for Hostinger or custom mail server."""
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO smtp_accounts (
+            sender_name, email, smtp_host, smtp_port, password,
+            daily_limit, sent_today, last_reset_date, is_active, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+    """, (
+        sender_name.strip(),
+        email.strip().lower(),
+        smtp_host.strip(),
+        int(smtp_port),
+        password.strip(),
+        int(daily_limit),
+        today_str,
+        1 if is_active else 0,
+        now_iso
+    ))
+    account_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return account_id
+
+def get_smtp_accounts(active_only: bool = False, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all or active SMTP sender accounts."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    if active_only:
+        cursor.execute("SELECT * FROM smtp_accounts WHERE is_active = 1 ORDER BY id ASC")
+    else:
+        cursor.execute("SELECT * FROM smtp_accounts ORDER BY id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_smtp_account_by_id(account_id: int, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM smtp_accounts WHERE id = ?", (account_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_smtp_account(
+    account_id: int,
+    sender_name: Optional[str] = None,
+    email: Optional[str] = None,
+    password: Optional[str] = None,
+    smtp_host: Optional[str] = None,
+    smtp_port: Optional[int] = None,
+    daily_limit: Optional[int] = None,
+    is_active: Optional[bool] = None,
+    db_path: str = DB_FILE
+):
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    fields = []
+    values = []
+    if sender_name is not None:
+        fields.append("sender_name = ?")
+        values.append(sender_name.strip())
+    if email is not None:
+        fields.append("email = ?")
+        values.append(email.strip().lower())
+    if password is not None and password.strip():
+        fields.append("password = ?")
+        values.append(password.strip())
+    if smtp_host is not None:
+        fields.append("smtp_host = ?")
+        values.append(smtp_host.strip())
+    if smtp_port is not None:
+        fields.append("smtp_port = ?")
+        values.append(int(smtp_port))
+    if daily_limit is not None:
+        fields.append("daily_limit = ?")
+        values.append(int(daily_limit))
+    if is_active is not None:
+        fields.append("is_active = ?")
+        values.append(1 if is_active else 0)
+
+    if fields:
+        values.append(account_id)
+        query = f"UPDATE smtp_accounts SET {', '.join(fields)} WHERE id = ?"
+        cursor.execute(query, tuple(values))
+        conn.commit()
+    conn.close()
+
+def delete_smtp_account(account_id: int, db_path: str = DB_FILE):
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM smtp_accounts WHERE id = ?", (account_id,))
+    conn.commit()
+    conn.close()
+
+def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    """
+    Get the next available active SMTP account that has not exceeded its daily limit.
+    Automatically resets sent_today counter when the date rolls over.
+    Selects the account with the lowest sent_today to balance load across mailboxes.
+    """
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # 1. Reset counters for accounts from previous days
+    cursor.execute("""
+        UPDATE smtp_accounts
+        SET sent_today = 0, last_reset_date = ?
+        WHERE last_reset_date != ?
+    """, (today_str, today_str))
+    conn.commit()
+
+    # 2. Find active accounts with remaining capacity, sorted by lowest sent_today
+    cursor.execute("""
+        SELECT * FROM smtp_accounts
+        WHERE is_active = 1 AND sent_today < daily_limit
+        ORDER BY sent_today ASC, id ASC
+        LIMIT 1
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def increment_smtp_sent(account_id: int, db_path: str = DB_FILE):
+    """Increment sent_today counter for an SMTP account."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    cursor.execute("""
+        UPDATE smtp_accounts
+        SET sent_today = sent_today + 1, last_reset_date = ?
+        WHERE id = ?
+    """, (today_str, account_id))
+    conn.commit()
+    conn.close()
+
 # Initialize upon import if DB does not exist
 if not os.path.exists(DB_FILE):
     init_db(DB_FILE)
+else:
+    # Ensure any new tables / migrations are applied
+    try:
+        init_db(DB_FILE)
+    except Exception:
+        pass

@@ -14,6 +14,7 @@ Key Constraints Enforced:
 
 import time
 import sys
+import random
 import logging
 import argparse
 from datetime import datetime
@@ -34,8 +35,12 @@ from database import (
     get_config,
     mark_email_sent,
     mark_email_error,
+    update_email,
+    get_next_available_smtp_account,
+    increment_smtp_sent,
     init_db
 )
+from smtp_dispatcher import send_smtp_email
 
 # Configure logging
 logging.basicConfig(
@@ -113,7 +118,64 @@ def assign_sender_account(mail_item, account):
             logger.error(f"OLE Invoke fallback also failed: {ole_err}")
             raise RuntimeError(f"Could not bind Outlook account to message: {ole_err}")
 
-def dispatch_email(email_record: dict, dry_run: bool = False):
+def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
+    """
+    Dispatch a single approved email record through Hostinger Direct SMTP.
+    Rotates through active Hostinger SMTP accounts, respects daily limits,
+    attaches HTML body and signature, and sends via SSL/TLS.
+    """
+    email_id = email_record["id"]
+    recipient = email_record.get("recipient", "").strip()
+    subject = email_record.get("subject", "Listing Audit").strip()
+    approved_email_html = email_record.get("email_html", "").strip()
+
+    logger.info(f"[Hostinger SMTP] Processing Email ID #{email_id} for recipient '{recipient}'...")
+
+    if not recipient:
+        err_msg = "Recipient email address is missing or empty."
+        logger.warning(f"Email ID #{email_id}: {err_msg}")
+        mark_email_error(email_id, status="Error", error_message=err_msg)
+        return
+
+    # Fetch next active Hostinger account in rotation
+    smtp_account = get_next_available_smtp_account()
+    if not smtp_account:
+        err_msg = "No active Hostinger SMTP account available (or all configured accounts have reached their daily sending limit)."
+        logger.warning(f"Email ID #{email_id}: {err_msg}")
+        mark_email_error(email_id, status="Error", error_message=err_msg)
+        return
+
+    # Prepare signature and payload
+    signature_html = (get_config("signature_html") or "").strip()
+    bcc_address = (get_config("bcc_email") or "").strip()
+    final_payload = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
+
+    if dry_run:
+        logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
+        mark_email_sent(email_id)
+        return
+
+    success, msg = send_smtp_email(
+        smtp_account=smtp_account,
+        recipient=recipient,
+        subject=subject,
+        html_content=final_payload,
+        bcc_email=bcc_address
+    )
+
+    if success:
+        mark_email_sent(email_id)
+        increment_smtp_sent(smtp_account["id"])
+        update_email(
+            email_id=email_id,
+            sent_via=f"Hostinger ({smtp_account['email']})",
+            smtp_account_id=smtp_account["id"]
+        )
+        logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
+    else:
+        mark_email_error(email_id, status="Error", error_message=msg)
+
+def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
     """
     Dispatch a single approved email record through Outlook.
     Handles COM thread safety, account verification, HTML concatenation with signature, BCC, and status updates.
@@ -123,7 +185,7 @@ def dispatch_email(email_record: dict, dry_run: bool = False):
     subject = email_record.get("subject", "Listing Audit").strip()
     approved_email_html = email_record.get("email_html", "").strip()
 
-    logger.info(f"Processing Email ID #{email_id} for recipient '{recipient}'...")
+    logger.info(f"[Outlook] Processing Email ID #{email_id} for recipient '{recipient}'...")
 
     if not recipient:
         err_msg = "Recipient email address is missing or empty."
@@ -137,7 +199,7 @@ def dispatch_email(email_record: dict, dry_run: bool = False):
     signature_html = (get_config("signature_html") or "").strip()
 
     if dry_run:
-        logger.info(f"[DRY RUN] Would send Email ID #{email_id} to '{recipient}' from '{designated_sender}' with BCC '{bcc_address}'")
+        logger.info(f"[DRY RUN Outlook] Would send Email ID #{email_id} to '{recipient}' from '{designated_sender}' with BCC '{bcc_address}'")
         mark_email_sent(email_id)
         return
 
@@ -198,20 +260,42 @@ def dispatch_email(email_record: dict, dry_run: bool = False):
             except Exception:
                 pass
 
+# Backward compatibility alias
+dispatch_email = dispatch_email_outlook
+
 def run_scheduler_cycle(dry_run: bool = False) -> int:
     """
     Check database for due approved emails and dispatch them.
     Explicitly enforces comparison against Local System Time (YYYY-MM-DD HH:MM:SS).
-    Returns count processed.
+    Applies human-like randomized delays between sends.
     """
     now_local_str = get_local_system_time_str()
     due_emails = get_approved_due_emails(now_local_str)
     count = len(due_emails)
 
     if count > 0:
-        logger.info(f"Found {count} approved email(s) scheduled on or before Local Time {now_local_str}.")
-        for email_rec in due_emails:
-            dispatch_email(email_rec, dry_run=dry_run)
+        dispatch_method = get_config("dispatch_method", "hostinger_smtp")
+        try:
+            min_delay = float(get_config("min_delay_seconds", "20"))
+            max_delay = float(get_config("max_delay_seconds", "45"))
+            if min_delay < 0: min_delay = 5.0
+            if max_delay < min_delay: max_delay = min_delay + 5.0
+        except Exception:
+            min_delay, max_delay = 20.0, 45.0
+
+        logger.info(f"Found {count} approved email(s) due at {now_local_str}. Dispatch Engine: '{dispatch_method}'.")
+
+        for idx, email_rec in enumerate(due_emails):
+            if dispatch_method == "hostinger_smtp":
+                dispatch_email_hostinger(email_rec, dry_run=dry_run)
+            else:
+                dispatch_email_outlook(email_rec, dry_run=dry_run)
+
+            # Apply randomized anti-spam delay between emails if more than one
+            if idx < count - 1 and not dry_run:
+                delay = random.uniform(min_delay, max_delay)
+                logger.info(f"Enforcing human-like anti-spam delay of {delay:.1f}s before next email...")
+                time.sleep(delay)
     else:
         logger.debug(f"Heartbeat: No due approved emails at Local Time {now_local_str}.")
 
