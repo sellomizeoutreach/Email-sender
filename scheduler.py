@@ -19,9 +19,15 @@ import argparse
 from datetime import datetime
 from typing import Optional
 
-# Import COM modules
-import pythoncom
-import win32com.client
+# Import COM modules (Windows desktop only)
+try:
+    import pythoncom
+    import win32com.client
+    COM_AVAILABLE = True
+except ImportError:
+    pythoncom = None
+    win32com = None
+    COM_AVAILABLE = False
 
 from database import (
     get_approved_due_emails,
@@ -52,6 +58,11 @@ def get_outlook_application():
     Explicitly initializes COM on the current thread using pythoncom.CoInitialize()
     directly before win32com.client.Dispatch to avoid threading crashes.
     """
+    if not COM_AVAILABLE:
+        raise RuntimeError(
+            "Microsoft Outlook COM dispatch is only supported on Windows desktop with Outlook installed. "
+            "Cloud environments (e.g. Streamlit Cloud) run the UI and CRM layers."
+        )
     try:
         # Explicit COM initialization for the current polling thread
         pythoncom.CoInitialize()
@@ -181,10 +192,11 @@ def dispatch_email(email_record: dict, dry_run: bool = False):
         mark_email_error(email_id, status="Error", error_message=str(dispatch_err))
     finally:
         # Clean up COM references on this cycle
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
+        if COM_AVAILABLE and pythoncom:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 def run_scheduler_cycle(dry_run: bool = False) -> int:
     """

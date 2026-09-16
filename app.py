@@ -1031,27 +1031,27 @@ with tab_settings:
         col_api1, col_api2 = st.columns(2)
 
         with col_api1:
-            st.markdown("### 🤖 LLM Models & API Credentials")
+            secrets = getattr(st, "secrets", {})
             gemini_key = st.text_input(
                 "Google Gemini API Key",
-                value=current_configs.get("gemini_api_key", "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"),
+                value=current_configs.get("gemini_api_key") or secrets.get("gemini_api_key", "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"),
                 type="password",
                 help="Gemini / Vertex API key for gemini models."
             )
             gcp_project = st.text_input(
                 "Google Cloud / Vertex Project ID",
-                value=current_configs.get("gcp_project_id", "606768026327"),
+                value=current_configs.get("gcp_project_id") or secrets.get("gcp_project_id", "606768026327"),
                 help="GCP project ID (projects/606768026327)."
             )
             openai_key = st.text_input(
                 "OpenAI API Key",
-                value=current_configs.get("openai_api_key", ""),
+                value=current_configs.get("openai_api_key") or secrets.get("openai_api_key", ""),
                 type="password",
                 help="OpenAI API key for gpt-4o, gpt-4o-mini."
             )
             anthropic_key = st.text_input(
                 "Anthropic API Key",
-                value=current_configs.get("anthropic_api_key", ""),
+                value=current_configs.get("anthropic_api_key") or secrets.get("anthropic_api_key", ""),
                 type="password",
                 help="Anthropic API key for claude-3-haiku, claude-3-5-sonnet."
             )
