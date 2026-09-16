@@ -1,8 +1,8 @@
 [theme]
-primaryColor = "#EE5324"          # Vibrant Sellomize Orange for buttons, sliders, active tabs
-backgroundColor = "#0B2621"       # Deepest Pine Green for main dashboard background
-secondaryBackgroundColor = "#0F3832" # Forest Green for sidebars, cards, and input fields
-textColor = "#FFFFFF"             # Crisp White for readability
+primaryColor = "#EE5324"          # Vibrant Sellomize Sunset Orange
+backgroundColor = "#061512"       # Deep Obsidian Emerald for dark canvas
+secondaryBackgroundColor = "#0B2621" # Rich Pine Glass for secondary containers
+textColor = "#F8FAFC"             # Crisp modern slate white
 font = "sans serif"
 
 [server]

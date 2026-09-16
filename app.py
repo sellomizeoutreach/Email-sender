@@ -92,28 +92,76 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling (Sellomize Reach Brand Theme)
+# Custom Styling (Sellomize Reach Ultra-Modern Dark SaaS Theme)
 st.markdown("""
 <style>
-    /* Global Typography & Palette Constants:
-       Primary: #EE5324 (Vibrant Sellomize Orange)
-       Background: #0B2621 (Deepest Pine Green)
-       Secondary Background: #0F3832 (Forest Green)
-       Border Accent: #164E43 (Subtle Slate/Green)
-       Text: #FFFFFF (Crisp White)
-    */
+    /* Global Canvas & Ambient Lighting */
+    .stApp {
+        background: radial-gradient(1200px 600px at 50% -120px, rgba(238, 83, 36, 0.14) 0%, transparent 70%),
+                    radial-gradient(900px 500px at 100% 5%, rgba(16, 185, 129, 0.09) 0%, transparent 60%),
+                    radial-gradient(800px 600px at 0% 90%, rgba(238, 83, 36, 0.08) 0%, transparent 65%),
+                    #061512 !important;
+        background-attachment: fixed !important;
+        color: #F8FAFC !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+    }
 
-    /* Branded Header Banner */
+    /* Custom Sleek Scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #061512;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: rgba(238, 83, 36, 0.35);
+        border-radius: 8px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #EE5324;
+    }
+
+    /* Global Typography */
+    h1, h2, h3, h4, h5, h6 {
+        color: #FFFFFF !important;
+        letter-spacing: -0.4px !important;
+        font-weight: 700 !important;
+    }
+    p, span, label {
+        color: #E2E8F0;
+    }
+    hr {
+        border: none !important;
+        height: 1px !important;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent) !important;
+        margin: 1.75rem 0 !important;
+    }
+
+    /* Branded Floating Glass Header */
     .sellomize-header-container {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: linear-gradient(135deg, #0F3832 0%, #164E43 100%);
-        border: 1px solid #1B5E52;
-        border-radius: 12px;
-        padding: 1.1rem 1.6rem;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+        background: linear-gradient(135deg, rgba(14, 46, 39, 0.8) 0%, rgba(8, 28, 24, 0.92) 100%);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 1.15rem 1.8rem;
+        margin-bottom: 1.6rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        position: relative;
+        overflow: hidden;
+    }
+    .sellomize-header-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #EE5324 30%, #10B981 70%, transparent);
     }
     .sellomize-header-left {
         display: flex;
@@ -121,247 +169,463 @@ st.markdown("""
         gap: 1.25rem;
     }
     .sellomize-logo-img {
-        height: 58px;
-        width: 58px;
+        height: 56px;
+        width: 56px;
         object-fit: cover;
-        border-radius: 10px;
-        border: 2px solid #EE5324;
-        box-shadow: 0 2px 8px rgba(238, 83, 36, 0.35);
+        border-radius: 12px;
+        border: 1.5px solid rgba(238, 83, 36, 0.8);
+        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.35);
     }
     .sellomize-logo-fallback {
         font-size: 2.2rem;
         background: #0B2621;
-        border-radius: 10px;
+        border-radius: 12px;
         padding: 6px 12px;
-        border: 2px solid #EE5324;
+        border: 1.5px solid #EE5324;
+        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.35);
     }
     .sellomize-brand-title {
-        font-size: 2.0rem;
-        font-weight: 800;
-        letter-spacing: 1.2px;
+        font-size: 1.95rem;
+        font-weight: 900;
+        letter-spacing: 1.4px;
         color: #FFFFFF;
         line-height: 1.1;
         margin: 0;
-        font-family: system-ui, -apple-system, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     .sellomize-highlight {
-        color: #EE5324;
+        background: linear-gradient(135deg, #FF7B4D 0%, #EE5324 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 0 12px rgba(238, 83, 36, 0.4));
     }
     .sellomize-brand-subtitle {
-        font-size: 0.95rem;
+        font-size: 0.88rem;
         font-weight: 500;
-        color: #A7D7C5;
+        color: #94A3B8;
         margin-top: 4px;
         letter-spacing: 0.4px;
     }
-    .sellomize-header-badge {
-        background-color: rgba(238, 83, 36, 0.15);
-        color: #EE5324;
-        border: 1px solid #EE5324;
+    .sellomize-header-right {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+    }
+    .system-status-pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(16, 185, 129, 0.12);
+        border: 1px solid rgba(16, 185, 129, 0.35);
+        color: #34D399;
         padding: 6px 14px;
         border-radius: 20px;
-        font-size: 0.8rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+    }
+    .status-indicator-dot {
+        width: 8px;
+        height: 8px;
+        background-color: #10B981;
+        border-radius: 50%;
+        box-shadow: 0 0 10px #10B981;
+        animation: pulse-dot 2s infinite ease-in-out;
+    }
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.35; transform: scale(0.8); }
+    }
+    .sellomize-header-badge {
+        background: rgba(238, 83, 36, 0.12);
+        color: #FF7B4D;
+        border: 1px solid rgba(238, 83, 36, 0.35);
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.75rem;
         font-weight: 700;
         letter-spacing: 0.8px;
         text-transform: uppercase;
     }
 
-    /* Primary Action Buttons (Generate Campaign, Approve & Schedule, Save All Configurations, etc.) */
+    /* Executive Glass KPI Stat Cards */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 1.1rem;
+        margin-bottom: 1.75rem;
+    }
+    @media (max-width: 1100px) {
+        .stats-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+    @media (max-width: 768px) {
+        .stats-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    .stat-card {
+        background: linear-gradient(145deg, rgba(14, 46, 39, 0.65) 0%, rgba(8, 28, 24, 0.8) 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 1.15rem 1.35rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+    }
+    .stat-card:hover {
+        transform: translateY(-3px);
+        border-color: rgba(238, 83, 36, 0.35);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 0 18px rgba(238, 83, 36, 0.15);
+    }
+    .stat-card-highlight {
+        border-color: rgba(238, 83, 36, 0.35);
+        background: linear-gradient(145deg, rgba(238, 83, 36, 0.12) 0%, rgba(8, 28, 24, 0.85) 100%);
+    }
+    .stat-card-alert {
+        border-color: rgba(239, 68, 68, 0.45);
+        background: linear-gradient(145deg, rgba(239, 68, 68, 0.15) 0%, rgba(8, 28, 24, 0.85) 100%);
+    }
+    .stat-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.6rem;
+    }
+    .stat-label {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #94A3B8;
+        text-transform: uppercase;
+        letter-spacing: 0.75px;
+    }
+    .stat-icon-badge {
+        font-size: 1.15rem;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 3px 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .stat-value {
+        font-size: 2.15rem;
+        font-weight: 800;
+        color: #FFFFFF;
+        line-height: 1.1;
+        letter-spacing: -0.5px;
+        margin-bottom: 0.35rem;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .stat-val-glow {
+        color: #FF7B4D;
+        text-shadow: 0 0 16px rgba(238, 83, 36, 0.4);
+    }
+    .stat-val-alert {
+        color: #F87171;
+        text-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
+    }
+    .stat-sub {
+        font-size: 0.78rem;
+        color: #64748B;
+        font-weight: 500;
+    }
+    .stat-sub-alert {
+        color: #F87171;
+        font-weight: 600;
+    }
+    .stat-sub-clean {
+        color: #34D399;
+        font-weight: 600;
+    }
+
+    /* Modern Segmented Floating Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px !important;
+        background: rgba(7, 24, 20, 0.75) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        padding: 6px !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+        margin-bottom: 1.75rem !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 44px !important;
+        border-radius: 8px !important;
+        color: #94A3B8 !important;
+        font-weight: 600 !important;
+        font-size: 0.92rem !important;
+        padding: 0 1.25rem !important;
+        border: 1px solid transparent !important;
+        background: transparent !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #FFFFFF !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border-color: rgba(255, 255, 255, 0.08) !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(238, 83, 36, 0.25) 0%, rgba(238, 83, 36, 0.08) 100%) !important;
+        border: 1px solid #EE5324 !important;
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.28) !important;
+        border-radius: 8px !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+    .stTabs [data-baseweb="tab-border"] {
+        display: none !important;
+    }
+
+    /* Primary High-Impact CTA Buttons */
     button[kind="primary"],
     [data-testid="baseButton-primary"],
     div.stButton > button[kind="primary"],
     div.stFormSubmitButton > button[kind="primary"] {
-        background-color: #EE5324 !important;
+        background: linear-gradient(135deg, #FF6838 0%, #EE5324 55%, #D43E12 100%) !important;
         color: #FFFFFF !important;
         font-weight: 700 !important;
-        border: none !important;
-        border-radius: 6px !important;
-        padding: 0.5rem 1.25rem !important;
-        box-shadow: 0 2px 8px rgba(238, 83, 36, 0.35) !important;
-        transition: all 0.2s ease-in-out !important;
+        font-size: 0.92rem !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 8px !important;
+        padding: 0.55rem 1.4rem !important;
+        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        letter-spacing: 0.3px !important;
     }
     button[kind="primary"]:hover,
     [data-testid="baseButton-primary"]:hover,
     div.stButton > button[kind="primary"]:hover,
     div.stFormSubmitButton > button[kind="primary"]:hover {
-        background-color: #D4441B !important;
-        color: #FFFFFF !important;
-        box-shadow: 0 4px 12px rgba(238, 83, 36, 0.5) !important;
-        transform: translateY(-1px) !important;
+        background: linear-gradient(135deg, #FF7B4D 0%, #FF5A26 55%, #E04516 100%) !important;
+        box-shadow: 0 6px 24px rgba(238, 83, 36, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+        transform: translateY(-2px) !important;
+    }
+    button[kind="primary"]:active,
+    [data-testid="baseButton-primary"]:active {
+        transform: translateY(0px) !important;
     }
 
-    /* Secondary Actions / Outlines (Custom Reject & Rewrite, Dry Run, Delete, Reset, etc.) */
+    /* Secondary Glass Action Buttons */
     button[kind="secondary"],
     [data-testid="baseButton-secondary"],
     .stButton > button:not([kind="primary"]),
     .stDownloadButton > button {
-        background-color: #0F3832 !important;
-        color: #FFFFFF !important;
-        border: 1px solid #164E43 !important;
-        border-radius: 6px !important;
+        background: rgba(14, 44, 38, 0.65) !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+        color: #E2E8F0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 8px !important;
         font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        padding: 0.5rem 1.2rem !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
         transition: all 0.2s ease-in-out !important;
     }
     button[kind="secondary"]:hover,
     [data-testid="baseButton-secondary"]:hover,
     .stButton > button:not([kind="primary"]):hover,
     .stDownloadButton > button:hover {
-        background-color: #164E43 !important;
+        background: rgba(20, 60, 52, 0.85) !important;
         border-color: #EE5324 !important;
         color: #FFFFFF !important;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3) !important;
+        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.25) !important;
+        transform: translateY(-1px) !important;
     }
 
-    /* Form containers and expanders */
-    div[data-testid="stForm"],
+    /* Glass Form Containers & Expanders */
+    div[data-testid="stForm"] {
+        background: linear-gradient(180deg, rgba(13, 42, 36, 0.65) 0%, rgba(7, 24, 20, 0.8) 100%) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 14px !important;
+        padding: 1.5rem 1.75rem !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    }
     div[data-testid="stExpander"] {
-        background-color: #0F3832 !important;
-        border: 1px solid #164E43 !important;
-        border-radius: 8px !important;
+        background: linear-gradient(180deg, rgba(12, 38, 33, 0.5) 0%, rgba(7, 23, 20, 0.65) 100%) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+        overflow: hidden !important;
+        margin-bottom: 12px !important;
+        transition: all 0.2s ease !important;
+    }
+    div[data-testid="stExpander"]:hover {
+        border-color: rgba(238, 83, 36, 0.3) !important;
+    }
+    div[data-testid="stExpander"] summary {
+        font-weight: 600 !important;
+        color: #FFFFFF !important;
+        font-size: 0.95rem !important;
     }
 
-    /* Inputs, textareas, and selectboxes */
+    /* Inputs, Textareas, and Dropdowns */
     div[data-baseweb="input"],
     div[data-baseweb="textarea"],
     div[data-baseweb="select"] > div {
-        background-color: #0B2621 !important;
-        border-color: #164E43 !important;
+        background-color: rgba(5, 17, 14, 0.75) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 8px !important;
         color: #FFFFFF !important;
-    }
-    div[data-baseweb="input"] input,
-    div[data-baseweb="textarea"] textarea {
-        color: #FFFFFF !important;
-        background-color: transparent !important;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+        transition: all 0.2s ease !important;
     }
     div[data-baseweb="input"]:focus-within,
     div[data-baseweb="textarea"]:focus-within,
     div[data-baseweb="select"]:focus-within > div {
         border-color: #EE5324 !important;
-        box-shadow: 0 0 0 1px #EE5324 !important;
+        box-shadow: 0 0 0 3px rgba(238, 83, 36, 0.22), inset 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+        background-color: rgba(6, 21, 18, 0.95) !important;
+    }
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea {
+        color: #FFFFFF !important;
+        background-color: transparent !important;
+        font-size: 0.92rem !important;
+    }
+    div[data-baseweb="input"] input::placeholder,
+    div[data-baseweb="textarea"] textarea::placeholder {
+        color: #64748B !important;
     }
 
-    /* Metric Cards */
-    div[data-testid="stMetric"] {
-        background-color: #0F3832;
-        border: 1px solid #164E43;
-        border-radius: 8px;
-        padding: 0.75rem 1rem;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    /* Progress Bars */
+    div[data-testid="stProgress"] > div > div > div > div {
+        background: linear-gradient(90deg, #EE5324, #10B981) !important;
+        border-radius: 10px !important;
     }
-    div[data-testid="stMetricLabel"] {
-        color: #A7D7C5 !important;
-        font-weight: 600 !important;
-    }
-    div[data-testid="stMetricValue"] {
-        color: #FFFFFF !important;
-        font-weight: 700 !important;
+    div[data-testid="stProgress"] > div > div {
+        background-color: rgba(4, 16, 13, 0.75) !important;
+        border-radius: 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
     }
 
     /* Email Preview Box */
     .email-preview-box {
-        background-color: #0F3832;
-        border: 1px solid #164E43;
-        border-radius: 8px;
-        padding: 1.25rem;
-        margin-top: 0.5rem;
-        margin-bottom: 0.8rem;
-        color: #FFFFFF;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        background: rgba(6, 20, 16, 0.8) !important;
+        border: 1px solid rgba(255, 255, 255, 0.09) !important;
+        border-left: 3.5px solid #EE5324 !important;
+        border-radius: 10px !important;
+        padding: 1.25rem 1.5rem !important;
+        margin-top: 0.6rem !important;
+        margin-bottom: 0.8rem !important;
+        color: #E2E8F0 !important;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.35) !important;
     }
     .email-preview-box p,
     .email-preview-box div,
     .email-preview-box span {
-        color: #FFFFFF !important;
+        color: #E2E8F0 !important;
     }
 
     /* Flagged Draft Card */
     .flagged-card {
-        background-color: #240C0E;
-        border: 2px solid #EF4444;
-        border-radius: 8px;
-        padding: 1.25rem;
-        margin-bottom: 1.2rem;
-        color: #FFFFFF;
+        background: linear-gradient(135deg, rgba(38, 14, 16, 0.75) 0%, rgba(22, 7, 9, 0.9) 100%) !important;
+        border: 1.5px solid rgba(239, 68, 68, 0.5) !important;
+        border-radius: 12px !important;
+        padding: 1.35rem !important;
+        margin-bottom: 1.2rem !important;
+        color: #FFFFFF !important;
+        box-shadow: 0 8px 28px rgba(239, 68, 68, 0.18) !important;
     }
     .flagged-banner {
-        background-color: #EF4444;
-        color: #FFFFFF;
-        font-weight: 700;
-        padding: 6px 12px;
-        border-radius: 4px;
-        margin-bottom: 10px;
-        display: inline-block;
-        letter-spacing: 0.5px;
+        background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%) !important;
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        padding: 6px 14px !important;
+        border-radius: 6px !important;
+        margin-bottom: 10px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        letter-spacing: 0.5px !important;
+        box-shadow: 0 2px 10px rgba(239, 68, 68, 0.35) !important;
     }
 
-    /* Badges */
+    /* Micro Status Badges */
     .badge-flagged {
-        background-color: #451A1A;
-        color: #FCA5A5;
-        border: 1px solid #EF4444;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-weight: 600;
-        font-size: 0.85rem;
+        background: rgba(239, 68, 68, 0.14) !important;
+        color: #F87171 !important;
+        border: 1px solid rgba(239, 68, 68, 0.35) !important;
+        padding: 3px 10px !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 0.8rem !important;
+        letter-spacing: 0.3px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
     }
     .badge-pending {
-        background-color: #3D2B0F;
-        color: #FDE68A;
-        border: 1px solid #F59E0B;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-weight: 600;
-        font-size: 0.85rem;
+        background: rgba(245, 158, 11, 0.14) !important;
+        color: #FBBF24 !important;
+        border: 1px solid rgba(245, 158, 11, 0.35) !important;
+        padding: 3px 10px !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 0.8rem !important;
+        letter-spacing: 0.3px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
     }
     .badge-approved {
-        background-color: #0F3347;
-        color: #93C5FD;
-        border: 1px solid #3B82F6;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-weight: 600;
-        font-size: 0.85rem;
+        background: rgba(59, 130, 246, 0.14) !important;
+        color: #60A5FA !important;
+        border: 1px solid rgba(59, 130, 246, 0.35) !important;
+        padding: 3px 10px !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 0.8rem !important;
+        letter-spacing: 0.3px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
     }
     .badge-sent {
-        background-color: #0F3D2E;
-        color: #86EFAC;
-        border: 1px solid #10B981;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-weight: 600;
-        font-size: 0.85rem;
+        background: rgba(16, 185, 129, 0.14) !important;
+        color: #34D399 !important;
+        border: 1px solid rgba(16, 185, 129, 0.35) !important;
+        padding: 3px 10px !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 0.8rem !important;
+        letter-spacing: 0.3px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
     }
 
     /* Syntax Guide Box */
     .syntax-help {
-        background-color: #0D332D;
-        border: 1px solid #164E43;
-        border-left: 4px solid #EE5324;
-        padding: 0.9rem 1.1rem;
-        border-radius: 6px;
-        margin-bottom: 1rem;
-        color: #E2E8F0;
+        background: linear-gradient(135deg, rgba(14, 46, 39, 0.6) 0%, rgba(9, 29, 25, 0.75) 100%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-left: 3.5px solid #EE5324 !important;
+        padding: 1rem 1.25rem !important;
+        border-radius: 10px !important;
+        margin-bottom: 1rem !important;
+        color: #E2E8F0 !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
     }
     .syntax-help code {
-        background-color: #0B2621;
-        color: #EE5324;
-        padding: 2px 6px;
-        border-radius: 4px;
-        border: 1px solid #164E43;
-    }
-
-    /* Tabs Styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 6px 6px 0 0;
-        color: #A7D7C5;
-        font-weight: 600;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #EE5324 !important;
-        border-bottom-color: #EE5324 !important;
+        background: rgba(4, 16, 13, 0.8) !important;
+        color: #FF7B4D !important;
+        padding: 2px 7px !important;
+        border-radius: 5px !important;
+        border: 1px solid rgba(238, 83, 36, 0.2) !important;
+        font-weight: 600 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -379,11 +643,17 @@ st.markdown(f"""
         {logo_html}
         <div>
             <div class="sellomize-brand-title">SELLOMIZE <span class="sellomize-highlight">REACH</span></div>
-            <div class="sellomize-brand-subtitle">A Full Service Amazon Agency — Outbound Engine</div>
+            <div class="sellomize-brand-subtitle">AI Outbound Engine & Multi-Account Outreach Suite</div>
         </div>
     </div>
-    <div class="sellomize-header-badge">
-        <span>Agency Outbound Engine</span>
+    <div class="sellomize-header-right">
+        <div class="system-status-pill">
+            <span class="status-indicator-dot"></span>
+            <span>ENGINE ONLINE</span>
+        </div>
+        <div class="sellomize-header-badge">
+            <span>Agency Edition</span>
+        </div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -399,12 +669,56 @@ flagged_count = sum(1 for e in all_emails if e["status"] == "Flagged")
 approved_count = sum(1 for e in all_emails if e["status"] == "Approved")
 sent_count = sum(1 for e in all_emails if e["status"] == "Sent")
 
-col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
-col_m1.metric("Saved Leads", len(all_contacts))
-col_m2.metric("Templates", len(all_templates))
-col_m3.metric("Pending Review", pending_count)
-col_m4.metric("🚨 Flagged Drafts", flagged_count, delta="Action Required" if flagged_count > 0 else None, delta_color="inverse")
-col_m5.metric("Total Emails Sent", sent_count)
+flagged_card_class = "stat-card-alert" if flagged_count > 0 else ""
+flagged_val_class = "stat-val-alert" if flagged_count > 0 else ""
+flagged_sub_class = "stat-sub-alert" if flagged_count > 0 else "stat-sub-clean"
+flagged_sub_text = f"🚨 {flagged_count} Action Required" if flagged_count > 0 else "✓ All Drafts Clean"
+flagged_icon = "🚨" if flagged_count > 0 else "🛡️"
+
+st.markdown(f"""
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-label">Saved Leads</span>
+            <span class="stat-icon-badge">👥</span>
+        </div>
+        <div class="stat-value">{len(all_contacts)}</div>
+        <div class="stat-sub">Direct CRM Contacts</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-label">Templates</span>
+            <span class="stat-icon-badge">📝</span>
+        </div>
+        <div class="stat-value">{len(all_templates)}</div>
+        <div class="stat-sub">Spintax Ready</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-label">Pending Review</span>
+            <span class="stat-icon-badge">⏳</span>
+        </div>
+        <div class="stat-value">{pending_count}</div>
+        <div class="stat-sub">Awaiting Approval</div>
+    </div>
+    <div class="stat-card {flagged_card_class}">
+        <div class="stat-header">
+            <span class="stat-label">Flagged Drafts</span>
+            <span class="stat-icon-badge">{flagged_icon}</span>
+        </div>
+        <div class="stat-value {flagged_val_class}">{flagged_count}</div>
+        <div class="stat-sub {flagged_sub_class}">{flagged_sub_text}</div>
+    </div>
+    <div class="stat-card stat-card-highlight">
+        <div class="stat-header">
+            <span class="stat-label">Total Sent</span>
+            <span class="stat-icon-badge">🚀</span>
+        </div>
+        <div class="stat-value stat-val-glow">{sent_count}</div>
+        <div class="stat-sub">Hostinger & Outlook</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 st.divider()
 
@@ -551,7 +865,7 @@ with tab_crm:
                     tags_list = contact.get("tags_list") or []
                     if tags_list:
                         tags_html = " ".join([
-                            f"<span style='background-color:#164E43;color:#A7D7C5;border:1px solid #1B5E52;font-size:0.8rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-right:4px;'>🏷️ {t}</span>"
+                            f"<span style='background:rgba(16, 185, 129, 0.12);color:#34D399;border:1px solid rgba(16, 185, 129, 0.35);font-size:0.78rem;font-weight:700;padding:3px 9px;border-radius:6px;margin-right:5px;display:inline-block;letter-spacing:0.3px;'>🏷️ {t}</span>"
                             for t in tags_list
                         ])
                         st.markdown(tags_html, unsafe_allow_html=True)
@@ -1105,15 +1419,15 @@ with tab_settings:
 
             with st.container():
                 st.markdown(f"""
-                <div style="background-color: #0F3832; border: 1px solid #164E43; border-radius: 8px; padding: 12px 18px; margin-bottom: 8px; margin-top: 6px;">
+                <div style="background: linear-gradient(135deg, rgba(14, 46, 39, 0.65) 0%, rgba(8, 28, 24, 0.8) 100%); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 12px; padding: 14px 20px; margin-bottom: 10px; margin-top: 6px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="background-color: {status_color}; color: #FFFFFF; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; margin-right: 8px;">{status_text}</span>
-                            <strong style="color: #FFFFFF; font-size: 1.05rem;">{acc['email']}</strong>
-                            <span style="color: #A7D7C5; font-size: 0.9rem; margin-left: 8px;">({acc['sender_name']})</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="background: {'rgba(16, 185, 129, 0.15)' if acc['is_active'] else 'rgba(107, 114, 128, 0.15)'}; color: {status_color}; border: 1px solid {status_color}; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">● {status_text}</span>
+                            <strong style="color: #FFFFFF; font-size: 1.05rem; letter-spacing: 0.3px;">{acc['email']}</strong>
+                            <span style="color: #94A3B8; font-size: 0.88rem;">({acc['sender_name']})</span>
                         </div>
-                        <div style="color: #A7D7C5; font-size: 0.85rem;">
-                            Host: <code>{acc['smtp_host']}:{acc['smtp_port']}</code>
+                        <div style="color: #94A3B8; font-size: 0.85rem; background: rgba(0,0,0,0.25); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
+                            Host: <code style="color: #FF7B4D;">{acc['smtp_host']}:{acc['smtp_port']}</code>
                         </div>
                     </div>
                 </div>
