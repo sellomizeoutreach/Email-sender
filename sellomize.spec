@@ -35,6 +35,7 @@ datas += [
     ('database.py', '.'),
     ('llm_engine.py', '.'),
     ('scheduler.py', '.'),
+    ('smtp_dispatcher.py', '.'),
     ('contacts_handler.py', '.'),
     ('.streamlit/config.toml', '.streamlit'),
     ('assets/logo.jpg', 'assets'),
@@ -60,6 +61,9 @@ hiddenimports = [
     'bs4',
     'PIL',
     'sqlite3',
+    'smtplib',
+    'ssl',
+    'smtp_dispatcher',
     'email.mime.text',
     'email.mime.multipart',
 ]
