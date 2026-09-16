@@ -1,0 +1,11 @@
+[theme]
+primaryColor = "#EE5324"          # Vibrant Sellomize Orange for buttons, sliders, active tabs
+backgroundColor = "#0B2621"       # Deepest Pine Green for main dashboard background
+secondaryBackgroundColor = "#0F3832" # Forest Green for sidebars, cards, and input fields
+textColor = "#FFFFFF"             # Crisp White for readability
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true

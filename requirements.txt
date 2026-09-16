@@ -1,0 +1,7 @@
+streamlit>=1.30.0
+litellm>=1.40.0
+pywin32>=306
+schedule>=1.2.0
+apscheduler>=3.10.0
+streamlit-quill>=0.0.3
+beautifulsoup4>=4.12.0

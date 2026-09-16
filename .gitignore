@@ -1,0 +1,28 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build artifacts & installers
+dist/
+build/
+Output/
+
+# Local databases (preserve private API keys and contacts)
+*.db
+*.sqlite
+*.sqlite3
+
+# Large binary caches
+tiktoken_cache/
+
+# Virtual environments
+venv/
+env/
+.env
+
+# OS / Editor files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
