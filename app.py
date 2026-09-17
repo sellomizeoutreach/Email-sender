@@ -1576,55 +1576,7 @@ with tab_settings:
                 help="LiteLLM will inject a strict forbidding instruction during prompt execution."
             )
 
-        st.markdown("---")
-        st.markdown("### ✍️ Signature Management (Dual-Mode Editor)")
-        st.caption("Customize your HTML signature. Images can be embedded using hosted image URLs (`<img src='...'>`).")
-
-        # Single shared key in st.session_state
-        shared_sig_key = "sig_shared_content"
-        if shared_sig_key not in st.session_state:
-            st.session_state[shared_sig_key] = current_configs.get("signature_html", "")
-
-        sig_mode = st.radio(
-            "Signature Editor Mode",
-            ["Visual Editor", "HTML Source Code"],
-            horizontal=True,
-            key="sig_editor_mode_selector"
-        )
-
-        if sig_mode == "Visual Editor":
-            if QUILL_AVAILABLE:
-                st.info("Visual WYSIWYG Mode: Format text directly.")
-                quill_res = st_quill(
-                    value=st.session_state[shared_sig_key],
-                    html=True,
-                    key="sig_editor_quill"
-                )
-                if quill_res is not None:
-                    st.session_state[shared_sig_key] = quill_res
-            else:
-                st.warning("`streamlit-quill` not detected. Fallback editor active.")
-                new_sig = st.text_area(
-                    "Visual Rich Text",
-                    value=st.session_state[shared_sig_key],
-                    height=160,
-                    key="sig_editor_fallback"
-                )
-                st.session_state[shared_sig_key] = new_sig
-        else:
-            st.info("HTML Source Code Mode: Edit raw HTML tags, embedded CSS, or `<img src='...'>`.")
-            new_sig = st.text_area(
-                "Raw HTML Signature",
-                value=st.session_state[shared_sig_key],
-                height=160,
-                key="sig_editor_source"
-            )
-            st.session_state[shared_sig_key] = new_sig
-
-        st.markdown("**Signature Preview:**")
-        st.markdown(f'<div class="email-preview-box">{st.session_state[shared_sig_key]}</div>', unsafe_allow_html=True)
-
-        submit_config = st.form_submit_button("💾 Save All Configurations", type="primary", use_container_width=True)
+        submit_config = st.form_submit_button("💾 Save System & AI Settings", type="primary", use_container_width=True)
 
         if submit_config:
             engine_key = "hostinger_smtp" if "Hostinger" in dispatch_engine_choice else "outlook"
@@ -1641,12 +1593,113 @@ with tab_settings:
                 "sender_email": sender_email,
                 "bcc_email": bcc_email,
                 "negative_keywords": negative_keywords_val,
-                "spam_blocklist": spam_blocklist_val,
-                "signature_html": st.session_state[shared_sig_key]
+                "spam_blocklist": spam_blocklist_val
             }
             save_all_configs(new_configs)
-            st.success("✅ Configuration successfully saved to SQLite database!")
+            st.success("✅ System settings successfully saved!")
             st.rerun()
+
+    # DEDICATED SIGNATURE MANAGEMENT SECTION (Fully interactive outside st.form)
+    # ==============================================================================
+    st.markdown("---")
+    st.markdown("### ✍️ Professional HTML Email Signature")
+    st.caption("Paste or customize your HTML email signature. Supports table layouts, inline CSS, hosted logo images, and clickable contact links.")
+
+    shared_sig_key = "sig_shared_content"
+    if shared_sig_key not in st.session_state:
+        st.session_state[shared_sig_key] = current_configs.get("signature_html", "")
+
+    col_sig_mode, col_sig_template = st.columns([2.2, 1.2])
+    with col_sig_mode:
+        sig_mode = st.radio(
+            "Signature Editor Mode",
+            ["HTML Source Code (Recommended for Tables, Logos & Links)", "Visual WYSIWYG Editor"],
+            index=0,
+            horizontal=True,
+            key="sig_editor_mode_selector"
+        )
+    with col_sig_template:
+        st.write("") # vertical spacing
+        if st.button("📋 Load Sellomize Signature Template", help="Insert the branded Sellomize signature with logo, orange accent bar, and contact details"):
+            sample_sig = """<div>
+<table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif; max-width:650px; color:#073d35;">
+  <tbody>
+    <tr>
+      <td style="padding-right:20px; vertical-align:top;">
+        <img src="https://sellomize.com/wp-content/uploads/2026/05/cropped-amazon-aligators.png" width="110" style="display:block;" alt="Sellomize Logo">
+        <br>
+      </td>
+      <td style="padding:0 20px; border-left:2px solid #ff5a1f; vertical-align:top;">
+        <div style="font-size:20px; font-weight:bold; color:#073d35;">Jack Connor</div>
+        <div style="font-size:14px; color:#ff5a1f; margin:4px 0 8px;">Business Development Officer</div>
+        <div style="font-size:14px; line-height:1.7;">
+          <div><b>Sellomize</b></div>
+          <div>Amazon Brand Management</div>
+        </div>
+        <div style="margin-top:10px; font-size:14px; line-height:1.7;">
+          <div>✉️ <a href="mailto:info@sellomize.com" style="color:#073d35; text-decoration:none;">info@sellomize.com</a></div>
+          <div>📞 +1 646-351-0812</div>
+          <div>🌐 <a href="https://sellomize.com" target="_blank" style="color:#073d35; text-decoration:none;">sellomize.com</a></div>
+        </div>
+      </td>
+    </tr>
+  </tbody>
+</table>
+</div>"""
+            st.session_state[shared_sig_key] = sample_sig
+            set_config("signature_html", sample_sig)
+            st.success("Loaded Sellomize signature template!")
+            st.rerun()
+
+    if sig_mode.startswith("HTML Source Code"):
+        st.caption("💻 **Monospace HTML Source Mode**: Paste your raw `<table>`, `<tr>`, `<td>`, `<img src='...'>`, CSS, and links directly below.")
+        new_sig = st.text_area(
+            "HTML Signature Code",
+            value=st.session_state[shared_sig_key],
+            height=280,
+            help="Paste complete raw HTML table layout, inline styles, images, and links here.",
+            key="sig_editor_source"
+        )
+        st.session_state[shared_sig_key] = new_sig
+    else:
+        st.caption("✍️ **Visual WYSIWYG Mode**: Format standard rich text.")
+        if QUILL_AVAILABLE:
+            quill_res = st_quill(
+                value=st.session_state[shared_sig_key],
+                html=True,
+                key="sig_editor_quill"
+            )
+            if quill_res is not None:
+                st.session_state[shared_sig_key] = quill_res
+        else:
+            new_sig = st.text_area(
+                "Visual Rich Text",
+                value=st.session_state[shared_sig_key],
+                height=220,
+                key="sig_editor_fallback"
+            )
+            st.session_state[shared_sig_key] = new_sig
+
+    col_sig_save, _ = st.columns([1.5, 3.5])
+    with col_sig_save:
+        if st.button("💾 Save Signature", type="primary", use_container_width=True, key="save_signature_btn"):
+            set_config("signature_html", st.session_state[shared_sig_key])
+            st.success("✅ Signature successfully saved!")
+            st.rerun()
+
+    st.markdown("##### 👁️ Live Rendered Signature Preview")
+    st.caption("This is exactly how your signature will appear to prospective clients at the bottom of outgoing emails:")
+
+    current_sig = st.session_state.get(shared_sig_key, "").strip()
+    if current_sig:
+        st.markdown(
+            f"""<div style="background:#FFFFFF; color:#1E293B; padding:22px; border-radius:12px; border:1px solid rgba(255,255,255,0.2); box-shadow:0 6px 24px rgba(0,0,0,0.35); overflow-x:auto;">
+                {current_sig}
+            </div>""",
+            unsafe_allow_html=True
+        )
+    else:
+        st.info("No signature configured yet. Paste your HTML code above or click 'Load Sellomize Signature Template'.")
 
     st.markdown("---")
     col_outbox_hdr, col_dry_run = st.columns([3, 1])
