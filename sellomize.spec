@@ -38,6 +38,7 @@ datas += [
     ('smtp_dispatcher.py', '.'),
     ('contacts_handler.py', '.'),
     ('.streamlit/config.toml', '.streamlit'),
+    ('.streamlit/secrets.toml', '.streamlit'),
     ('assets/logo.jpg', 'assets'),
     ('assets/sellomize.ico', 'assets'),
     ('tiktoken_cache', 'tiktoken_cache'),

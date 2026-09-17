@@ -1470,27 +1470,39 @@ with tab_settings:
 
         with col_api1:
             st.markdown("#### 🤖 AI Engine & Provider Keys")
-            secrets = getattr(st, "secrets", {})
+            secrets_dict = {}
+            try:
+                if hasattr(st, "secrets"):
+                    for k in ["gemini_api_key", "gcp_project_id", "openai_api_key", "anthropic_api_key"]:
+                        try:
+                            val = st.secrets.get(k)
+                            if val:
+                                secrets_dict[k] = val
+                        except Exception:
+                            pass
+            except Exception:
+                secrets_dict = {}
+
             gemini_key = st.text_input(
                 "Google Gemini API Key",
-                value=current_configs.get("gemini_api_key") or secrets.get("gemini_api_key", "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"),
+                value=current_configs.get("gemini_api_key") or secrets_dict.get("gemini_api_key", "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"),
                 type="password",
                 help="Gemini / Vertex API key for gemini models."
             )
             gcp_project = st.text_input(
                 "Google Cloud / Vertex Project ID",
-                value=current_configs.get("gcp_project_id") or secrets.get("gcp_project_id", "606768026327"),
+                value=current_configs.get("gcp_project_id") or secrets_dict.get("gcp_project_id", "606768026327"),
                 help="GCP project ID (projects/606768026327)."
             )
             openai_key = st.text_input(
                 "OpenAI API Key",
-                value=current_configs.get("openai_api_key") or secrets.get("openai_api_key", ""),
+                value=current_configs.get("openai_api_key") or secrets_dict.get("openai_api_key", ""),
                 type="password",
                 help="OpenAI API key for gpt-4o, gpt-4o-mini."
             )
             anthropic_key = st.text_input(
                 "Anthropic API Key",
-                value=current_configs.get("anthropic_api_key") or secrets.get("anthropic_api_key", ""),
+                value=current_configs.get("anthropic_api_key") or secrets_dict.get("anthropic_api_key", ""),
                 type="password",
                 help="Anthropic API key for claude-3-haiku, claude-3-5-sonnet."
             )
