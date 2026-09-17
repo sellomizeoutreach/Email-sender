@@ -23,6 +23,13 @@ try:
 except ImportError:
     QUILL_AVAILABLE = False
 
+import importlib
+import database
+try:
+    importlib.reload(database)
+except Exception:
+    pass
+
 from database import (
     init_db,
     get_config,
