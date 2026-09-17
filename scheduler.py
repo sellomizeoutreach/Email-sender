@@ -39,7 +39,9 @@ from database import (
     get_next_available_smtp_account,
     increment_smtp_sent,
     advance_contact_followup,
-    init_db
+    is_within_sending_window,
+    init_db,
+    DB_FILE
 )
 from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces
 from tracker import inject_tracking_pixel, start_tracking_server
@@ -271,21 +273,27 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
 # Backward compatibility alias
 dispatch_email = dispatch_email_outlook
 
-def run_scheduler_cycle(dry_run: bool = False) -> int:
+def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) -> int:
     """
     Check database for due approved emails and dispatch them.
-    Explicitly enforces comparison against Local System Time (YYYY-MM-DD HH:MM:SS).
-    Applies human-like randomized delays between sends.
+    Explicitly enforces comparison against Local System Time (YYYY-MM-DD HH:MM:SS)
+    and validates whether current time falls within allowed business sending days & hours.
     """
+    target_db = db_path or DB_FILE
+    in_window, window_msg = is_within_sending_window(db_path=target_db)
+    if not in_window and not dry_run:
+        logger.info(f"[Scheduler] Dispatch paused: {window_msg}.")
+        return 0
+
     now_local_str = get_local_system_time_str()
-    due_emails = get_approved_due_emails(now_local_str)
+    due_emails = get_approved_due_emails(now_local_str, db_path=target_db)
     count = len(due_emails)
 
     if count > 0:
-        dispatch_method = get_config("dispatch_method", "hostinger_smtp")
+        dispatch_method = get_config("dispatch_method", "hostinger_smtp", db_path=target_db)
         try:
-            min_delay = float(get_config("min_delay_seconds", "20"))
-            max_delay = float(get_config("max_delay_seconds", "45"))
+            min_delay = float(get_config("min_delay_seconds", "20", db_path=target_db))
+            max_delay = float(get_config("max_delay_seconds", "45", db_path=target_db))
             if min_delay < 0: min_delay = 5.0
             if max_delay < min_delay: max_delay = min_delay + 5.0
         except Exception:

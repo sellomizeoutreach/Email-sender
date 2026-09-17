@@ -56,7 +56,9 @@ from database import (
     record_email_open,
     record_email_bounce,
     get_outreach_analytics,
-    get_bounced_contacts
+    get_bounced_contacts,
+    is_within_sending_window,
+    get_next_valid_sending_datetime
 )
 from smtp_dispatcher import (
     test_smtp_connection,
@@ -700,6 +702,119 @@ class TestEmailAutomationSystem(unittest.TestCase):
         failed_email, reason = extract_bounced_info_from_msg(msg)
         self.assertEqual(failed_email, "failed.target@somedomain.com")
         self.assertIn("550 5.1.1 User unknown", reason)
+
+    def test_21_sending_window_validation(self):
+        """Test active business days and hours sending window validation."""
+        set_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=TEST_DB)
+        set_config("sending_start_time", "09:00", db_path=TEST_DB)
+        set_config("sending_end_time", "18:00", db_path=TEST_DB)
+        set_config("enforce_sending_window", "true", db_path=TEST_DB)
+
+        # 1. Tuesday at 14:30 (Valid: weekday & inside 09:00-18:00)
+        tue_dt = datetime(2026, 9, 15, 14, 30).astimezone()
+        is_ok, msg = is_within_sending_window(tue_dt, db_path=TEST_DB)
+        self.assertTrue(is_ok)
+        self.assertIn("Inside outbound window", msg)
+
+        # 2. Tuesday at 21:00 (Invalid: past 18:00 cutoff)
+        tue_night = datetime(2026, 9, 15, 21, 0).astimezone()
+        is_ok, msg = is_within_sending_window(tue_night, db_path=TEST_DB)
+        self.assertFalse(is_ok)
+        self.assertIn("past daily cutoff time", msg)
+
+        # 3. Saturday at 12:00 (Invalid: weekend)
+        sat_dt = datetime(2026, 9, 19, 12, 0).astimezone()
+        is_ok, msg = is_within_sending_window(sat_dt, db_path=TEST_DB)
+        self.assertFalse(is_ok)
+        self.assertIn("outside allowed sending days", msg)
+
+        # 4. Disable enforcement -> 24/7 allowed
+        set_config("enforce_sending_window", "false", db_path=TEST_DB)
+        is_ok, msg = is_within_sending_window(sat_dt, db_path=TEST_DB)
+        self.assertTrue(is_ok)
+        self.assertIn("disabled", msg)
+
+        # Re-enable enforcement
+        set_config("enforce_sending_window", "true", db_path=TEST_DB)
+
+    def test_22_next_valid_sending_datetime(self):
+        """Test calculation of next valid sending datetime skipping weekends and off-hours."""
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        start_t = "09:00"
+        end_t = "18:00"
+
+        # 1. Friday 20:00 (after hours) -> should advance to Monday 09:00
+        fri_late = datetime(2026, 9, 18, 20, 0).astimezone()
+        next_slot = get_next_valid_sending_datetime(
+            base_dt=fri_late,
+            sending_days=days,
+            start_time_str=start_t,
+            end_time_str=end_t,
+            db_path=TEST_DB
+        )
+        self.assertEqual(next_slot.strftime("%A"), "Monday")
+        self.assertEqual(next_slot.strftime("%H:%M"), "09:00")
+
+        # 2. Wednesday 07:30 (before start) -> should snap to Wednesday 09:00
+        wed_early = datetime(2026, 9, 16, 7, 30).astimezone()
+        next_slot = get_next_valid_sending_datetime(
+            base_dt=wed_early,
+            sending_days=days,
+            start_time_str=start_t,
+            end_time_str=end_t,
+            db_path=TEST_DB
+        )
+        self.assertEqual(next_slot.strftime("%A"), "Wednesday")
+        self.assertEqual(next_slot.strftime("%H:%M"), "09:00")
+
+        # 3. Wednesday 11:00 with 15 min delay -> Wednesday 11:15
+        wed_mid = datetime(2026, 9, 16, 11, 0).astimezone()
+        next_slot = get_next_valid_sending_datetime(
+            base_dt=wed_mid,
+            delay_minutes=15,
+            sending_days=days,
+            start_time_str=start_t,
+            end_time_str=end_t,
+            db_path=TEST_DB
+        )
+        self.assertEqual(next_slot.strftime("%A"), "Wednesday")
+        self.assertEqual(next_slot.strftime("%H:%M"), "11:15")
+
+    def test_23_scheduler_window_enforcement(self):
+        """Test scheduler pausing when outside window and dispatching when window is open."""
+        # 1. Ensure an approved due email exists
+        now_local = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        eid = create_email(
+            email_html="<p>Window test</p>",
+            subject="Window Test",
+            recipient="test.window@agency.com",
+            status="Approved",
+            scheduled_time=now_local,
+            db_path=TEST_DB
+        )
+
+        # 2. Configure sending days to a day that is NOT today so window is closed
+        today_name = datetime.now().astimezone().strftime("%A")
+        opposite_day = "Sunday" if today_name != "Sunday" else "Monday"
+        set_config("sending_days", opposite_day, db_path=TEST_DB)
+        set_config("enforce_sending_window", "true", db_path=TEST_DB)
+
+        # 3. Cycle should return 0 (paused)
+        processed = run_scheduler_cycle(dry_run=False, db_path=TEST_DB)
+        self.assertEqual(processed, 0)
+
+        # Email should remain Approved
+        e_check = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(e_check["status"], "Approved")
+
+        # 4. Now open window by adding today_name to sending_days and setting hours 00:00 to 23:59
+        set_config("sending_days", f"{today_name},Monday,Tuesday,Wednesday,Thursday,Friday", db_path=TEST_DB)
+        set_config("sending_start_time", "00:00", db_path=TEST_DB)
+        set_config("sending_end_time", "23:59", db_path=TEST_DB)
+
+        # 5. Cycle in dry_run mode should now process the due email
+        processed_open = run_scheduler_cycle(dry_run=True, db_path=TEST_DB)
+        self.assertGreaterEqual(processed_open, 1)
 
 if __name__ == "__main__":
     unittest.main()

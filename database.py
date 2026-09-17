@@ -8,7 +8,7 @@ import sqlite3
 import os
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 
 def get_db_path() -> str:
     """
@@ -157,7 +157,11 @@ def init_db(db_path: str = DB_FILE):
         "bcc_email": "",
         "spam_blocklist": "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast",
         "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
-        "signature_html": "<p>Best regards,<br><strong>Listing Audit Team</strong><br><a href='https://example.com'>example.com</a></p>"
+        "signature_html": "<p>Best regards,<br><strong>Listing Audit Team</strong><br><a href='https://example.com'>example.com</a></p>",
+        "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
+        "sending_start_time": "09:00",
+        "sending_end_time": "18:00",
+        "enforce_sending_window": "true"
     }
 
     for key, val in default_configs.items():
@@ -241,6 +245,122 @@ def save_all_configs(config_dict: Dict[str, str], db_path: str = DB_FILE):
         """, (key, value))
     conn.commit()
     conn.close()
+
+# ------------------------------------------------------------------------------
+# CAMPAIGN SCHEDULE & SENDING WINDOW HELPERS
+# ------------------------------------------------------------------------------
+
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+def is_within_sending_window(
+    check_dt: Optional[datetime] = None,
+    db_path: str = DB_FILE
+) -> Tuple[bool, str]:
+    """
+    Evaluate whether a given datetime (or current local time) falls inside the
+    configured campaign sending window and allowed business days.
+    Returns (True, message) if dispatch is allowed, or (False, reason) if paused.
+    """
+    enforce_str = get_config("enforce_sending_window", "true", db_path=db_path) or "true"
+    enforce = enforce_str.strip().lower() in ["true", "1", "yes", "on"]
+    if not enforce:
+        return True, "Sending window enforcement disabled (24/7 delivery allowed)"
+
+    dt = check_dt or datetime.now().astimezone()
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+
+    day_name = dt.strftime("%A")
+    raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
+    allowed_days = [d.strip().capitalize() for d in raw_days.split(",") if d.strip()]
+    if not allowed_days:
+        allowed_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    if day_name not in allowed_days:
+        return False, f"Today ({day_name}) is outside allowed sending days ({', '.join(allowed_days)})"
+
+    start_str = (get_config("sending_start_time", "09:00", db_path=db_path) or "09:00").strip()
+    end_str = (get_config("sending_end_time", "18:00", db_path=db_path) or "18:00").strip()
+
+    try:
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+    except Exception:
+        sh, sm, eh, em = 9, 0, 18, 0
+
+    curr_mins = dt.hour * 60 + dt.minute
+    start_mins = sh * 60 + sm
+    end_mins = eh * 60 + em
+
+    if curr_mins < start_mins:
+        return False, f"Current time ({dt.strftime('%H:%M')}) is before daily start time ({start_str})"
+    if curr_mins >= end_mins:
+        return False, f"Current time ({dt.strftime('%H:%M')}) is past daily cutoff time ({end_str})"
+
+    return True, f"Inside outbound window ({day_name} {start_str}-{end_str})"
+
+def get_next_valid_sending_datetime(
+    base_dt: Optional[datetime] = None,
+    delay_minutes: int = 0,
+    sending_days: Optional[List[str]] = None,
+    start_time_str: Optional[str] = None,
+    end_time_str: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> datetime:
+    """
+    Calculate the next valid sending datetime adhering to allowed days of week
+    and daily working hours. If outside hours or on a weekend/pause day, advances
+    to the next allowed day at start_time.
+    """
+    dt = base_dt or datetime.now().astimezone()
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+
+    if delay_minutes > 0:
+        dt = dt + timedelta(minutes=delay_minutes)
+
+    if sending_days is not None and len(sending_days) > 0:
+        allowed_days = [d.strip().capitalize() for d in sending_days if d.strip()]
+    else:
+        raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
+        allowed_days = [d.strip().capitalize() for d in raw_days.split(",") if d.strip()]
+        if not allowed_days:
+            allowed_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    s_str = (start_time_str or get_config("sending_start_time", "09:00", db_path=db_path) or "09:00").strip()
+    e_str = (end_time_str or get_config("sending_end_time", "18:00", db_path=db_path) or "18:00").strip()
+
+    try:
+        sh, sm = map(int, s_str.split(":"))
+        eh, em = map(int, e_str.split(":"))
+    except Exception:
+        sh, sm, eh, em = 9, 0, 18, 0
+
+    start_mins = sh * 60 + sm
+    end_mins = eh * 60 + em
+
+    # Loop up to 14 days to find next valid time slot
+    for _ in range(14):
+        day_name = dt.strftime("%A")
+        curr_mins = dt.hour * 60 + dt.minute
+
+        if day_name in allowed_days:
+            if curr_mins < start_mins:
+                # Before start time today -> snap to start time today
+                return dt.replace(hour=sh, minute=sm, second=0, microsecond=0)
+            elif curr_mins < end_mins:
+                # Within window today -> use as is
+                return dt
+            else:
+                # Past end time today -> advance to tomorrow at start time
+                tomorrow = dt + timedelta(days=1)
+                dt = tomorrow.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        else:
+            # Non-sending day -> advance to tomorrow at start time
+            tomorrow = dt + timedelta(days=1)
+            dt = tomorrow.replace(hour=sh, minute=sm, second=0, microsecond=0)
+
+    return dt
 
 # ------------------------------------------------------------------------------
 # CONTACTS CRM HELPERS

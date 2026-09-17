@@ -93,7 +93,10 @@ from database import (
     get_smtp_accounts,
     delete_smtp_account,
     update_smtp_account,
-    delete_email
+    delete_email,
+    is_within_sending_window,
+    get_next_valid_sending_datetime,
+    WEEKDAY_NAMES
 )
 from smtp_dispatcher import (
     test_smtp_connection,
@@ -1768,6 +1771,51 @@ with tab_campaign:
             placeholder="Add any additional constraints for LiteLLM..."
         )
 
+        # Campaign Sending Days & Daily Working Hours Window
+        with st.expander("🕒 Campaign Sending Days & Working Hours Window", expanded=True):
+            st.caption("Configure which days and hours this campaign should dispatch. Off-hours, weekend, or holiday timeslots will automatically advance to the next approved business morning.")
+
+            preset_choice = st.radio(
+                "Delivery Schedule Preset",
+                ["💼 Business Days (Mon - Fri, 09:00 - 18:00)", "⚡ 24/7 Continuous (All 7 Days)", "🏖️ Custom Schedule"],
+                horizontal=True,
+                key="camp_sched_preset"
+            )
+
+            if preset_choice.startswith("💼 Business"):
+                camp_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+                camp_start = "09:00"
+                camp_end = "18:00"
+                st.caption("✅ Sending restricted strictly to Monday through Friday from 09:00 AM to 06:00 PM.")
+            elif preset_choice.startswith("⚡ 24/7"):
+                camp_days = list(WEEKDAY_NAMES)
+                camp_start = "00:00"
+                camp_end = "23:59"
+                st.caption("⚡ Continuous dispatch active 24 hours a day, 7 days a week.")
+            else:
+                col_sd1, col_sd2, col_sd3 = st.columns([2, 1, 1])
+                with col_sd1:
+                    camp_days = st.multiselect("Allowed Sending Days", WEEKDAY_NAMES, default=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], key="camp_custom_days")
+                with col_sd2:
+                    camp_start = st.text_input("Daily Start Time", value="09:00", help="HH:MM (24-hr)", key="camp_custom_start")
+                with col_sd3:
+                    camp_end = st.text_input("Daily Cutoff Time", value="18:00", help="HH:MM (24-hr)", key="camp_custom_end")
+
+            col_stag1, col_stag2 = st.columns([1.5, 2.5])
+            with col_stag1:
+                auto_stagger = st.checkbox("Auto-stagger send times across window", value=True, help="Evenly space each prospect's scheduled time to simulate human cadence.")
+            with col_stag2:
+                spacing_minutes = st.number_input("Spacing Between Prospects (Minutes)", min_value=1, max_value=120, value=5, disabled=not auto_stagger, key="camp_spacing_mins")
+
+            # Show next starting time preview
+            first_slot = get_next_valid_sending_datetime(
+                base_dt=datetime.now(),
+                sending_days=camp_days,
+                start_time_str=camp_start,
+                end_time_str=camp_end
+            )
+            st.info(f"🕒 **First Delivery Slot**: Earliest draft will be scheduled for **{first_slot.strftime('%A, %B %d at %H:%M')}** (Local Time).")
+
         st.markdown("<br>", unsafe_allow_html=True)
         generate_campaign_btn = st.button("🚀 Generate Campaign", type="primary", use_container_width=True)
 
@@ -1783,6 +1831,7 @@ with tab_campaign:
 
                 created_pending = 0
                 created_flagged = 0
+                last_sched_dt = first_slot
 
                 for idx, cid in enumerate(selected_contact_ids):
                     contact = get_contact_by_id(cid)
@@ -1821,18 +1870,31 @@ with tab_campaign:
                         notes = None
                         created_pending += 1
 
-                    # 5. Save to database
+                    # Calculate scheduled send time according to campaign schedule & staggering
+                    offset_mins = (idx * int(spacing_minutes)) if auto_stagger else 0
+                    sched_dt = get_next_valid_sending_datetime(
+                        base_dt=datetime.now(),
+                        delay_minutes=offset_mins,
+                        sending_days=camp_days,
+                        start_time_str=camp_start,
+                        end_time_str=camp_end
+                    )
+                    last_sched_dt = sched_dt
+                    scheduled_time_str = sched_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+                    # 5. Save to database with computed valid schedule time
                     create_email(
                         email_html=final_html,
                         subject=final_subject,
                         recipient=contact["email"],
                         status=status,
-                        revision_notes=notes
+                        revision_notes=notes,
+                        scheduled_time=scheduled_time_str
                     )
 
                     progress_bar.progress((idx + 1) / len(selected_contact_ids))
 
-                st.success(f"🎉 Campaign Generation Complete! Created **{created_pending}** Pending draft(s) and **{created_flagged}** Flagged draft(s).")
+                st.success(f"🎉 Campaign Generation Complete! Created **{created_pending}** Pending draft(s) and **{created_flagged}** Flagged draft(s) scheduled between **{first_slot.strftime('%A %H:%M')}** and **{last_sched_dt.strftime('%A, %b %d at %H:%M')}**.")
                 if created_flagged > 0:
                     st.warning(f"⚠️ {created_flagged} draft(s) were flagged for containing restricted negative keywords. Check the Review Queue to Auto-Rewrite them.")
 
@@ -2462,6 +2524,42 @@ with tab_settings:
                 help="LiteLLM will inject a strict forbidding instruction during prompt execution."
             )
 
+            st.markdown("#### 🕒 Business Hours & Active Sending Days")
+            st.caption("Define which days and times outbound emails are permitted to dispatch. Off-hours and weekends will be automatically held until the next business window.")
+
+            raw_saved_days = current_configs.get("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday")
+            saved_days_list = [d.strip() for d in raw_saved_days.split(",") if d.strip()]
+            cfg_sending_days = st.multiselect(
+                "Global Allowed Sending Days",
+                WEEKDAY_NAMES,
+                default=[d for d in saved_days_list if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+                help="Emails will only dispatch on these days of the week."
+            )
+
+            col_win1, col_win2 = st.columns(2)
+            with col_win1:
+                cfg_start_time = st.text_input(
+                    "Daily Sending Start Time",
+                    value=current_configs.get("sending_start_time", "09:00"),
+                    help="Format: HH:MM (24-hour clock, e.g. 09:00)"
+                )
+            with col_win2:
+                cfg_end_time = st.text_input(
+                    "Daily Sending Cutoff Time",
+                    value=current_configs.get("sending_end_time", "18:00"),
+                    help="Format: HH:MM (24-hour clock, e.g. 18:00)"
+                )
+
+            cfg_enforce = st.checkbox(
+                "Enforce Sending Window (Pause outbound sending on weekends and after-hours)",
+                value=(current_configs.get("enforce_sending_window", "true").lower() in ["true", "1", "yes"]),
+                help="When enabled, the scheduler loop sleeps during off-hours and resumes automatically when the window opens."
+            )
+
+            is_open, window_status_msg = is_within_sending_window()
+            status_badge = '<span style="background:rgba(16,185,129,0.15); color:#34D399; border:1px solid #10B981; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.82rem;">🟢 WINDOW OPEN</span>' if is_open else '<span style="background:rgba(239,68,68,0.15); color:#F87171; border:1px solid #EF4444; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.82rem;">🔴 WINDOW PAUSED</span>'
+            st.markdown(f"<div style='margin-top:4px;'>{status_badge} <span style='color:#94A3B8; font-size:0.82rem; margin-left:6px;'>{window_status_msg}</span></div>", unsafe_allow_html=True)
+
         submit_config = st.form_submit_button("💾 Save System & AI Settings", type="primary", use_container_width=True)
 
         if submit_config:
@@ -2479,7 +2577,11 @@ with tab_settings:
                 "sender_email": sender_email,
                 "bcc_email": bcc_email,
                 "negative_keywords": negative_keywords_val,
-                "spam_blocklist": spam_blocklist_val
+                "spam_blocklist": spam_blocklist_val,
+                "sending_days": ", ".join(cfg_sending_days),
+                "sending_start_time": cfg_start_time.strip(),
+                "sending_end_time": cfg_end_time.strip(),
+                "enforce_sending_window": "true" if cfg_enforce else "false"
             }
             save_all_configs(new_configs)
             st.success("✅ System settings successfully saved!")
