@@ -9,10 +9,11 @@ import re
 import socket
 import logging
 import threading
+import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
-from database import record_email_open, get_config
+from database import record_email_open, record_email_click, get_config
 
 logger = logging.getLogger("tracker")
 
@@ -61,6 +62,35 @@ class TrackingRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Expires", "0")
             self.end_headers()
             self.wfile.write(TRANSPARENT_PIXEL_PNG)
+            return
+
+        # 3. Email Link Click Tracking Endpoint: /track/click/<email_id>?url=<encoded_destination>
+        click_match = re.search(r"^/track/click/(\d+)", path)
+        if click_match:
+            email_id_str = click_match.group(1)
+            target_url = ""
+            try:
+                email_id = int(email_id_str)
+                parsed_url = urllib.parse.urlparse(path)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                raw_target = query_params.get("url", [""])[0]
+                if raw_target:
+                    target_url = urllib.parse.unquote(raw_target).strip()
+
+                if target_url:
+                    record_email_click(email_id, clicked_url=target_url)
+                    logger.info(f"[Click Tracker] Recorded click for Email ID #{email_id} -> {target_url} (Client: {self.client_address[0]})")
+            except Exception as e:
+                logger.error(f"[Click Tracker] Error processing click for ID #{email_id_str}: {e}")
+
+            # Redirect user to the destination URL (or fallback to root)
+            if not target_url or not (target_url.startswith("http://") or target_url.startswith("https://")):
+                target_url = "/"
+
+            self.send_response(302)
+            self.send_header("Location", target_url)
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.end_headers()
             return
 
         # 404 for any other path
@@ -142,3 +172,50 @@ def inject_tracking_pixel(html_content: str, email_id: int, base_url: Optional[s
         return html_content.replace("</body>", f"{pixel_tag}</body>", 1)
     else:
         return f"{html_content}\n{pixel_tag}"
+
+def wrap_links_with_click_tracking(html_content: str, email_id: int, base_url: Optional[str] = None) -> str:
+    """
+    Rewrite <a href="..."> links in HTML email to pass through click tracking redirect.
+    Preserves existing links, skips mailto:, tel:, #anchors, javascript:, and existing /track/ URLs.
+    """
+    if not html_content:
+        return html_content
+
+    server_url = (base_url or get_tracking_base_url()).rstrip("/")
+    tracking_prefix = f"{server_url}/track/click/{email_id}?url="
+
+    def replace_link(match):
+        full_tag = match.group(0)
+        prefix = match.group(1)
+        quote = match.group(2)
+        url = match.group(3)
+        suffix = match.group(4)
+
+        clean_url = url.strip()
+        if (
+            not clean_url
+            or clean_url.startswith("#")
+            or clean_url.startswith("mailto:")
+            or clean_url.startswith("tel:")
+            or clean_url.startswith("javascript:")
+            or "/track/click/" in clean_url
+            or "/track/open/" in clean_url
+        ):
+            return full_tag
+
+        encoded_url = urllib.parse.quote(clean_url, safe="")
+        new_href = f"{tracking_prefix}{encoded_url}"
+        return f'{prefix}{quote}{new_href}{quote}{suffix}'
+
+    pattern = re.compile(
+        r'(<a\s+(?:[^>]*?\s+)?href=)(["\'])(.*?)\2([^>]*>)',
+        re.IGNORECASE | re.DOTALL
+    )
+    return pattern.sub(replace_link, html_content)
+
+def inject_tracking_and_links(html_content: str, email_id: int, base_url: Optional[str] = None) -> str:
+    """
+    Convenience helper to rewrite links for click tracking and inject open tracking pixel.
+    """
+    content_with_links = wrap_links_with_click_tracking(html_content, email_id, base_url=base_url)
+    return inject_tracking_pixel(content_with_links, email_id, base_url=base_url)

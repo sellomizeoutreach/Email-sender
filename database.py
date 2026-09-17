@@ -119,7 +119,10 @@ def init_db(db_path: str = DB_FILE):
         ("opened_at", "TEXT DEFAULT ''"),
         ("open_count", "INTEGER DEFAULT 0"),
         ("is_bounced", "INTEGER DEFAULT 0"),
-        ("bounce_reason", "TEXT DEFAULT ''")
+        ("bounce_reason", "TEXT DEFAULT ''"),
+        ("clicked_at", "TEXT DEFAULT ''"),
+        ("click_count", "INTEGER DEFAULT 0"),
+        ("last_clicked_url", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in email_migrations:
         try:
@@ -130,6 +133,7 @@ def init_db(db_path: str = DB_FILE):
     # High-performance database indexes for sub-millisecond query execution
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_status_sched ON emails(status, scheduled_time)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_recipient ON emails(recipient)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_click ON emails(click_count)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
 
@@ -1311,6 +1315,70 @@ def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
     conn.close()
     return True
 
+def record_email_click(email_id: int, clicked_url: str = "", db_path: str = DB_FILE) -> bool:
+    """
+    Called when a tracked link in an email is clicked.
+    Records timestamp, increments click_count, stores last_clicked_url,
+    and updates associated contact with 'Clicked Link' tag and audit note.
+    """
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM emails WHERE id = ?", (email_id,))
+    email_row = cursor.fetchone()
+    if not email_row:
+        conn.close()
+        return False
+
+    curr_clicked_at = email_row["clicked_at"] or now_iso
+    try:
+        curr_count = int(email_row["click_count"] or 0) + 1
+    except Exception:
+        curr_count = 1
+
+    cursor.execute("""
+        UPDATE emails SET clicked_at = ?, click_count = ?, last_clicked_url = ? WHERE id = ?
+    """, (curr_clicked_at, curr_count, (clicked_url or "")[:250], email_id))
+
+    # Update associated contact if found
+    recipient = email_row["recipient"]
+    if recipient:
+        cursor.execute("SELECT id, status, tags, notes FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (recipient.strip(),))
+        contact_row = cursor.fetchone()
+        if contact_row:
+            cid = contact_row["id"]
+            c_status = contact_row["status"] or ""
+
+            # Add 'Clicked Link' tag
+            old_tags = [t.strip() for t in (contact_row["tags"] or "").split(",") if t.strip()]
+            if "Clicked Link" not in old_tags:
+                old_tags.append("Clicked Link")
+            tags_str = ", ".join(sorted(list(set(old_tags))))
+
+            # Append note
+            curr_notes = contact_row["notes"] or ""
+            url_hint = f" ({clicked_url[:35]}...)" if clicked_url else ""
+            click_note = f"[Clicked Link: {today_str}{url_hint}]"
+            if click_note not in curr_notes:
+                updated_notes = f"{curr_notes} {click_note}".strip() if curr_notes else click_note
+            else:
+                updated_notes = curr_notes
+
+            # If lead hasn't replied or closed, promote status to Opened / Interested if still Not Contacted/Contacted
+            if c_status not in ["Replied", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]:
+                cursor.execute("""
+                    UPDATE contacts SET tags = ?, notes = ? WHERE id = ?
+                """, (tags_str, updated_notes, cid))
+            else:
+                cursor.execute("""
+                    UPDATE contacts SET tags = ?, notes = ? WHERE id = ?
+                """, (tags_str, updated_notes, cid))
+
+    conn.commit()
+    conn.close()
+    return True
+
 def record_email_bounce(recipient_email: str, bounce_reason: str = "", db_path: str = DB_FILE) -> int:
     """
     Mark all emails and contacts associated with recipient_email as bounced.
@@ -1482,11 +1550,16 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
     cursor.execute("SELECT COUNT(*) as total_bounced FROM emails WHERE is_bounced = 1 OR status = 'Bounced'")
     total_bounced = cursor.fetchone()["total_bounced"]
 
+    cursor.execute("SELECT COUNT(*) as total_clicked FROM emails WHERE status = 'Sent' AND click_count > 0")
+    total_clicked = cursor.fetchone()["total_clicked"]
+
     conn.close()
 
     open_rate = round((total_opened / total_sent * 100), 1) if total_sent > 0 else 0.0
     bounce_rate = round((total_bounced / total_sent * 100), 1) if total_sent > 0 else 0.0
     reply_rate = round((total_replied / contacted_count * 100), 1) if contacted_count > 0 else (round((total_replied / total_sent * 100), 1) if total_sent > 0 else 0.0)
+    click_rate = round((total_clicked / total_sent * 100), 1) if total_sent > 0 else 0.0
+    ctor_rate = round((total_clicked / total_opened * 100), 1) if total_opened > 0 else 0.0
 
     return {
         "total_contacts": total_contacts,
@@ -1498,6 +1571,9 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
         "bounce_rate": bounce_rate,
         "total_replied": total_replied,
         "reply_rate": reply_rate,
+        "total_clicked": total_clicked,
+        "click_rate": click_rate,
+        "ctor_rate": ctor_rate,
         "followups_due": followups_due
     }
 

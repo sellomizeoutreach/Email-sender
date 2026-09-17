@@ -56,6 +56,7 @@ from database import (
     record_email_open,
     record_email_bounce,
     record_email_reply,
+    record_email_click,
     get_outreach_analytics,
     get_bounced_contacts,
     get_replied_contacts,
@@ -70,7 +71,9 @@ from smtp_dispatcher import (
 )
 from tracker import (
     inject_tracking_pixel,
-    get_tracking_base_url
+    get_tracking_base_url,
+    wrap_links_with_click_tracking,
+    inject_tracking_and_links
 )
 from contacts_handler import (
     generate_csv_template,
@@ -929,6 +932,70 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("idx_contacts_status", contact_indexes)
 
         conn.close()
+
+    def test_26_click_tracking_redirect_and_telemetry(self):
+        """Test link click tracking, contact tag promotion, and analytics CTR calculations."""
+        # 1. Create a lead and sent email with a link
+        cid = create_contact("Claire Redfield", "claire@terrasave.org", "TerraSave", "Non-Profit", db_path=TEST_DB)
+        eid = create_email(
+            email_html='<p>Please check our <a href="https://agency.com/case-study">case study</a>!</p>',
+            subject="Case Study for TerraSave",
+            recipient="claire@terrasave.org",
+            status="Sent",
+            db_path=TEST_DB
+        )
+
+        # 2. Test link wrapping
+        wrapped = wrap_links_with_click_tracking(
+            html_content='<p>Please check our <a href="https://agency.com/case-study">case study</a>!</p>',
+            email_id=eid,
+            base_url="http://localhost:8502"
+        )
+        self.assertIn(f"/track/click/{eid}?url=", wrapped)
+        self.assertIn("https%3A%2F%2Fagency.com%2Fcase-study", wrapped)
+
+        # 3. Simulate click event
+        success = record_email_click(email_id=eid, clicked_url="https://agency.com/case-study", db_path=TEST_DB)
+        self.assertTrue(success)
+
+        # 4. Verify email row
+        e_check = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(e_check["click_count"], 1)
+        self.assertTrue(bool(e_check["clicked_at"]))
+        self.assertEqual(e_check["last_clicked_url"], "https://agency.com/case-study")
+
+        # 5. Verify contact updated with 'Clicked Link' tag and note
+        c_check = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertIn("Clicked Link", c_check["tags_list"])
+        self.assertIn("[Clicked Link:", c_check["notes"])
+
+        # 6. Verify analytics metrics
+        analytics = get_outreach_analytics(db_path=TEST_DB)
+        self.assertGreaterEqual(analytics["total_clicked"], 1)
+        self.assertGreater(analytics["click_rate"], 0.0)
+
+    def test_27_wrap_links_preserves_special_urls(self):
+        """Test that mailto:, tel:, #anchors, and tracking URLs are untouched while web links are wrapped."""
+        html_input = (
+            '<body>'
+            '<p><a href="mailto:support@agency.com">Email Us</a></p>'
+            '<p><a href="tel:+123456789">Call Us</a></p>'
+            '<p><a href="#section2">Jump</a></p>'
+            '<p><a href="https://calendly.com/agency/30min">Book Demo</a></p>'
+            '</body>'
+        )
+        wrapped = inject_tracking_and_links(html_input, email_id=99, base_url="http://localhost:8502")
+
+        # Special URLs must be preserved
+        self.assertIn('href="mailto:support@agency.com"', wrapped)
+        self.assertIn('href="tel:+123456789"', wrapped)
+        self.assertIn('href="#section2"', wrapped)
+
+        # Web URL must be wrapped
+        self.assertIn('/track/click/99?url=https%3A%2F%2Fcalendly.com%2Fagency%2F30min', wrapped)
+
+        # Open tracking pixel must also be injected before </body>
+        self.assertIn('/track/open/99.png', wrapped)
 
 if __name__ == "__main__":
     unittest.main()

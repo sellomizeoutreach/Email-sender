@@ -44,7 +44,7 @@ from database import (
     DB_FILE
 )
 from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces, scan_all_hostinger_inbox
-from tracker import inject_tracking_pixel, start_tracking_server
+from tracker import inject_tracking_pixel, inject_tracking_and_links, start_tracking_server
 
 # Configure logging
 logging.basicConfig(
@@ -153,7 +153,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
     signature_html = (get_config("signature_html") or "").strip()
     bcc_address = (get_config("bcc_email") or "").strip()
     combined_body = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
-    final_payload = inject_tracking_pixel(combined_body, email_id)
+    final_payload = inject_tracking_and_links(combined_body, email_id)
 
     if dry_run:
         logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
@@ -244,7 +244,7 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
             combined_body = f"{approved_email_html}<br><br>{signature_html}"
         else:
             combined_body = approved_email_html
-        final_payload = inject_tracking_pixel(combined_body, email_id)
+        final_payload = inject_tracking_and_links(combined_body, email_id)
 
         # Assign directly to HTMLBody
         mail.HTMLBody = final_payload
