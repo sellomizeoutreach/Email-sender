@@ -1385,9 +1385,9 @@ with tab_settings:
                 else:
                     with st.spinner(f"Verifying SMTP connection to {new_acc_host}:{new_acc_port}..."):
                         success, test_msg = test_smtp_connection(
-                            host=new_acc_host.strip(),
-                            port=int(new_acc_port),
-                            username=new_acc_email.strip(),
+                            smtp_host=new_acc_host.strip(),
+                            smtp_port=int(new_acc_port),
+                            email=new_acc_email.strip(),
                             password=new_acc_pass.strip()
                         )
                     if success:

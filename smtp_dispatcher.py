@@ -36,20 +36,22 @@ def html_to_plain_text(html_content: str) -> str:
         return "\n".join(l for l in lines if l)
 
 def test_smtp_connection(
-    smtp_host: str,
-    smtp_port: int,
-    email: str,
-    password: str,
-    timeout: int = 12
+    smtp_host: str = "",
+    smtp_port: int = 465,
+    email: str = "",
+    password: str = "",
+    timeout: int = 12,
+    **kwargs
 ) -> Tuple[bool, str]:
     """
     Test credentials and SSL/TLS handshake with Hostinger or any SMTP server.
+    Flexible signature accepting smtp_host/host, smtp_port/port, email/username.
     Returns (True, success_msg) or (False, error_msg).
     """
-    host = smtp_host.strip()
-    port = int(smtp_port)
-    user = email.strip()
-    pwd = password.strip()
+    host = (smtp_host or kwargs.get("host") or "").strip()
+    port = int(kwargs.get("port") or smtp_port or 465)
+    user = (email or kwargs.get("username") or "").strip()
+    pwd = (password or kwargs.get("password") or "").strip()
 
     if not host or not user or not pwd:
         return False, "Host, email address, and password are required."
