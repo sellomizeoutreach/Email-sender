@@ -5,7 +5,10 @@ connection testing, and error recovery.
 """
 
 import smtplib
-import imaplib
+try:
+    import imaplib
+except ImportError:
+    imaplib = None
 import email
 import ssl
 import re
@@ -241,6 +244,10 @@ def scan_hostinger_bounces(
     user = smtp_account.get("email", "").strip()
     pwd = smtp_account.get("password", "").strip()
     host = smtp_account.get("imap_host") or imap_host
+
+    if imaplib is None:
+        logger.warning("imaplib standard library module is not available; IMAP bounce scanning skipped.")
+        return []
 
     if not user or not pwd:
         return []

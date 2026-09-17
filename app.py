@@ -31,6 +31,9 @@ import importlib.util
 # Ensure local project modules are always loaded directly from the current script directory (.py files)
 # rather than any stale frozen bytecode embedded inside PyInstaller's PYZ.
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
+if current_script_dir not in sys.path:
+    sys.path.insert(0, current_script_dir)
+
 for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "tracker", "scheduler"]:
     py_path = os.path.join(current_script_dir, f"{mod_name}.py")
     if os.path.exists(py_path):
@@ -38,10 +41,11 @@ for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine"
             spec = importlib.util.spec_from_file_location(mod_name, py_path)
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
-                sys.modules[mod_name] = mod
                 spec.loader.exec_module(mod)
-        except Exception:
-            pass
+                sys.modules[mod_name] = mod
+        except Exception as mod_err:
+            if mod_name in sys.modules and getattr(sys.modules[mod_name], "__file__", None) == py_path:
+                del sys.modules[mod_name]
 
 from database import (
     init_db,
