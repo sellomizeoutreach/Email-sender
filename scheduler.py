@@ -43,7 +43,7 @@ from database import (
     init_db,
     DB_FILE
 )
-from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces
+from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces, scan_all_hostinger_inbox
 from tracker import inject_tracking_pixel, start_tracking_server
 
 # Configure logging
@@ -338,13 +338,17 @@ def start_scheduler_loop(interval: int = 60, stop_event=None):
         except Exception as cycle_err:
             logger.error(f"Unexpected error in scheduler cycle: {cycle_err}")
 
-        # Periodically scan Hostinger IMAP for NDR bounces (e.g. every 10 cycles ~ 10 mins)
+        # Periodically scan Hostinger IMAP for NDR bounces & prospect replies (e.g. every 10 cycles ~ 10 mins)
         if cycle_counter % 10 == 0:
             try:
-                logger.info("Running scheduled Hostinger bounce scan...")
-                scan_all_hostinger_bounces()
-            except Exception as b_err:
-                logger.debug(f"Periodic bounce check skipped: {b_err}")
+                logger.info("Running scheduled Hostinger inbox scan (bounces & prospect replies)...")
+                inbox_stats = scan_all_hostinger_inbox()
+                b_cnt = inbox_stats.get("total_bounces", 0)
+                r_cnt = inbox_stats.get("total_replies", 0)
+                if b_cnt > 0 or r_cnt > 0:
+                    logger.info(f"[Scheduler] IMAP scan detected {b_cnt} bounce(s) and {r_cnt} prospect reply/replies.")
+            except Exception as scan_err:
+                logger.debug(f"Periodic inbox check skipped: {scan_err}")
 
         # Sleep in increments of 1 second for responsive shutdown
         slept = 0

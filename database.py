@@ -70,6 +70,8 @@ def init_db(db_path: str = DB_FILE):
         ("next_follow_up", "TEXT DEFAULT ''"),
         ("owner", "TEXT DEFAULT ''"),
         ("notes", "TEXT DEFAULT ''"),
+        ("last_reply_at", "TEXT DEFAULT ''"),
+        ("reply_subject", "TEXT DEFAULT ''"),
     ]
     for col_name, col_def in contact_migrations:
         try:
@@ -124,6 +126,12 @@ def init_db(db_path: str = DB_FILE):
             cursor.execute(f"ALTER TABLE emails ADD COLUMN {col_name} {col_def}")
         except Exception:
             pass
+
+    # High-performance database indexes for sub-millisecond query execution
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_status_sched ON emails(status, scheduled_time)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_recipient ON emails(recipient)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
 
     # 5. SMTP Accounts table for Hostinger / direct SMTP multi-account rotation
     cursor.execute("""
@@ -441,6 +449,8 @@ def _populate_contact_defaults(d: Dict[str, Any]) -> Dict[str, Any]:
     d["next_follow_up"] = d.get("next_follow_up") or ""
     d["owner"] = d.get("owner") or ""
     d["notes"] = d.get("notes") or ""
+    d["last_reply_at"] = d.get("last_reply_at") or ""
+    d["reply_subject"] = d.get("reply_subject") or ""
     return d
 
 def get_contacts(
@@ -1343,8 +1353,102 @@ def record_email_bounce(recipient_email: str, bounce_reason: str = "", db_path: 
     conn.close()
     return len(contact_rows)
 
+def record_email_reply(
+    sender_email: str,
+    reply_subject: str = "",
+    reply_body_snippet: str = "",
+    received_at: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> Dict[str, Any]:
+    """
+    Called when an incoming reply from a contact/lead is detected:
+    1. Updates contact status to 'Replied' and tags with 'Replied'.
+    2. Records reply timestamp and notes.
+    3. Automatically cancels all pending/approved follow-up emails queued for this contact.
+    Returns details of affected contacts and cancelled emails.
+    """
+    clean_email = sender_email.strip().lower()
+    if not clean_email:
+        return {"contact_found": False, "cancelled_drafts_count": 0, "cancelled_email_ids": []}
+
+    now_iso = received_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # 1. Update contact(s)
+    cursor.execute("SELECT id, name, tags, notes, status FROM contacts WHERE LOWER(TRIM(email)) = ?", (clean_email,))
+    contact_rows = cursor.fetchall()
+    contact_found = len(contact_rows) > 0
+    contact_names = []
+
+    for crow in contact_rows:
+        cid = crow["id"]
+        contact_names.append(crow["name"])
+        old_tags = [t.strip() for t in (crow["tags"] or "").split(",") if t.strip()]
+        if "Replied" not in old_tags:
+            old_tags.append("Replied")
+        tags_str = ", ".join(sorted(list(set(old_tags))))
+
+        curr_notes = crow["notes"] or ""
+        snippet_part = f" - '{reply_subject[:40]}'" if reply_subject else ""
+        reply_note = f"[Replied: {today_str}{snippet_part}]"
+        if reply_note not in curr_notes:
+            updated_notes = f"{curr_notes} {reply_note}".strip() if curr_notes else reply_note
+        else:
+            updated_notes = curr_notes
+
+        cursor.execute("""
+            UPDATE contacts SET
+                status = 'Replied',
+                contacted = 'Yes',
+                last_contact_date = ?,
+                last_reply_at = ?,
+                reply_subject = ?,
+                tags = ?,
+                notes = ?
+            WHERE id = ?
+        """, (today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
+
+    # 2. Auto-cancel all pending / approved outbox emails for this contact
+    cursor.execute("""
+        SELECT id FROM emails
+        WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved')
+    """, (clean_email,))
+    pending_emails = cursor.fetchall()
+    cancelled_ids = [r["id"] for r in pending_emails]
+
+    if cancelled_ids:
+        cursor.execute("""
+            UPDATE emails SET
+                status = 'Cancelled',
+                error_message = 'Auto-cancelled: Prospect replied to outreach'
+            WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved')
+        """, (clean_email,))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "contact_found": contact_found,
+        "contact_names": contact_names,
+        "cancelled_drafts_count": len(cancelled_ids),
+        "cancelled_email_ids": cancelled_ids,
+        "sender_email": clean_email
+    }
+
+def get_replied_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all contacts marked as Replied."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM contacts WHERE status = 'Replied' OR tags LIKE '%Replied%' ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [_populate_contact_defaults(dict(r)) for r in rows]
+
 def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
-    """Calculate core outreach KPIs: Sent, Opens, Open Rate %, Bounces, Bounce Rate %, Follow-ups Due."""
+    """Calculate core outreach KPIs: Sent, Opens, Open Rate %, Bounces, Bounce Rate %, Replies, Reply Rate %, Follow-ups Due."""
     today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -1361,9 +1465,12 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
         WHERE next_follow_up IS NOT NULL
           AND next_follow_up != ''
           AND next_follow_up <= ?
-          AND status NOT IN ('Bounced', 'Do Not Contact', 'Closed Won', 'Closed Lost')
+          AND status NOT IN ('Bounced', 'Do Not Contact', 'Closed Won', 'Closed Lost', 'Replied')
     """, (today_str,))
     followups_due = cursor.fetchone()["due"]
+
+    cursor.execute("SELECT COUNT(*) as total_replied FROM contacts WHERE status = 'Replied' OR tags LIKE '%Replied%'")
+    total_replied = cursor.fetchone()["total_replied"]
 
     # Emails stats
     cursor.execute("SELECT COUNT(*) as total_sent FROM emails WHERE status = 'Sent'")
@@ -1379,6 +1486,7 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
 
     open_rate = round((total_opened / total_sent * 100), 1) if total_sent > 0 else 0.0
     bounce_rate = round((total_bounced / total_sent * 100), 1) if total_sent > 0 else 0.0
+    reply_rate = round((total_replied / contacted_count * 100), 1) if contacted_count > 0 else (round((total_replied / total_sent * 100), 1) if total_sent > 0 else 0.0)
 
     return {
         "total_contacts": total_contacts,
@@ -1388,6 +1496,8 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
         "open_rate": open_rate,
         "total_bounced": total_bounced,
         "bounce_rate": bounce_rate,
+        "total_replied": total_replied,
+        "reply_rate": reply_rate,
         "followups_due": followups_due
     }
 

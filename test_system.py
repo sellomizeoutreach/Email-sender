@@ -55,8 +55,10 @@ from database import (
     advance_contact_followup,
     record_email_open,
     record_email_bounce,
+    record_email_reply,
     get_outreach_analytics,
     get_bounced_contacts,
+    get_replied_contacts,
     is_within_sending_window,
     get_next_valid_sending_datetime
 )
@@ -815,6 +817,118 @@ class TestEmailAutomationSystem(unittest.TestCase):
         # 5. Cycle in dry_run mode should now process the due email
         processed_open = run_scheduler_cycle(dry_run=True, db_path=TEST_DB)
         self.assertGreaterEqual(processed_open, 1)
+
+    def test_24_reply_detection_and_auto_cancellation(self):
+        """Test prospect reply detection, status updating to Replied, and outbox follow-up auto-cancellation."""
+        # 1. Create a prospect contact
+        cid = create_contact("Alex Mercer", "alex@mercerretail.com", "Mercer Retail", "E-Commerce", {"Role": "Founder"}, db_path=TEST_DB)
+
+        # 2. Simulate initial email sent
+        e1 = create_email(
+            email_html="<p>Initial Pitch</p>",
+            subject="Listing Audit for Mercer Retail",
+            recipient="alex@mercerretail.com",
+            status="Sent",
+            db_path=TEST_DB
+        )
+        advance_contact_followup("alex@mercerretail.com", delay_days=4, db_path=TEST_DB)
+        c_before = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_before["status"], "Contacted")
+        self.assertEqual(c_before["follow_ups_sent"], 1)
+
+        # 3. Queue 2 future follow-up drafts in Outbox (1 Approved, 1 Pending)
+        e2 = create_email(
+            email_html="<p>Follow Up #1</p>",
+            subject="Following up on Listing Audit",
+            recipient="alex@mercerretail.com",
+            status="Approved",
+            scheduled_time="2026-09-22 10:00:00",
+            db_path=TEST_DB
+        )
+        e3 = create_email(
+            email_html="<p>Follow Up #2</p>",
+            subject="Quick video walkthrough",
+            recipient="alex@mercerretail.com",
+            status="Pending",
+            scheduled_time="2026-09-26 10:00:00",
+            db_path=TEST_DB
+        )
+
+        # Also create an email for a different prospect to verify it is NOT cancelled
+        other_e = create_email(
+            email_html="<p>Other Pitch</p>",
+            subject="Different prospect",
+            recipient="other@brand.com",
+            status="Approved",
+            scheduled_time="2026-09-22 10:00:00",
+            db_path=TEST_DB
+        )
+
+        # 4. Now simulate incoming reply from alex@mercerretail.com
+        reply_res = record_email_reply(
+            sender_email="alex@mercerretail.com",
+            reply_subject="Re: Listing Audit for Mercer Retail - Let's talk!",
+            reply_body_snippet="Sounds interesting, are you free this Thursday at 2pm?",
+            received_at="2026-09-19 14:22:00",
+            db_path=TEST_DB
+        )
+
+        self.assertTrue(reply_res["contact_found"])
+        self.assertEqual(reply_res["cancelled_drafts_count"], 2)
+        self.assertIn(e2, reply_res["cancelled_email_ids"])
+        self.assertIn(e3, reply_res["cancelled_email_ids"])
+
+        # 5. Check contact record: status must be 'Replied', note appended, tag added
+        c_after = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_after["status"], "Replied")
+        self.assertIn("Replied", c_after["tags_list"])
+        self.assertIn("[Replied:", c_after["notes"])
+        self.assertEqual(c_after["last_reply_at"], "2026-09-19 14:22:00")
+        self.assertIn("Let's talk", c_after["reply_subject"])
+
+        # 6. Check emails table: e2 and e3 must be 'Cancelled', e1 remains 'Sent', other_e remains 'Approved'
+        e1_check = get_email_by_id(e1, db_path=TEST_DB)
+        self.assertEqual(e1_check["status"], "Sent")
+
+        e2_check = get_email_by_id(e2, db_path=TEST_DB)
+        self.assertEqual(e2_check["status"], "Cancelled")
+        self.assertIn("Auto-cancelled", e2_check["error_message"])
+
+        e3_check = get_email_by_id(e3, db_path=TEST_DB)
+        self.assertEqual(e3_check["status"], "Cancelled")
+        self.assertIn("Auto-cancelled", e3_check["error_message"])
+
+        other_check = get_email_by_id(other_e, db_path=TEST_DB)
+        self.assertEqual(other_check["status"], "Approved")
+
+        # 7. Check analytics
+        analytics = get_outreach_analytics(db_path=TEST_DB)
+        self.assertGreaterEqual(analytics["total_replied"], 1)
+        self.assertGreater(analytics["reply_rate"], 0.0)
+
+        # 8. Check get_replied_contacts
+        replied_list = get_replied_contacts(db_path=TEST_DB)
+        self.assertTrue(any(r["email"] == "alex@mercerretail.com" for r in replied_list))
+
+    def test_25_db_indexes_and_performance(self):
+        """Test database indexes are properly created for high performance."""
+        from database import get_connection
+        conn = get_connection(TEST_DB)
+        cursor = conn.cursor()
+
+        # Check emails table indexes
+        cursor.execute("PRAGMA index_list('emails')")
+        email_indexes = [row["name"] for row in cursor.fetchall()]
+        self.assertIn("idx_emails_status_sched", email_indexes)
+        self.assertIn("idx_emails_recipient", email_indexes)
+
+        # Check contacts table indexes
+        cursor.execute("PRAGMA index_list('contacts')")
+        contact_indexes = [row["name"] for row in cursor.fetchall()]
+        self.assertIn("idx_contacts_email", contact_indexes)
+        self.assertIn("idx_contacts_status", contact_indexes)
+
+        conn.close()
 
 if __name__ == "__main__":
     unittest.main()

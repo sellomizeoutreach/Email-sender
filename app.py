@@ -62,8 +62,10 @@ from database import (
     advance_contact_followup,
     record_email_open,
     record_email_bounce,
+    record_email_reply,
     get_outreach_analytics,
     get_bounced_contacts,
+    get_replied_contacts,
     get_all_distinct_tags,
     get_predefined_tags,
     get_contacts_by_tag,
@@ -101,7 +103,9 @@ from database import (
 from smtp_dispatcher import (
     test_smtp_connection,
     scan_hostinger_bounces,
-    scan_all_hostinger_bounces
+    scan_all_hostinger_bounces,
+    scan_hostinger_inbox,
+    scan_all_hostinger_inbox
 )
 from tracker import (
     start_tracking_server,
@@ -309,18 +313,18 @@ st.markdown("""
     /* Executive Glass KPI Stat Cards */
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
-        gap: 1.1rem;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 0.9rem;
         margin-bottom: 1.75rem;
     }
-    @media (max-width: 1100px) {
+    @media (max-width: 1280px) {
         .stats-grid {
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
         }
     }
     @media (max-width: 768px) {
         .stats-grid {
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, 1fr);
         }
     }
     .stat-card {
@@ -775,6 +779,14 @@ st.markdown(f"""
         </div>
         <div class="stat-value" style="color: #34D399;">{analytics["open_rate"]}%</div>
         <div class="stat-sub">{analytics["total_opened"]} Opened Pixel</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-label">Replies</span>
+            <span class="stat-icon-badge">💬</span>
+        </div>
+        <div class="stat-value" style="color: #A78BFA;">{analytics.get("total_replied", 0)}</div>
+        <div class="stat-sub">{analytics.get("reply_rate", 0.0)}% Reply Rate</div>
     </div>
     <div class="stat-card {bounced_card_class}">
         <div class="stat-header">
@@ -1275,7 +1287,7 @@ with tab_crm:
                     st.markdown(f"🏢 {contact.get('company') or 'No Company'}")
                     # Pipeline status badge
                     p_status = contact.get("status") or "Not Contacted"
-                    status_color = "#34D399" if p_status == "Contacted" else ("#60A5FA" if "Opened" in p_status else ("#F87171" if p_status == "Bounced" else "#94A3B8"))
+                    status_color = "#A78BFA" if p_status == "Replied" else ("#34D399" if p_status == "Contacted" else ("#60A5FA" if "Opened" in p_status else ("#F87171" if p_status == "Bounced" else "#94A3B8")))
                     st.markdown(f"<span style='font-size:0.8rem; font-weight:700; color:{status_color};'>● {p_status}</span> (Sent: {contact.get('follow_ups_sent', 0)})", unsafe_allow_html=True)
                 with col_c3:
                     # Tag Badges with distinct intelligent colors
@@ -1290,6 +1302,10 @@ with tab_crm:
                                 bg = "rgba(238, 83, 36, 0.16)"
                                 color = "#FF7B4D"
                                 border = "rgba(238, 83, 36, 0.45)"
+                            elif "replied" in t.lower():
+                                bg = "rgba(168, 85, 247, 0.16)"
+                                color = "#C084FC"
+                                border = "rgba(168, 85, 247, 0.45)"
                             elif any(w in t.lower() for w in ["amazon", "shopify", "ecommerce", "brand"]):
                                 bg = "rgba(59, 130, 246, 0.14)"
                                 color = "#60A5FA"
@@ -2162,34 +2178,60 @@ with tab_analytics:
 
     analytics_live = get_outreach_analytics()
     bounced_leads = get_bounced_contacts()
+    replied_leads = get_replied_contacts()
 
-    # Detailed KPI metric row
-    col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
+    # Detailed KPI metric row (7 metrics)
+    col_m1, col_m2, col_m3, col_m4, col_m5, col_m6, col_m7 = st.columns(7)
     col_m1.metric("Total Leads", len(all_contacts))
     col_m2.metric("Total Sent", analytics_live["total_sent"])
     col_m3.metric("Opens Detected", analytics_live["total_opened"])
     col_m4.metric("Open Rate", f"{analytics_live['open_rate']}%")
-    col_m5.metric("Total Bounces", analytics_live["total_bounced"])
-    col_m6.metric("Bounce Rate", f"{analytics_live['bounce_rate']}%")
+    col_m5.metric("Total Replies", analytics_live.get("total_replied", 0))
+    col_m6.metric("Reply Rate", f"{analytics_live.get('reply_rate', 0.0)}%")
+    col_m7.metric("Total Bounces", analytics_live["total_bounced"])
 
     st.markdown("---")
 
-    # Section 1: Hostinger IMAP Bounce Scanner
-    col_b_hdr, col_b_scan = st.columns([3, 1.2])
+    # Section 1: Hostinger IMAP Unified Scanner (Replies & Bounces)
+    col_b_hdr, col_b_scan = st.columns([3, 1.4])
     with col_b_hdr:
-        st.markdown("### ⚠️ Hostinger Bounce Detection & NDR Scanner")
-        st.caption("Scans connected Hostinger accounts via IMAP (`imap.hostinger.com:993` SSL) for Delivery Status Notifications (NDRs) and Mailer-Daemon bounce reports to protect your sender score.")
+        st.markdown("### 📬 Hostinger IMAP Inbox Scanner (Replies & Bounces)")
+        st.caption("Single-pass high-performance scan of connected Hostinger mailboxes (`imap.hostinger.com:993` SSL) for prospect replies and NDR bounce reports. Flags replies, automatically cancels future scheduled follow-ups, and quarantines bad emails.")
     with col_b_scan:
-        scan_now_btn = st.button("🔍 Scan Hostinger Bounces Now", type="primary", use_container_width=True, key="scan_bounces_btn")
+        scan_now_btn = st.button("🔍 Scan Inboxes Now", type="primary", use_container_width=True, key="scan_inbox_btn")
 
     if scan_now_btn:
-        with st.spinner("Connecting to Hostinger IMAP and checking inboxes for delivery failure notifications..."):
-            bounce_results = scan_all_hostinger_bounces()
-            total_detected = sum(r.get("bounces_detected", 0) for r in bounce_results.values() if isinstance(r, dict))
-            st.success(f"✅ Hostinger IMAP Scan Complete! Detected **{total_detected}** bounced message(s) across {len(bounce_results)} account(s).")
+        with st.spinner("Connecting to Hostinger IMAP and checking inboxes for replies and bounces..."):
+            scan_results = scan_all_hostinger_inbox()
+            b_cnt = scan_results.get("total_bounces", 0)
+            r_cnt = scan_results.get("total_replies", 0)
+            acc_cnt = scan_results.get("accounts_scanned", 0)
+            st.success(f"✅ Hostinger IMAP Scan Complete across {acc_cnt} mailbox(es)! Found **{r_cnt}** prospect reply/replies and **{b_cnt}** bounce(s).")
             st.rerun()
 
-    # Section 2: Bounced Leads Management
+    # Section 2: Detected Prospect Replies
+    st.markdown("#### 💬 Detected Prospect Replies (Follow-Ups Auto-Cancelled)")
+    if not replied_leads:
+        st.info("ℹ️ No prospect replies recorded yet. When a contact replies to your outreach, their status will automatically update to **'Replied'** and future scheduled follow-ups will be safely cancelled.")
+    else:
+        st.success(f"🎉 **{len(replied_leads)}** prospect(s) have replied! Future follow-ups for these contacts are automatically cancelled in the Outbox.")
+        reply_rows = []
+        for r in replied_leads:
+            reply_rows.append({
+                "ID": r["id"],
+                "Contact Name": r["name"],
+                "Company": r.get("company") or "",
+                "Email Address": r["email"],
+                "Status": r.get("status") or "Replied",
+                "Last Reply Received": r.get("last_reply_at") or r.get("last_contact_date") or "",
+                "Subject Snippet": r.get("reply_subject") or "(Direct reply)",
+                "Notes": r.get("notes") or ""
+            })
+        st.dataframe(pd.DataFrame(reply_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Section 3: Bounced Leads Management
     st.markdown("#### 🛡️ Deliverability Quarantine & Bounced Contacts")
     if not bounced_leads:
         st.info("🎉 Zero bounced contacts detected! Your sending domain health and list quality are clean.")
