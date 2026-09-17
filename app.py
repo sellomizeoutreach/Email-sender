@@ -34,7 +34,7 @@ current_script_dir = os.path.dirname(os.path.abspath(__file__))
 if current_script_dir not in sys.path:
     sys.path.insert(0, current_script_dir)
 
-for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "tracker", "scheduler"]:
+for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "tracker", "scheduler", "mx_checker"]:
     py_path = os.path.join(current_script_dir, f"{mod_name}.py")
     if os.path.exists(py_path):
         try:
@@ -131,6 +131,11 @@ from llm_engine import (
     rewrite_email,
     auto_rewrite_negative_keyword,
     generate_variations
+)
+from mx_checker import (
+    verify_email_domain_mx,
+    batch_verify_contacts_mx,
+    clear_mx_cache
 )
 
 # Ensure DB is initialized and tracking server is running
@@ -942,10 +947,15 @@ with tab_crm:
     with csv_col2:
         with st.expander("⬆️ Bulk Import Contacts from CSV"):
             uploaded_csv = st.file_uploader("Upload CSV File", type=["csv"], key="contact_csv_uploader")
+            verify_mx_import = st.checkbox(
+                "🛡️ Perform Pre-Flight MX & Domain Verification",
+                value=True,
+                help="Validates domain mail exchangers (MX) during import. Dead or nonexistent domains are tagged 'Invalid MX' to safeguard your sender reputation."
+            )
             if uploaded_csv is not None:
                 if st.button("Process & Import CSV", type="primary"):
-                    with st.spinner("Processing CSV and executing deduplicated upserts..."):
-                        import_stats = import_contacts_from_csv(uploaded_csv.getvalue())
+                    with st.spinner("Processing CSV and validating domains..."):
+                        import_stats = import_contacts_from_csv(uploaded_csv.getvalue(), verify_mx=verify_mx_import)
                         if import_stats["errors"]:
                             for err in import_stats["errors"][:5]:
                                 st.error(err)
@@ -954,6 +964,8 @@ with tab_crm:
                             f"{import_stats['inserted']} new contact(s) added, "
                             f"{import_stats['updated']} existing contact(s) updated with merged tags & variables!"
                         )
+                        if import_stats.get("invalid_mx", 0) > 0:
+                            st.warning(f"⚠️ {import_stats['invalid_mx']} lead(s) failed pre-flight MX check and were tagged with 'Invalid MX' to shield your sender reputation.")
                         st.rerun()
 
     st.markdown("---")
@@ -989,7 +1001,7 @@ with tab_crm:
 
     # Selection Toolbar & Export
     if filtered_contacts:
-        col_sel1, col_sel2, col_sel3, col_sel4 = st.columns([1.5, 1.5, 2.5, 2.5])
+        col_sel1, col_sel2, col_sel3, col_sel4, col_sel5 = st.columns([1.3, 1.3, 2.0, 1.8, 1.8])
         with col_sel1:
             if st.button(f"☑️ Select All ({len(filtered_contacts)})", key="btn_sel_all_crm", use_container_width=True):
                 st.session_state["crm_selected_ids"] = set(filtered_ids)
@@ -1012,6 +1024,16 @@ with tab_crm:
                 mime="text/csv",
                 use_container_width=True
             )
+        with col_sel5:
+            if st.button("🛡️ Audit MX", key="btn_audit_mx_crm", help="Verify MX records and domain health for displayed leads.", use_container_width=True):
+                target_leads = [c for c in filtered_contacts if c["id"] in selected_ids] if s_count > 0 else filtered_contacts
+                with st.spinner(f"Verifying MX records for {len(target_leads)} lead(s)..."):
+                    res = batch_verify_contacts_mx(target_leads, update_db=True)
+                    if res["invalid_count"] > 0:
+                        st.warning(f"⚠️ MX Audit Complete: {res['valid_count']} valid, {res['invalid_count']} invalid/dead domain(s). Quarantined leads tagged with 'Invalid MX'.")
+                    else:
+                        st.success(f"✅ MX Audit Passed! All {res['valid_count']} domain(s) have active MX mail exchangers.")
+                    st.rerun()
 
     # ⚡ BULK ACTIONS COMMAND CENTER (Appears when 1+ contacts selected)
     if s_count > 0:
@@ -1025,9 +1047,10 @@ with tab_crm:
             </div>
             """, unsafe_allow_html=True)
 
-            bulk_tab_tag, bulk_tab_details, bulk_tab_delete = st.tabs([
+            bulk_tab_tag, bulk_tab_details, bulk_tab_mx, bulk_tab_delete = st.tabs([
                 "🏷️ Bulk Tag Management",
                 "✏️ Bulk Edit Details & Variables",
+                "🛡️ Pre-Flight MX Verification",
                 "🗑️ Bulk Delete"
             ])
 
@@ -1084,6 +1107,21 @@ with tab_crm:
                     )
                     st.success(f"✅ Updated details on {s_count} contact(s)!")
                     st.rerun()
+
+            with bulk_tab_mx:
+                st.markdown("##### 🛡️ Verify Domain Mail Exchangers (MX) for Selected Leads")
+                st.caption("Validates domain DNS records for selected contacts to catch dead domains or typos before dispatch.")
+                if st.button(f"🔍 Run Pre-Flight MX Audit on {s_count} Selected Leads", type="primary", key="btn_bulk_audit_mx"):
+                    with st.spinner("Auditing domain mail exchangers..."):
+                        selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
+                        mx_res = batch_verify_contacts_mx(selected_contacts_list, update_db=True)
+                        if mx_res["invalid_count"] > 0:
+                            st.warning(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification and were tagged 'Invalid MX' in SQLite.")
+                            for inv in mx_res["invalid_contacts"][:8]:
+                                st.write(f"- 🔴 `{inv['email']}`: {inv['reason']}")
+                        else:
+                            st.success(f"🎉 All {mx_res['valid_count']} selected lead(s) have active MX mail exchangers!")
+                        st.rerun()
 
             with bulk_tab_delete:
                 st.error(f"⚠️ Caution: This will permanently delete {s_count} selected contact(s) from your database.")
@@ -2087,6 +2125,12 @@ with tab_review:
                     updated_subject = st.text_input("Subject Line", value=draft["subject"], key=subject_key)
                 with col_meta2:
                     updated_recipient = st.text_input("Target Recipient Email", value=draft.get("recipient") or "", placeholder="client@target.com", key=recipient_key)
+                    if updated_recipient.strip():
+                        is_rec_valid, rec_reason, _ = verify_email_domain_mx(updated_recipient.strip())
+                        if is_rec_valid:
+                            st.markdown("<span style='color:#10B981; font-size:0.8rem; font-weight:600;'>🟢 Domain MX Active</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"<span style='color:#EF4444; font-size:0.8rem; font-weight:700;'>🔴 Dead Domain: {rec_reason}</span>", unsafe_allow_html=True)
                 with col_meta3:
                     # Scheduled Time strictly in Local System Time
                     local_now = datetime.now().astimezone()
@@ -2173,15 +2217,19 @@ with tab_review:
                         if not updated_recipient.strip():
                             st.error("Please enter a Target Recipient Email before approving.")
                         else:
-                            approve_email(
-                                email_id=draft_id,
-                                recipient=updated_recipient.strip(),
-                                scheduled_time=scheduled_datetime_str,
-                                email_html=st.session_state[shared_body_key],
-                                subject=updated_subject.strip()
-                            )
-                            st.success(f"Draft #{draft_id} marked as 'Approved' for dispatch at {scheduled_datetime_str} (Local Time)!")
-                            st.rerun()
+                            is_valid_app, app_reason, _ = verify_email_domain_mx(updated_recipient.strip())
+                            if not is_valid_app:
+                                st.error(f"🚫 Cannot approve: Recipient domain failed pre-flight MX check: {app_reason}. Please verify or fix the recipient email address.")
+                            else:
+                                approve_email(
+                                    email_id=draft_id,
+                                    recipient=updated_recipient.strip(),
+                                    scheduled_time=scheduled_datetime_str,
+                                    email_html=st.session_state[shared_body_key],
+                                    subject=updated_subject.strip()
+                                )
+                                st.success(f"Draft #{draft_id} marked as 'Approved' for dispatch at {scheduled_datetime_str} (Local Time)!")
+                                st.rerun()
 
                 with act_col2:
                     reject_toggle = st.checkbox("🔄 Custom Reject & Rewrite", key=reject_toggle_key)
@@ -2664,6 +2712,11 @@ with tab_settings:
                 value=(current_configs.get("enforce_sending_window", "true").lower() in ["true", "1", "yes"]),
                 help="When enabled, the scheduler loop sleeps during off-hours and resumes automatically when the window opens."
             )
+            cfg_enforce_mx = st.checkbox(
+                "Enforce Pre-Flight MX & Domain Sanity Check (Shield Sender Reputation)",
+                value=(current_configs.get("enforce_mx_check", "true").lower() in ["true", "1", "yes"]),
+                help="Validates recipient domain mail exchangers (MX) prior to dispatch. Intercepts dead domains locally to preserve sender IP reputation."
+            )
 
             is_open, window_status_msg = is_within_sending_window()
             status_badge = '<span style="background:rgba(16,185,129,0.15); color:#34D399; border:1px solid #10B981; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.82rem;">🟢 WINDOW OPEN</span>' if is_open else '<span style="background:rgba(239,68,68,0.15); color:#F87171; border:1px solid #EF4444; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.82rem;">🔴 WINDOW PAUSED</span>'
@@ -2690,7 +2743,8 @@ with tab_settings:
                 "sending_days": ", ".join(cfg_sending_days),
                 "sending_start_time": cfg_start_time.strip(),
                 "sending_end_time": cfg_end_time.strip(),
-                "enforce_sending_window": "true" if cfg_enforce else "false"
+                "enforce_sending_window": "true" if cfg_enforce else "false",
+                "enforce_mx_check": "true" if cfg_enforce_mx else "false"
             }
             save_all_configs(new_configs)
             st.success("✅ System settings successfully saved!")

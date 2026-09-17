@@ -40,11 +40,13 @@ from database import (
     increment_smtp_sent,
     advance_contact_followup,
     is_within_sending_window,
+    record_email_bounce,
     init_db,
     DB_FILE
 )
 from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces, scan_all_hostinger_inbox
 from tracker import inject_tracking_pixel, inject_tracking_and_links, start_tracking_server
+from mx_checker import verify_email_domain_mx
 
 # Configure logging
 logging.basicConfig(
@@ -122,11 +124,12 @@ def assign_sender_account(mail_item, account):
             logger.error(f"OLE Invoke fallback also failed: {ole_err}")
             raise RuntimeError(f"Could not bind Outlook account to message: {ole_err}")
 
-def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
+def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE):
     """
     Dispatch a single approved email record through Hostinger Direct SMTP.
     Rotates through active Hostinger SMTP accounts, respects daily limits,
     attaches HTML body and signature, and sends via SSL/TLS.
+    Shields reputation with pre-flight MX and DNS sanity verification.
     """
     email_id = email_record["id"]
     recipient = email_record.get("recipient", "").strip()
@@ -138,27 +141,38 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
     if not recipient:
         err_msg = "Recipient email address is missing or empty."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
-        mark_email_error(email_id, status="Error", error_message=err_msg)
+        mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
         return
 
+    # Pre-flight MX record and domain sanity check
+    enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"
+    if enforce_mx:
+        is_valid, mx_reason, _ = verify_email_domain_mx(recipient)
+        if not is_valid:
+            bounce_err = f"Pre-flight MX check failed: {mx_reason}"
+            logger.warning(f"Email ID #{email_id}: Intercepting dead domain dispatch for '{recipient}'. Reason: {bounce_err}")
+            mark_email_error(email_id, status="Bounced", error_message=bounce_err, db_path=db_path)
+            record_email_bounce(recipient_email=recipient, bounce_reason=bounce_err, db_path=db_path)
+            return
+
     # Fetch next active Hostinger account in rotation
-    smtp_account = get_next_available_smtp_account()
+    smtp_account = get_next_available_smtp_account(db_path=db_path)
     if not smtp_account:
         err_msg = "No active Hostinger SMTP account available (or all configured accounts have reached their daily sending limit)."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
-        mark_email_error(email_id, status="Error", error_message=err_msg)
+        mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
         return
 
     # Prepare signature, tracking pixel, and payload
-    signature_html = (get_config("signature_html") or "").strip()
-    bcc_address = (get_config("bcc_email") or "").strip()
+    signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
+    bcc_address = (get_config("bcc_email", db_path=db_path) or "").strip()
     combined_body = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
     final_payload = inject_tracking_and_links(combined_body, email_id)
 
     if dry_run:
         logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
-        mark_email_sent(email_id)
-        advance_contact_followup(recipient, delay_days=4)
+        mark_email_sent(email_id, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
         return
 
     success, msg = send_smtp_email(
@@ -170,23 +184,25 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
     )
 
     if success:
-        mark_email_sent(email_id)
-        increment_smtp_sent(smtp_account["id"])
+        mark_email_sent(email_id, db_path=db_path)
+        increment_smtp_sent(smtp_account["id"], db_path=db_path)
         update_email(
             email_id=email_id,
             sent_via=f"Hostinger ({smtp_account['email']})",
-            smtp_account_id=smtp_account["id"]
+            smtp_account_id=smtp_account["id"],
+            db_path=db_path
         )
         # Advance contact outreach status, date, and next follow-up
-        advance_contact_followup(recipient, delay_days=4)
+        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
     else:
-        mark_email_error(email_id, status="Error", error_message=msg)
+        mark_email_error(email_id, status="Error", error_message=msg, db_path=db_path)
 
-def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
+def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE):
     """
     Dispatch a single approved email record through Outlook.
     Handles COM thread safety, account verification, HTML concatenation with signature, BCC, and status updates.
+    Shields reputation with pre-flight MX and DNS sanity verification.
     """
     email_id = email_record["id"]
     recipient = email_record.get("recipient", "").strip()
@@ -198,24 +214,36 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
     if not recipient:
         err_msg = "Recipient email address is missing or empty."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
-        mark_email_error(email_id, status="Error", error_message=err_msg)
+        mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
         return
 
+    # Pre-flight MX record and domain sanity check
+    enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"
+    if enforce_mx:
+        is_valid, mx_reason, _ = verify_email_domain_mx(recipient)
+        if not is_valid:
+            bounce_err = f"Pre-flight MX check failed: {mx_reason}"
+            logger.warning(f"Email ID #{email_id}: Intercepting dead domain dispatch for '{recipient}'. Reason: {bounce_err}")
+            mark_email_error(email_id, status="Bounced", error_message=bounce_err, db_path=db_path)
+            record_email_bounce(recipient_email=recipient, bounce_reason=bounce_err, db_path=db_path)
+            return
+
     # Fetch configuration
-    designated_sender = (get_config("sender_email") or "").strip()
-    bcc_address = (get_config("bcc_email") or "").strip()
-    signature_html = (get_config("signature_html") or "").strip()
+    designated_sender = (get_config("sender_email", db_path=db_path) or "").strip()
+    bcc_address = (get_config("bcc_email", db_path=db_path) or "").strip()
+    signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
 
     if dry_run:
         logger.info(f"[DRY RUN Outlook] Would send Email ID #{email_id} to '{recipient}' from '{designated_sender}' with BCC '{bcc_address}'")
-        mark_email_sent(email_id)
+        mark_email_sent(email_id, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
         return
 
     # 1. Connect to Outlook with explicit COM initialization
     try:
         outlook_app = get_outlook_application()
     except Exception as e:
-        mark_email_error(email_id, status="Error", error_message=f"Outlook COM connection failed: {e}")
+        mark_email_error(email_id, status="Error", error_message=f"Outlook COM connection failed: {e}", db_path=db_path)
         return
 
     try:
@@ -225,7 +253,7 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
             if not matching_account:
                 err_msg = f"Account Mismatch: No Outlook account with SmtpAddress matching '{designated_sender}' found."
                 logger.error(f"Email ID #{email_id}: {err_msg}")
-                mark_email_error(email_id, status="Account Mismatch", error_message=err_msg)
+                mark_email_error(email_id, status="Account Mismatch", error_message=err_msg, db_path=db_path)
                 return
         else:
             matching_account = None
@@ -256,12 +284,12 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
         # Dispatch
         mail.Send()
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}'.")
-        mark_email_sent(email_id)
-        advance_contact_followup(recipient, delay_days=4)
+        mark_email_sent(email_id, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
 
     except Exception as dispatch_err:
         logger.error(f"Error dispatching Email ID #{email_id}: {dispatch_err}")
-        mark_email_error(email_id, status="Error", error_message=str(dispatch_err))
+        mark_email_error(email_id, status="Error", error_message=str(dispatch_err), db_path=db_path)
     finally:
         # Clean up COM references on this cycle
         if COM_AVAILABLE and pythoncom:
@@ -303,9 +331,9 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
 
         for idx, email_rec in enumerate(due_emails):
             if dispatch_method == "hostinger_smtp":
-                dispatch_email_hostinger(email_rec, dry_run=dry_run)
+                dispatch_email_hostinger(email_rec, dry_run=dry_run, db_path=target_db)
             else:
-                dispatch_email_outlook(email_rec, dry_run=dry_run)
+                dispatch_email_outlook(email_rec, dry_run=dry_run, db_path=target_db)
 
             # Apply randomized anti-spam delay between emails if more than one
             if idx < count - 1 and not dry_run:

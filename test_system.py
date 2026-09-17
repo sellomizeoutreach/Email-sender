@@ -96,6 +96,13 @@ from scheduler import (
     dispatch_email_outlook,
     dispatch_email
 )
+from mx_checker import (
+    verify_email_domain_mx,
+    batch_verify_contacts_mx,
+    clear_mx_cache,
+    get_cached_domain_count,
+    get_domain_from_email
+)
 
 TEST_DB = "test_email_system.db"
 
@@ -1049,7 +1056,113 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("Multiple exclamation points '!!'", issues_text)
         self.assertIn("dollar signs", issues_text)
 
+    def test_29_mx_checker_valid_and_invalid_domains(self):
+        """Test pre-flight MX record verification, DNS resolution, dead domain detection, and caching."""
+        clear_mx_cache()
+        self.assertEqual(get_cached_domain_count(), 0)
+
+        # 1. Valid domain with known MX records (e.g. gmail.com)
+        is_valid, reason, records = verify_email_domain_mx("outreach.prospect@gmail.com")
+        self.assertTrue(is_valid)
+        self.assertGreater(len(records), 0)
+        self.assertTrue("Valid MX" in reason or "Implicit MX" in reason or "resolved" in reason)
+
+        # Cache should now contain gmail.com
+        self.assertGreaterEqual(get_cached_domain_count(), 1)
+
+        # Second lookup must hit cache
+        is_valid2, _, _ = verify_email_domain_mx("another.lead@gmail.com")
+        self.assertTrue(is_valid2)
+
+        # 2. Malformed email address
+        bad_syntax_valid, bad_reason, _ = verify_email_domain_mx("notanemail")
+        self.assertFalse(bad_syntax_valid)
+        self.assertIn("Invalid email format", bad_reason)
+
+        # 3. Nonexistent domain (NXDOMAIN)
+        fake_email = "test@nonexistentdomain9871239847192847.xyz"
+        dead_valid, dead_reason, _ = verify_email_domain_mx(fake_email)
+        self.assertFalse(dead_valid)
+        self.assertTrue("does not exist" in dead_reason or "failed" in dead_reason)
+
+        # 4. Batch verification
+        batch_data = [
+            {"id": 1, "email": "valid1@gmail.com"},
+            {"id": 2, "email": "valid2@gmail.com"},
+            {"id": 3, "email": "ghost@nonexistentdomain9871239847192847.xyz"},
+            {"id": 4, "email": "bademailformat"}
+        ]
+        batch_res = batch_verify_contacts_mx(batch_data, update_db=False)
+        self.assertEqual(batch_res["total"], 4)
+        self.assertEqual(batch_res["valid_count"], 2)
+        self.assertEqual(batch_res["invalid_count"], 2)
+        self.assertEqual(len(batch_res["invalid_contacts"]), 2)
+
+    def test_30_scheduler_preflight_mx_interception(self):
+        """Test that scheduler intercepts dead domain emails before dispatch, marking them Bounced."""
+        # 1. Create a contact with a dead domain
+        dead_domain_email = "ceo@nonexistentcompany999888777666.org"
+        cid = create_contact(
+            name="Ghost CEO",
+            email=dead_domain_email,
+            company="Ghost Corp",
+            status="Not Contacted",
+            db_path=TEST_DB
+        )
+
+        # 2. Queue an approved email due now
+        now_local = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        eid = create_email(
+            email_html="<p>Pre-flight test</p>",
+            subject="Pre-flight Test",
+            recipient=dead_domain_email,
+            status="Approved",
+            scheduled_time=now_local,
+            db_path=TEST_DB
+        )
+
+        # Ensure enforce_mx_check is enabled
+        set_config("enforce_mx_check", "true", db_path=TEST_DB)
+        # Ensure window is open
+        today_name = datetime.now().astimezone().strftime("%A")
+        set_config("sending_days", f"{today_name},Monday,Tuesday,Wednesday,Thursday,Friday", db_path=TEST_DB)
+        set_config("sending_start_time", "00:00", db_path=TEST_DB)
+        set_config("sending_end_time", "23:59", db_path=TEST_DB)
+
+        # 3. Run scheduler cycle
+        processed = run_scheduler_cycle(dry_run=False, db_path=TEST_DB)
+        self.assertGreaterEqual(processed, 1)
+
+        # 4. Verify email was intercepted and marked Bounced without sending
+        e_check = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(e_check["status"], "Bounced")
+        self.assertEqual(e_check["is_bounced"], 1)
+        self.assertIn("Pre-flight MX check failed", e_check["error_message"])
+
+        # 5. Verify contact was quarantined as Bounced
+        c_check = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_check["status"], "Bounced")
+        self.assertIn("Bounced", c_check["tags_list"])
+        self.assertIn("[Bounced:", c_check["notes"])
+
+    def test_31_csv_import_with_mx_verification(self):
+        """Test CSV import with verify_mx=True automatically flags dead domains with 'Invalid MX'."""
+        csv_payload = (
+            "Name,Email,Company,Tags\n"
+            "Live User,live@gmail.com,Google,Tech\n"
+            "Dead Lead,dead@nonexistentcompany999888777666.org,Dead Co,Old Leads\n"
+        )
+        stats = import_contacts_from_csv(csv_payload, verify_mx=True, db_path=TEST_DB)
+        self.assertEqual(stats["total"], 2)
+        self.assertEqual(stats["invalid_mx"], 1)
+
+        # Retrieve dead contact and verify 'Invalid MX' tag is attached
+        dead_contact = get_contacts(search_query="Dead Co", db_path=TEST_DB)[0]
+        self.assertIn("Invalid MX", dead_contact["tags_list"])
+        self.assertIn("[MX Pre-Flight Failed:", dead_contact["notes"])
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

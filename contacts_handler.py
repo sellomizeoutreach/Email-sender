@@ -10,6 +10,7 @@ import json
 from typing import List, Dict, Any, Union
 
 from database import upsert_contact_by_email, DB_FILE
+from mx_checker import verify_email_domain_mx
 
 def generate_csv_template() -> str:
     """
@@ -180,19 +181,20 @@ def normalize_variable_header(col_name: str) -> str:
     words = clean.replace("_", " ").split()
     return " ".join(w.capitalize() for w in words)
 
-def import_contacts_from_csv(
-    file_content: Union[str, bytes],
-    db_path: str = DB_FILE
-) -> Dict[str, Any]:
+def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = False, db_path: str = DB_FILE) -> Dict[str, Any]:
     """
-    Parse an uploaded CSV file, normalize column headers, and execute deduplicated
-    upserts into SQLite contacts table.
+    Import contacts from raw CSV text or bytes.
+    Deduplicates against SQLite contacts by email address.
+    If contact exists, updates fields and merges tags/variables.
+    If new, inserts full contact record.
     
     SMART COLUMN ABSORPTION:
     Any column that is not a standard CRM field (Name, Email, Company, Tags)
     will automatically be absorbed into custom_variables! No JSON needed!
     
-    Returns stats dict: {"total": int, "inserted": int, "updated": int, "errors": list}
+    Optional verify_mx: When True, performs pre-flight MX validation on domain.
+    
+    Returns stats dict: {"total": int, "inserted": int, "updated": int, "invalid_mx": int, "errors": list}
     """
     if isinstance(file_content, bytes):
         content_str = file_content.decode("utf-8", errors="replace")
@@ -209,6 +211,7 @@ def import_contacts_from_csv(
         "total": 0,
         "inserted": 0,
         "updated": 0,
+        "invalid_mx": 0,
         "errors": []
     }
 
@@ -312,6 +315,18 @@ def import_contacts_from_csv(
                 # Only populate if not already provided by explicit JSON
                 if normalized_key not in custom_vars_dict:
                     custom_vars_dict[normalized_key] = val
+
+        # Optional Pre-flight MX record verification during CSV import
+        if verify_mx:
+            is_valid_mx, mx_err, _ = verify_email_domain_mx(raw_email)
+            if not is_valid_mx:
+                stats["invalid_mx"] += 1
+                if raw_tags:
+                    raw_tags = f"{raw_tags}, Invalid MX"
+                else:
+                    raw_tags = "Invalid MX"
+                mx_note = f"[MX Pre-Flight Failed: {mx_err}]"
+                raw_notes = f"{raw_notes} {mx_note}".strip() if raw_notes else mx_note
 
         try:
             cid, is_created = upsert_contact_by_email(
