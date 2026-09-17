@@ -125,6 +125,8 @@ from llm_engine import (
     inject_variables,
     parse_spintax,
     scan_negative_keywords,
+    audit_email_deliverability,
+    COMMON_SPAM_TRIGGERS,
     polish_campaign_email,
     rewrite_email,
     auto_rewrite_negative_keyword,
@@ -1550,6 +1552,56 @@ with tab_templates:
         else:
             st.caption("Enter template text above to see live preview.")
 
+        # Live Deliverability & Spam Score Auditor
+        st.markdown("##### 🛡️ Deliverability & Spam Score Auditor")
+        neg_keywords_cfg = get_config("negative_keywords", "")
+        test_subject_key = "new_tpl_test_subject"
+        if test_subject_key not in st.session_state:
+            st.session_state[test_subject_key] = "Quick idea for [Company] listing"
+
+        test_subj = st.text_input("Pre-Flight Subject Line Test (Optional)", value=st.session_state[test_subject_key], key="input_test_subj", help="Test how your intended subject line affects overall inbox placement.")
+        st.session_state[test_subject_key] = test_subj
+
+        audit_res = audit_email_deliverability(
+            body_html=preview_body,
+            subject=test_subj,
+            custom_negative_keywords=neg_keywords_cfg
+        )
+
+        score_val = audit_res["score"]
+        score_color = audit_res["grade_color"]
+        score_grade = audit_res["grade"]
+        verdict_text = audit_res["verdict"]
+
+        st.markdown(f"""
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid {score_color}; border-radius: 10px; padding: 14px 18px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-size: 1.25rem; font-weight: 800; color: {score_color};">{score_val}/100 • {score_grade}</span>
+                    <div style="font-size: 0.85rem; color: #94A3B8; margin-top: 2px;">{verdict_text}</div>
+                </div>
+                <div style="text-align: right; font-size: 0.82rem; color: #94A3B8;">
+                    <span>📝 Words: {audit_res['word_count']}</span> • <span>🔗 Links: {audit_res['link_count']}</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if audit_res["detected_spam_words"]:
+            st.markdown("###### ⚠️ Detected High-Risk Trigger Words & Suggested Replacements:")
+            for sp in audit_res["detected_spam_words"]:
+                sugs = ", ".join(f"<code>{s}</code>" for s in sp["suggestions"][:3])
+                st.markdown(f"• **'{sp['word']}'** (found {sp['count']}x) ➔ Recommend replacing with: {sugs}", unsafe_allow_html=True)
+
+        if audit_res["issues"]:
+            with st.expander("🔍 Detailed Issues & Deliverability Deductions", expanded=(score_val < 85)):
+                for iss in audit_res["issues"]:
+                    st.markdown(f"• 🔴 {iss}")
+
+        with st.expander("✅ Passing Deliverability Checks", expanded=False):
+            for p in audit_res["passes"]:
+                st.markdown(f"• 🟢 {p}")
+
         col_save_tpl, _ = st.columns([1.5, 4.5])
         with col_save_tpl:
             if st.button("💾 Save Template", type="primary", use_container_width=True, key="save_new_tpl_btn"):
@@ -1569,8 +1621,10 @@ with tab_templates:
         for tpl in templates_list:
             tpl_id = tpl["id"]
             is_tpl_editing = (st.session_state.get("editing_tpl_id") == tpl_id)
+            tpl_audit = audit_email_deliverability(tpl.get("body_content", ""))
+            score_pill = f"🛡️ {tpl_audit['score']}/100"
 
-            with st.expander(f"📄 {tpl['template_name']} (ID #{tpl_id} • Created: {tpl['created_at']})", expanded=is_tpl_editing):
+            with st.expander(f"📄 {tpl['template_name']} ({score_pill} • ID #{tpl_id})", expanded=is_tpl_editing):
                 if is_tpl_editing:
                     st.markdown(f"""
                     <div style="background: rgba(14, 46, 39, 0.65); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin: 8px 0 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
@@ -1964,8 +2018,9 @@ with tab_review:
             if shared_body_key not in st.session_state:
                 st.session_state[shared_body_key] = draft["email_html"]
 
-            # Visual styling wrapper for Flagged vs Pending
-            container_title = f"{'🚨 FLAGGED' if is_flagged else '📄 Draft'} #{draft_id} - {draft['subject']} -> {draft.get('recipient')}"
+            # Visual styling wrapper for Flagged vs Pending with Deliverability Score
+            draft_audit = audit_email_deliverability(draft["email_html"], subject=draft.get("subject", ""))
+            container_title = f"{'🚨 FLAGGED' if is_flagged else '📄 Draft'} #{draft_id} (🛡️ {draft_audit['score']}/100) - {draft['subject']} -> {draft.get('recipient')}"
 
             with st.expander(container_title, expanded=is_flagged):
                 # PROMINENT RED WARNING BOX FOR FLAGGED EMAILS

@@ -86,7 +86,9 @@ from llm_engine import (
     _parse_single_email_json,
     inject_variables,
     parse_spintax,
-    scan_negative_keywords
+    scan_negative_keywords,
+    audit_email_deliverability,
+    COMMON_SPAM_TRIGGERS
 )
 from scheduler import (
     run_scheduler_cycle,
@@ -997,6 +999,57 @@ class TestEmailAutomationSystem(unittest.TestCase):
         # Open tracking pixel must also be injected before </body>
         self.assertIn('/track/open/99.png', wrapped)
 
+    def test_28_deliverability_auditor_scoring(self):
+        """Test the live deliverability & spam trigger auditor scoring, synonym suggestions, and syntax checks."""
+        # 1. Clean professional cold outreach copy
+        clean_subject = "Quick question regarding listing expansion"
+        clean_body = (
+            "<p>Hi David,</p>"
+            "<p>I came across your store catalog while researching DTC leaders in the apparel space. "
+            "We recently prepared a brief teardown outlining three optimization opportunities that could help your brand "
+            "scale customer acquisition on marketplace channels.</p>"
+            "<p>Would you be open to reviewing the teardown sometime this week?</p>"
+            "<p>Best regards,<br>Sarah</p>"
+        )
+
+        clean_report = audit_email_deliverability(body_html=clean_body, subject=clean_subject)
+        self.assertGreaterEqual(clean_report["score"], 90)
+        self.assertEqual(clean_report["grade"], "Excellent")
+        self.assertEqual(len(clean_report["detected_spam_words"]), 0)
+        self.assertTrue(any("Optimal subject length" in p for p in clean_report["passes"]))
+        self.assertTrue(any("Zero blacklisted spam trigger words" in p for p in clean_report["passes"]))
+
+        # 2. Spam-heavy email with fake Re:, exclamation marks, all caps, and trigger phrases
+        spam_subject = "Re: ACT NOW: Guaranteed Pure Profit Winner!!!!"
+        spam_body = (
+            "<p>Dear Friend,</p>"
+            "<p>This is 100% free with no risk! You will earn cash and make money right away with pure profit. "
+            "Buy now or order now to claim your bonus cash before it is gone!</p>"
+            "<p>Click here to get $$$ today: <a href='https://spam.xyz/deal'>Claim Now</a></p>"
+        )
+
+        spam_report = audit_email_deliverability(body_html=spam_body, subject=spam_subject)
+        self.assertLess(spam_report["score"], 60)
+        self.assertEqual(spam_report["grade"], "Spam Risk")
+
+        # Verify detected spam words
+        detected_words = [item["word"] for item in spam_report["detected_spam_words"]]
+        self.assertTrue(any(w in detected_words for w in ["guaranteed", "pure profit", "100% free", "make money", "buy now", "click here"]))
+
+        # Verify alternative synonym suggestions are populated
+        guaranteed_entry = next((item for item in spam_report["detected_spam_words"] if item["word"] == "guaranteed"), None)
+        if guaranteed_entry:
+            self.assertGreaterEqual(len(guaranteed_entry["suggestions"]), 1)
+            self.assertTrue(any(s in guaranteed_entry["suggestions"] for s in ["proven", "reliable", "consistent"]))
+
+        # Verify issues flagged fake Re:, exclamation mark in subject, multiple '!!', and currency hype
+        issues_text = " ".join(spam_report["issues"])
+        self.assertIn("fake 'Re:'", issues_text)
+        self.assertIn("Exclamation mark '!'", issues_text)
+        self.assertIn("Multiple exclamation points '!!'", issues_text)
+        self.assertIn("dollar signs", issues_text)
+
 if __name__ == "__main__":
     unittest.main()
+
 
