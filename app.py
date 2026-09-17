@@ -1017,7 +1017,7 @@ with tab_crm:
             with st.container():
                 col_chk, col_c1, col_c2, col_c3, col_c4 = st.columns([0.45, 2.5, 2.5, 3.1, 1.45])
                 with col_chk:
-                    checked = st.checkbox("", key=f"sel_c_{c_id}", value=is_selected)
+                    checked = st.checkbox(f"Select contact #{c_id}", key=f"sel_c_{c_id}", value=is_selected, label_visibility="collapsed")
                     if checked != is_selected:
                         if checked:
                             st.session_state["crm_selected_ids"].add(c_id)
@@ -1206,22 +1206,65 @@ with tab_templates:
     """, unsafe_allow_html=True)
 
     with st.expander("➕ Create New Template", expanded=True):
-        with st.form("new_template_form"):
-            t_name = st.text_input("Template Name *", placeholder="e.g. E-Commerce Product Page Teardown")
-            default_tpl_body = (
-                "{Hi|Hello|Hey} [Name],<br><br>"
-                "I was reviewing [Company]'s listings and noticed {a couple of missed opportunities|some quick areas for improvement} on your mobile bullet points.<br><br>"
-                "We recently helped another brand in your category improve mobile conversions by 21% using a quick infographic overhaul.<br><br>"
-                "Would you be open to {a 3-minute video breakdown|a quick Loom teardown} showing how this applies to [Company]?"
-            )
-            t_body = st.text_area("Template Body (HTML / Spintax / Variables) *", value=default_tpl_body, height=220)
+        t_name = st.text_input("Template Name *", placeholder="e.g. E-Commerce Product Page Teardown", key="new_tpl_name_input")
 
-            save_tpl_btn = st.form_submit_button("Save Template", type="primary")
-            if save_tpl_btn:
-                if not t_name.strip() or not t_body.strip():
+        # Styling & Editor Mode Selector (WYSIWYG Toolbar vs HTML/Spintax Source)
+        editor_mode_tpl = st.radio(
+            "Styling & Editor Mode",
+            ["✍️ Visual Rich Text (Formatting Toolbar)", "💻 HTML / Spintax Source Code"],
+            horizontal=True,
+            key="editor_mode_new_tpl"
+        )
+
+        new_tpl_body_key = "new_tpl_body_content"
+        default_tpl_body = (
+            "<p>{Hi|Hello|Hey} [Name],</p>"
+            "<p>I was reviewing [Company]'s listings and noticed {a couple of missed opportunities|some quick areas for improvement} on your mobile bullet points.</p>"
+            "<p>We recently helped another brand in your category improve mobile conversions by <strong>21%</strong> using a quick infographic overhaul.</p>"
+            "<p>Would you be open to {a 3-minute video breakdown|a quick Loom teardown} showing how this applies to [Company]?</p>"
+        )
+        if new_tpl_body_key not in st.session_state:
+            st.session_state[new_tpl_body_key] = default_tpl_body
+
+        st.markdown("##### Template Body *")
+
+        if editor_mode_tpl.startswith("✍️ Visual"):
+            st.caption("✨ **Visual Toolbar Mode**: Use formatting tools below to style **Bold**, *Italic*, <u>Underline</u>, text colors, background colors, headings, bullet lists, numbered lists, links, and alignments directly.")
+            if QUILL_AVAILABLE:
+                quill_val = st_quill(
+                    value=st.session_state[new_tpl_body_key],
+                    html=True,
+                    key="new_tpl_quill_editor"
+                )
+                if quill_val is not None:
+                    st.session_state[new_tpl_body_key] = quill_val
+            else:
+                new_val = st.text_area("Visual Rich Text", value=st.session_state[new_tpl_body_key], height=240, key="new_tpl_text_editor")
+                st.session_state[new_tpl_body_key] = new_val
+        else:
+            st.caption("💻 **HTML & Spintax Source Mode**: Edit raw HTML tags, inline styles, and Spintax directly.")
+            source_val = st.text_area(
+                "HTML / Spintax Source",
+                value=st.session_state[new_tpl_body_key],
+                height=240,
+                key="new_tpl_source_editor"
+            )
+            st.session_state[new_tpl_body_key] = source_val
+
+        st.markdown("##### 👁️ Live Formatted Template Preview")
+        preview_body = st.session_state.get(new_tpl_body_key, "").strip()
+        if preview_body:
+            st.markdown(f'<div class="email-preview-box">{preview_body}</div>', unsafe_allow_html=True)
+        else:
+            st.caption("Enter template text above to see live preview.")
+
+        col_save_tpl, _ = st.columns([1.5, 4.5])
+        with col_save_tpl:
+            if st.button("💾 Save Template", type="primary", use_container_width=True, key="save_new_tpl_btn"):
+                if not t_name.strip() or not st.session_state[new_tpl_body_key].strip():
                     st.error("Both Template Name and Body are required.")
                 else:
-                    new_tid = create_template(template_name=t_name, body_content=t_body)
+                    new_tid = create_template(template_name=t_name.strip(), body_content=st.session_state[new_tpl_body_key].strip())
                     st.success(f"✅ Template '{t_name}' saved (ID #{new_tid})!")
                     st.rerun()
 
@@ -1232,16 +1275,80 @@ with tab_templates:
     else:
         st.markdown(f"### Saved Templates ({len(templates_list)})")
         for tpl in templates_list:
-            with st.expander(f"📄 {tpl['template_name']} (Created: {tpl['created_at']})", expanded=False):
-                st.markdown("**Template Source:**")
-                st.code(tpl["body_content"], language="html")
+            tpl_id = tpl["id"]
+            is_tpl_editing = (st.session_state.get("editing_tpl_id") == tpl_id)
 
-                col_tp1, col_tp2, col_tp3 = st.columns([2, 1, 1])
+            with st.expander(f"📄 {tpl['template_name']} (ID #{tpl_id} • Created: {tpl['created_at']})", expanded=is_tpl_editing):
+                if is_tpl_editing:
+                    st.markdown(f"""
+                    <div style="background: rgba(14, 46, 39, 0.65); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin: 8px 0 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
+                        <strong style="color: #34D399;">✏️ Editing Template #{tpl_id}: {tpl['template_name']}</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    edit_tpl_key = f"edit_tpl_body_{tpl_id}"
+                    if edit_tpl_key not in st.session_state:
+                        st.session_state[edit_tpl_key] = tpl["body_content"]
+
+                    edit_t_name = st.text_input("Template Name *", value=tpl["template_name"], key=f"edit_tname_{tpl_id}")
+                    
+                    edit_mode = st.radio(
+                        "Editor Mode",
+                        ["✍️ Visual Rich Text (Toolbar & Styling)", "💻 HTML / Spintax Source Code"],
+                        horizontal=True,
+                        key=f"edit_mode_radio_{tpl_id}"
+                    )
+
+                    if edit_mode.startswith("✍️ Visual"):
+                        st.caption("✨ **Visual Toolbar Mode**: Highlight text to format styles, bolding, colors, and lists.")
+                        if QUILL_AVAILABLE:
+                            q_edit = st_quill(
+                                value=st.session_state[edit_tpl_key],
+                                html=True,
+                                key=f"quill_edit_tpl_{tpl_id}"
+                            )
+                            if q_edit is not None:
+                                st.session_state[edit_tpl_key] = q_edit
+                        else:
+                            st.session_state[edit_tpl_key] = st.text_area("Body", value=st.session_state[edit_tpl_key], height=220, key=f"txt_edit_tpl_{tpl_id}")
+                    else:
+                        st.caption("💻 **HTML / Spintax Source Mode**: Edit HTML tags and Spintax directly.")
+                        st.session_state[edit_tpl_key] = st.text_area("HTML / Spintax Source", value=st.session_state[edit_tpl_key], height=220, key=f"src_edit_tpl_{tpl_id}")
+
+                    st.markdown("##### 👁️ Live Formatted Preview")
+                    st.markdown(f'<div class="email-preview-box">{st.session_state[edit_tpl_key]}</div>', unsafe_allow_html=True)
+
+                    col_save_e, col_canc_e = st.columns([1.5, 4])
+                    with col_save_e:
+                        if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_tpl_btn_{tpl_id}"):
+                            if not edit_t_name.strip() or not st.session_state[edit_tpl_key].strip():
+                                st.error("Both Name and Body are required.")
+                            else:
+                                update_template(tpl_id, edit_t_name.strip(), st.session_state[edit_tpl_key].strip())
+                                st.session_state["editing_tpl_id"] = None
+                                st.success(f"✅ Template '{edit_t_name}' successfully updated!")
+                                st.rerun()
+                    with col_canc_e:
+                        if st.button("Cancel", use_container_width=True, key=f"canc_edit_tpl_btn_{tpl_id}"):
+                            st.session_state["editing_tpl_id"] = None
+                            st.rerun()
+
+                    st.markdown("<hr style='margin: 1rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
+
+                st.markdown("**Rendered Preview:**")
+                st.markdown(f'<div class="email-preview-box">{tpl["body_content"]}</div>', unsafe_allow_html=True)
+
+                col_tp1, col_tp2, col_tp3 = st.columns([1.5, 1.5, 1])
                 with col_tp1:
-                    test_btn = st.button("🧪 Test Spintax & Variable Resolution", key=f"test_tpl_{tpl['id']}")
+                    edit_toggle_btn = st.button("✏️ Edit Template", key=f"edit_toggle_{tpl_id}")
+                    if edit_toggle_btn:
+                        st.session_state["editing_tpl_id"] = None if is_tpl_editing else tpl_id
+                        st.rerun()
+                with col_tp2:
+                    test_btn = st.button("🧪 Test Spintax & Vars", key=f"test_tpl_{tpl_id}")
                 with col_tp3:
-                    if st.button("🗑️ Delete Template", key=f"del_tpl_{tpl['id']}"):
-                        delete_template(tpl["id"])
+                    if st.button("🗑️ Delete", key=f"del_tpl_{tpl_id}"):
+                        delete_template(tpl_id)
                         st.warning(f"Template '{tpl['template_name']}' deleted.")
                         st.rerun()
 
