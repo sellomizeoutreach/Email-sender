@@ -42,6 +42,7 @@ from database import (
     delete_smtp_account,
     get_next_available_smtp_account,
     increment_smtp_sent,
+    get_effective_daily_limit,
     get_predefined_tags,
     bulk_add_tags_to_contacts,
     bulk_remove_tags_from_contacts,
@@ -1161,8 +1162,81 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("Invalid MX", dead_contact["tags_list"])
         self.assertIn("[MX Pre-Flight Failed:", dead_contact["notes"])
 
+    def test_32_mailbox_warmup_effective_daily_limit(self):
+        """Test calculation of active daily sending cap based on mailbox warmup ramp-up schedule."""
+        acc_warmup = {
+            "daily_limit": 100,
+            "warmup_enabled": 1,
+            "warmup_start_date": "2026-09-15",
+            "warmup_starting_limit": 10,
+            "warmup_daily_increment": 5,
+            "warmup_target_limit": 50
+        }
+
+        # Day 0 (same as start date) -> 10 emails
+        lim_day0 = get_effective_daily_limit(acc_warmup, today_str="2026-09-15")
+        self.assertEqual(lim_day0, 10)
+
+        # Day 2 -> 10 + (2 * 5) = 20 emails
+        lim_day2 = get_effective_daily_limit(acc_warmup, today_str="2026-09-17")
+        self.assertEqual(lim_day2, 20)
+
+        # Day 8 -> 10 + (8 * 5) = 50 emails (at target limit)
+        lim_day8 = get_effective_daily_limit(acc_warmup, today_str="2026-09-23")
+        self.assertEqual(lim_day8, 50)
+
+        # Day 20 -> 10 + (20 * 5) = 110, capped at warmup_target_limit (50)
+        lim_day20 = get_effective_daily_limit(acc_warmup, today_str="2026-10-05")
+        self.assertEqual(lim_day20, 50)
+
+        # Warmup disabled -> falls back to daily_limit (100)
+        acc_disabled = {
+            "daily_limit": 100,
+            "warmup_enabled": 0,
+            "warmup_starting_limit": 10
+        }
+        self.assertEqual(get_effective_daily_limit(acc_disabled), 100)
+
+    def test_33_scheduler_warmup_capacity_enforcement(self):
+        """Test that scheduler respects warmup daily limit when rotating SMTP accounts."""
+        today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+
+        # 1. Add account with warmup enabled and cap of 2 emails/day
+        acc_id = add_smtp_account(
+            sender_name="Warmup Sender",
+            email="warmup.box@agency.com",
+            password="pass",
+            daily_limit=80,
+            warmup_enabled=True,
+            warmup_start_date=today_str,
+            warmup_starting_limit=2,
+            warmup_daily_increment=5,
+            warmup_target_limit=50,
+            db_path=TEST_DB
+        )
+
+        # Verify account is initially available
+        acc = get_next_available_smtp_account(db_path=TEST_DB)
+        self.assertIsNotNone(acc)
+        self.assertEqual(acc["id"], acc_id)
+        self.assertEqual(acc["effective_daily_limit"], 2)
+
+        # 2. Increment sent_today to 1
+        increment_smtp_sent(acc_id, db_path=TEST_DB)
+        acc_check1 = get_next_available_smtp_account(db_path=TEST_DB)
+        self.assertIsNotNone(acc_check1)
+
+        # 3. Increment sent_today to 2 (reaches warmup cap for today)
+        increment_smtp_sent(acc_id, db_path=TEST_DB)
+        acc_check2 = get_next_available_smtp_account(db_path=TEST_DB)
+        self.assertIsNone(acc_check2)
+
+        # Clean up
+        delete_smtp_account(acc_id, db_path=TEST_DB)
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

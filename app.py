@@ -96,6 +96,7 @@ from database import (
     get_smtp_accounts,
     delete_smtp_account,
     update_smtp_account,
+    get_effective_daily_limit,
     delete_email,
     is_within_sending_window,
     get_next_valid_sending_datetime,
@@ -2459,7 +2460,7 @@ with tab_settings:
 
     smtp_accounts = get_smtp_accounts(active_only=False)
     active_accounts = [acc for acc in smtp_accounts if acc.get("is_active")]
-    total_capacity = sum(acc.get("daily_limit", 80) for acc in active_accounts)
+    total_capacity = sum(get_effective_daily_limit(acc) for acc in active_accounts)
     total_sent_today = sum(acc.get("sent_today", 0) for acc in active_accounts)
 
     col_h1, col_h2, col_h3, col_h4 = st.columns(4)
@@ -2480,6 +2481,18 @@ with tab_settings:
                 new_acc_host = st.text_input("SMTP Host", value="smtp.hostinger.com", help="Default: smtp.hostinger.com")
                 new_acc_port = st.number_input("SMTP Port (SSL: 465 / STARTTLS: 587)", min_value=1, max_value=65535, value=465, step=1)
                 new_acc_limit = st.number_input("Daily Send Limit (per mailbox)", min_value=1, max_value=500, value=80, help="Hostinger allows ~100/hr or up to 500/day. Recommended cold outreach limit: 50-80 per mailbox/day.")
+
+            st.markdown("##### 🔥 Automated Mailbox Warmup & Daily Ramp-Up")
+            st.caption("Gradually ramp up send volume for new mailboxes to establish domain trust with Google & Outlook.")
+            col_wm1, col_wm2, col_wm3, col_wm4 = st.columns(4)
+            with col_wm1:
+                new_warmup_enabled = st.checkbox("Enable Automated Warmup", value=False, help="Gradually increases daily sending limit each day.")
+            with col_wm2:
+                new_warmup_start = st.number_input("Starting Cap (Day 1)", min_value=1, max_value=100, value=10, help="Initial volume on Day 1.")
+            with col_wm3:
+                new_warmup_inc = st.number_input("Daily Increment (+/day)", min_value=1, max_value=50, value=5, help="Extra emails permitted each day.")
+            with col_wm4:
+                new_warmup_target = st.number_input("Target Cap (Max/day)", min_value=5, max_value=300, value=int(new_acc_limit), help="Cap where warmup stops ramping.")
 
             st.caption("🔒 Credentials are stored locally in your SQLite database.")
             add_acc_submit = st.form_submit_button("Verify & Connect Hostinger Mailbox", type="primary")
@@ -2503,7 +2516,11 @@ with tab_settings:
                                 password=new_acc_pass.strip(),
                                 smtp_host=new_acc_host.strip(),
                                 smtp_port=int(new_acc_port),
-                                daily_limit=int(new_acc_limit)
+                                daily_limit=int(new_acc_limit),
+                                warmup_enabled=new_warmup_enabled,
+                                warmup_starting_limit=int(new_warmup_start),
+                                warmup_daily_increment=int(new_warmup_inc),
+                                warmup_target_limit=int(new_warmup_target)
                             )
                             st.success(f"✅ Connection verified! Mailbox '{new_acc_email}' successfully connected (ID #{acc_id})!")
                             st.rerun()
@@ -2519,8 +2536,22 @@ with tab_settings:
             status_color = "#10B981" if acc["is_active"] else "#6B7280"
             status_text = "ACTIVE" if acc["is_active"] else "INACTIVE"
             sent_today = acc.get("sent_today", 0)
-            d_limit = acc.get("daily_limit", 80)
-            pct = min(1.0, float(sent_today) / max(1.0, float(d_limit)))
+            eff_limit = get_effective_daily_limit(acc)
+            target_limit = acc.get("warmup_target_limit") or acc.get("daily_limit", 80)
+            is_warmup = bool(acc.get("warmup_enabled"))
+            pct = min(1.0, float(sent_today) / max(1.0, float(eff_limit)))
+
+            if is_warmup:
+                try:
+                    start_d = datetime.strptime((acc.get("warmup_start_date") or "").split()[0], "%Y-%m-%d").date()
+                    day_num = max(1, (datetime.now().astimezone().date() - start_d).days + 1)
+                except Exception:
+                    day_num = 1
+                warmup_badge = f'<span style="background: rgba(238,83,36,0.18); color: #FF7B4D; border: 1px solid #EE5324; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">🔥 WARMUP (DAY {day_num})</span>'
+                progress_text = f"Today's Warmup Cap: {sent_today} / {eff_limit} sent ({eff_limit - sent_today} remaining) | Target: {target_limit}/day (+{acc.get('warmup_daily_increment', 5)}/day)"
+            else:
+                warmup_badge = '<span style="background: rgba(59,130,246,0.15); color: #60A5FA; border: 1px solid #3B82F6; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">⚡ STANDARD</span>'
+                progress_text = f"Today: {sent_today} / {eff_limit} sent ({eff_limit - sent_today} remaining)"
 
             with st.container():
                 st.markdown(f"""
@@ -2528,6 +2559,7 @@ with tab_settings:
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <span style="background: {'rgba(16, 185, 129, 0.15)' if acc['is_active'] else 'rgba(107, 114, 128, 0.15)'}; color: {status_color}; border: 1px solid {status_color}; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">● {status_text}</span>
+                            {warmup_badge}
                             <strong style="color: #FFFFFF; font-size: 1.05rem; letter-spacing: 0.3px;">{acc['email']}</strong>
                             <span style="color: #94A3B8; font-size: 0.88rem;">({acc['sender_name']})</span>
                         </div>
@@ -2540,7 +2572,7 @@ with tab_settings:
 
                 col_bar, col_act1, col_act2, col_act3 = st.columns([3.5, 1.2, 1.2, 1.2])
                 with col_bar:
-                    st.progress(pct, text=f"Today: {sent_today} / {d_limit} sent ({d_limit - sent_today} remaining)")
+                    st.progress(pct, text=progress_text)
                 with col_act1:
                     if st.button("🧪 Test", key=f"test_acc_{acc_id}", help="Verify connection with current credentials"):
                         with st.spinner(f"Testing {acc['email']}..."):
@@ -2563,6 +2595,30 @@ with tab_settings:
                         delete_smtp_account(acc_id)
                         st.success(f"Deleted mailbox #{acc_id}")
                         st.rerun()
+
+                with st.expander(f"⚙️ Mailbox Settings & Warmup Ramp-Up: {acc['email']}", expanded=False):
+                    with st.form(f"edit_acc_{acc_id}_form"):
+                        e_col1, e_col2 = st.columns(2)
+                        with e_col1:
+                            e_name = st.text_input("Sender Display Name", value=acc["sender_name"])
+                            e_daily_limit = st.number_input("Standard Daily Limit", min_value=1, max_value=500, value=int(acc.get("daily_limit", 80)))
+                        with e_col2:
+                            e_warmup_on = st.checkbox("Enable Automated Warmup", value=bool(acc.get("warmup_enabled")), key=f"w_on_{acc_id}")
+                            e_w_start = st.number_input("Warmup Starting Cap", min_value=1, max_value=100, value=int(acc.get("warmup_starting_limit") or 10), key=f"w_st_{acc_id}")
+                            e_w_inc = st.number_input("Daily Increment (+/day)", min_value=1, max_value=50, value=int(acc.get("warmup_daily_increment") or 5), key=f"w_inc_{acc_id}")
+                            e_w_target = st.number_input("Target Cap", min_value=5, max_value=300, value=int(acc.get("warmup_target_limit") or 50), key=f"w_tgt_{acc_id}")
+                        if st.form_submit_button("Update Mailbox Settings", type="primary"):
+                            update_smtp_account(
+                                acc_id,
+                                sender_name=e_name.strip(),
+                                daily_limit=int(e_daily_limit),
+                                warmup_enabled=e_warmup_on,
+                                warmup_starting_limit=int(e_w_start),
+                                warmup_daily_increment=int(e_w_inc),
+                                warmup_target_limit=int(e_w_target)
+                            )
+                            st.success("Mailbox settings updated!")
+                            st.rerun()
 
     st.markdown("---")
 

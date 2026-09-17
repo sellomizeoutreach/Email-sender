@@ -150,9 +150,28 @@ def init_db(db_path: str = DB_FILE):
             sent_today INTEGER NOT NULL DEFAULT 0,
             last_reset_date TEXT NOT NULL DEFAULT '',
             is_active INTEGER NOT NULL DEFAULT 1,
+            warmup_enabled INTEGER NOT NULL DEFAULT 0,
+            warmup_start_date TEXT NOT NULL DEFAULT '',
+            warmup_starting_limit INTEGER NOT NULL DEFAULT 10,
+            warmup_daily_increment INTEGER NOT NULL DEFAULT 5,
+            warmup_target_limit INTEGER NOT NULL DEFAULT 50,
             created_at TEXT NOT NULL
         )
     """)
+
+    # Schema migrations for smtp_accounts table (Warmup & Ramp-Up schedule)
+    smtp_migrations = [
+        ("warmup_enabled", "INTEGER DEFAULT 0"),
+        ("warmup_start_date", "TEXT DEFAULT ''"),
+        ("warmup_starting_limit", "INTEGER DEFAULT 10"),
+        ("warmup_daily_increment", "INTEGER DEFAULT 5"),
+        ("warmup_target_limit", "INTEGER DEFAULT 50")
+    ]
+    for col_name, col_def in smtp_migrations:
+        try:
+            cursor.execute(f"ALTER TABLE smtp_accounts ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
 
     # Populate default configuration keys if not already present
     default_configs = {
@@ -1590,6 +1609,33 @@ def get_bounced_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
 # SMTP ACCOUNTS HELPERS (HOSTINGER / MULTI-ACCOUNT ROTATION)
 # ------------------------------------------------------------------------------
 
+def get_effective_daily_limit(account: Dict[str, Any], today_str: Optional[str] = None) -> int:
+    """
+    Calculate the active daily sending cap for an SMTP account.
+    If warmup is enabled:
+        days_elapsed = max(0, (today - warmup_start_date).days)
+        effective_limit = min(warmup_target_limit, warmup_starting_limit + (days_elapsed * warmup_daily_increment))
+    If warmup is disabled:
+        effective_limit = daily_limit
+    """
+    if not account.get("warmup_enabled"):
+        return int(account.get("daily_limit", 50))
+
+    try:
+        start_date_str = (account.get("warmup_start_date") or "").strip()
+        if not start_date_str:
+            return int(account.get("daily_limit", 50))
+        start_date = datetime.strptime(start_date_str.split()[0], "%Y-%m-%d").date()
+        today = datetime.strptime(today_str, "%Y-%m-%d").date() if today_str else datetime.now().astimezone().date()
+        days_elapsed = max(0, (today - start_date).days)
+        start_lim = int(account.get("warmup_starting_limit") if account.get("warmup_starting_limit") is not None else 10)
+        inc = int(account.get("warmup_daily_increment") if account.get("warmup_daily_increment") is not None else 5)
+        target = int(account.get("warmup_target_limit") if account.get("warmup_target_limit") is not None else account.get("daily_limit", 50))
+        calculated = start_lim + (days_elapsed * inc)
+        return min(calculated, target)
+    except Exception:
+        return int(account.get("daily_limit", 50))
+
 def add_smtp_account(
     sender_name: str,
     email: str,
@@ -1598,9 +1644,14 @@ def add_smtp_account(
     smtp_port: int = 465,
     daily_limit: int = 80,
     is_active: bool = True,
+    warmup_enabled: bool = False,
+    warmup_start_date: Optional[str] = None,
+    warmup_starting_limit: int = 10,
+    warmup_daily_increment: int = 5,
+    warmup_target_limit: int = 50,
     db_path: str = DB_FILE
 ) -> int:
-    """Add a new SMTP account for Hostinger or custom mail server."""
+    """Add a new SMTP account for Hostinger or custom mail server with optional automated warmup schedule."""
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
     conn = get_connection(db_path)
@@ -1608,8 +1659,10 @@ def add_smtp_account(
     cursor.execute("""
         INSERT INTO smtp_accounts (
             sender_name, email, smtp_host, smtp_port, password,
-            daily_limit, sent_today, last_reset_date, is_active, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            daily_limit, sent_today, last_reset_date, is_active,
+            warmup_enabled, warmup_start_date, warmup_starting_limit,
+            warmup_daily_increment, warmup_target_limit, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         sender_name.strip(),
         email.strip().lower(),
@@ -1619,6 +1672,11 @@ def add_smtp_account(
         int(daily_limit),
         today_str,
         1 if is_active else 0,
+        1 if warmup_enabled else 0,
+        (warmup_start_date or today_str).strip(),
+        int(warmup_starting_limit),
+        int(warmup_daily_increment),
+        int(warmup_target_limit),
         now_iso
     ))
     account_id = cursor.lastrowid
@@ -1655,6 +1713,11 @@ def update_smtp_account(
     smtp_port: Optional[int] = None,
     daily_limit: Optional[int] = None,
     is_active: Optional[bool] = None,
+    warmup_enabled: Optional[bool] = None,
+    warmup_start_date: Optional[str] = None,
+    warmup_starting_limit: Optional[int] = None,
+    warmup_daily_increment: Optional[int] = None,
+    warmup_target_limit: Optional[int] = None,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
@@ -1682,6 +1745,21 @@ def update_smtp_account(
     if is_active is not None:
         fields.append("is_active = ?")
         values.append(1 if is_active else 0)
+    if warmup_enabled is not None:
+        fields.append("warmup_enabled = ?")
+        values.append(1 if warmup_enabled else 0)
+    if warmup_start_date is not None:
+        fields.append("warmup_start_date = ?")
+        values.append(warmup_start_date.strip())
+    if warmup_starting_limit is not None:
+        fields.append("warmup_starting_limit = ?")
+        values.append(int(warmup_starting_limit))
+    if warmup_daily_increment is not None:
+        fields.append("warmup_daily_increment = ?")
+        values.append(int(warmup_daily_increment))
+    if warmup_target_limit is not None:
+        fields.append("warmup_target_limit = ?")
+        values.append(int(warmup_target_limit))
 
     if fields:
         values.append(account_id)
@@ -1699,7 +1777,8 @@ def delete_smtp_account(account_id: int, db_path: str = DB_FILE):
 
 def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
     """
-    Get the next available active SMTP account that has not exceeded its daily limit.
+    Get the next available active SMTP account that has not exceeded its effective daily limit
+    (respecting automated mailbox warmup ramp-up schedules).
     Automatically resets sent_today counter when the date rolls over.
     Selects the account with the lowest sent_today to balance load across mailboxes.
     """
@@ -1715,16 +1794,23 @@ def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str
     """, (today_str, today_str))
     conn.commit()
 
-    # 2. Find active accounts with remaining capacity, sorted by lowest sent_today
+    # 2. Find active accounts where sent_today < effective daily limit
     cursor.execute("""
         SELECT * FROM smtp_accounts
-        WHERE is_active = 1 AND sent_today < daily_limit
+        WHERE is_active = 1
         ORDER BY sent_today ASC, id ASC
-        LIMIT 1
     """)
-    row = cursor.fetchone()
+    rows = cursor.fetchall()
     conn.close()
-    return dict(row) if row else None
+
+    for r in rows:
+        acc = dict(r)
+        eff_limit = get_effective_daily_limit(acc, today_str=today_str)
+        if acc["sent_today"] < eff_limit:
+            acc["effective_daily_limit"] = eff_limit
+            return acc
+
+    return None
 
 def increment_smtp_sent(account_id: int, db_path: str = DB_FILE):
     """Increment sent_today counter for an SMTP account."""
