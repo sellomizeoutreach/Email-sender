@@ -409,15 +409,36 @@ def upsert_contact_by_email(
         )
         return new_id, True
 
-def get_all_distinct_tags(db_path: str = DB_FILE) -> List[str]:
-    """Retrieve all unique tags across all contacts for filtering and autocomplete."""
+PREDEFINED_OUTREACH_TAGS = [
+    "Amazon Brand",
+    "Shopify DTC",
+    "E-Commerce",
+    "Wholesale",
+    "FBA Private Label",
+    "High Priority",
+    "Audit Ready",
+    "Cold Outreach",
+    "Follow-Up Due",
+    "Warm Lead",
+    "Do Not Contact",
+    "Founder / CEO",
+    "Marketing Director",
+    "Listing Audit"
+]
+
+def get_predefined_tags() -> List[str]:
+    """Return standard agency predefined outreach tags."""
+    return list(PREDEFINED_OUTREACH_TAGS)
+
+def get_all_distinct_tags(include_predefined: bool = True, db_path: str = DB_FILE) -> List[str]:
+    """Retrieve all unique tags across all contacts, optionally merged with predefined tags."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT tags FROM contacts WHERE tags IS NOT NULL AND tags != ''")
     rows = cursor.fetchall()
     conn.close()
 
-    tag_set = set()
+    tag_set = set(PREDEFINED_OUTREACH_TAGS) if include_predefined else set()
     for r in rows:
         raw = r["tags"]
         for t in raw.split(","):
@@ -436,6 +457,113 @@ def delete_contact(contact_id: int, db_path: str = DB_FILE):
     cursor.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
     conn.commit()
     conn.close()
+
+def bulk_delete_contacts(contact_ids: List[int], db_path: str = DB_FILE) -> int:
+    """Delete multiple contacts in a single transaction."""
+    if not contact_ids:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+    cursor.execute(f"DELETE FROM contacts WHERE id IN ({placeholders})", tuple(contact_ids))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count
+
+def bulk_add_tags_to_contacts(contact_ids: List[int], new_tags: List[str], db_path: str = DB_FILE) -> int:
+    """Add one or more tags to selected contacts without removing existing tags."""
+    if not contact_ids or not new_tags:
+        return 0
+    clean_new_tags = [t.strip() for t in new_tags if t.strip()]
+    if not clean_new_tags:
+        return 0
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+    cursor.execute(f"SELECT id, tags FROM contacts WHERE id IN ({placeholders})", tuple(contact_ids))
+    rows = cursor.fetchall()
+
+    for r in rows:
+        cid = r["id"]
+        old_tags = [t.strip() for t in (r["tags"] or "").split(",") if t.strip()]
+        merged = sorted(list(set(old_tags + clean_new_tags)))
+        merged_str = ", ".join(merged)
+        cursor.execute("UPDATE contacts SET tags = ? WHERE id = ?", (merged_str, cid))
+
+    conn.commit()
+    conn.close()
+    return len(rows)
+
+def bulk_remove_tags_from_contacts(contact_ids: List[int], tags_to_remove: List[str], db_path: str = DB_FILE) -> int:
+    """Remove specific tags from selected contacts."""
+    if not contact_ids or not tags_to_remove:
+        return 0
+    remove_lower = set(t.strip().lower() for t in tags_to_remove if t.strip())
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+    cursor.execute(f"SELECT id, tags FROM contacts WHERE id IN ({placeholders})", tuple(contact_ids))
+    rows = cursor.fetchall()
+
+    for r in rows:
+        cid = r["id"]
+        old_tags = [t.strip() for t in (r["tags"] or "").split(",") if t.strip()]
+        kept = [t for t in old_tags if t.lower() not in remove_lower]
+        kept_str = ", ".join(kept)
+        cursor.execute("UPDATE contacts SET tags = ? WHERE id = ?", (kept_str, cid))
+
+    conn.commit()
+    conn.close()
+    return len(rows)
+
+def bulk_set_tags_for_contacts(contact_ids: List[int], new_tags: List[str], db_path: str = DB_FILE) -> int:
+    """Replace all tags on selected contacts with the provided tag list."""
+    if not contact_ids:
+        return 0
+    tags_str = _normalize_tags(new_tags)
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+    cursor.execute(f"UPDATE contacts SET tags = ? WHERE id IN ({placeholders})", (tags_str, *contact_ids))
+    updated_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return updated_count
+
+def bulk_update_contacts_details(
+    contact_ids: List[int],
+    company: Optional[str] = None,
+    custom_vars_to_merge: Optional[Dict[str, Any]] = None,
+    db_path: str = DB_FILE
+) -> int:
+    """Bulk update company or merge custom variables across multiple contacts."""
+    if not contact_ids:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+
+    if company is not None and company.strip():
+        cursor.execute(f"UPDATE contacts SET company = ? WHERE id IN ({placeholders})", (company.strip(), *contact_ids))
+
+    if custom_vars_to_merge:
+        cursor.execute(f"SELECT id, custom_variables FROM contacts WHERE id IN ({placeholders})", tuple(contact_ids))
+        rows = cursor.fetchall()
+        for r in rows:
+            cid = r["id"]
+            try:
+                curr_vars = json.loads(r["custom_variables"] or "{}")
+            except Exception:
+                curr_vars = {}
+            curr_vars.update(custom_vars_to_merge)
+            cursor.execute("UPDATE contacts SET custom_variables = ? WHERE id = ?", (json.dumps(curr_vars), cid))
+
+    conn.commit()
+    conn.close()
+    return len(contact_ids)
 
 # ------------------------------------------------------------------------------
 # TEMPLATES HELPERS

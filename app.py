@@ -35,8 +35,14 @@ from database import (
     update_contact,
     upsert_contact_by_email,
     get_all_distinct_tags,
+    get_predefined_tags,
     get_contacts_by_tag,
     delete_contact,
+    bulk_delete_contacts,
+    bulk_add_tags_to_contacts,
+    bulk_remove_tags_from_contacts,
+    bulk_set_tags_for_contacts,
+    bulk_update_contacts_details,
     create_template,
     get_templates,
     get_template_by_id,
@@ -749,17 +755,21 @@ with tab_crm:
                 c_company = st.text_input("Company Name", placeholder="Acme Brands")
 
             # Tag Management
-            st.markdown("##### Contact Tags")
-            existing_tags = get_all_distinct_tags()
-            col_t1, col_t2 = st.columns(2)
+            st.markdown("##### 🏷️ Contact Tags & Outreach Classification")
+            all_tags_list = get_all_distinct_tags(include_predefined=True)
+            col_t1, col_t2 = st.columns([1.8, 1.2])
             with col_t1:
-                selected_tags = st.multiselect("Select Existing Tags", options=existing_tags, help="Select one or more existing tags.")
+                selected_tags = st.multiselect(
+                    "Select Tags (Predefined & Custom)",
+                    options=all_tags_list,
+                    help="Choose one or more tags (e.g. Amazon Brand, Shopify DTC, High Priority, Cold Outreach)."
+                )
             with col_t2:
-                new_tags_raw = st.text_input("Or Add New Tag(s)", placeholder="e.g. Beauty Brands, Listing Audit, Q4 Leads", help="Comma-separated list of new tags.")
+                new_tags_raw = st.text_input("Or Add New Custom Tag(s)", placeholder="e.g. Beauty Brands, Q4 Leads", help="Comma-separated list of new custom tags.")
 
             st.markdown("##### Custom Variables (Optional)")
             st.caption("Add key-value pairs (e.g. `Role: CEO`, `Product: Coffee Maker`, `Niche: Home Decor`). These can be injected using `[Role]` or `[Niche]` in templates.")
-            custom_vars_raw = st.text_area("Custom Variables JSON", value="{\n  \"Role\": \"Brand Director\",\n  \"Category\": \"E-commerce\"\n}", height=90)
+            custom_vars_raw = st.text_area("Custom Variables JSON", value="{\n  \"Role\": \"Brand Director\",\n  \"Category\": \"E-commerce\"\n}", height=80)
 
             add_contact_btn = st.form_submit_button("Save Contact", type="primary")
 
@@ -825,49 +835,186 @@ with tab_crm:
     st.markdown("---")
 
     # Advanced Filtering (Search + Filter by Tag)
-    st.markdown("#### 🔍 Filter Contacts")
+    st.markdown("#### 🔍 Filter & Search Leads")
+    distinct_tags = get_all_distinct_tags(include_predefined=True)
     filter_col1, filter_col2 = st.columns([2, 2])
     with filter_col1:
-        search_query = st.text_input("Search Leads", placeholder="Search by Name, Email, or Company...", key="crm_search_query")
+        search_query = st.text_input("Search Leads", placeholder="Search by Name, Email, Company, or Tags...", key="crm_search_query")
     with filter_col2:
-        distinct_tags = get_all_distinct_tags()
         tag_filter = st.multiselect("Filter by Tag", options=distinct_tags, placeholder="Select one or more tags...", key="crm_tag_filter")
 
     # Data Table of Filtered Contacts
     filtered_contacts = get_contacts(tags_filter=tag_filter, search_query=search_query)
 
-    # Export Button for Current Filtered View
+    # Initialize CRM selection and editing session state
+    if "crm_selected_ids" not in st.session_state:
+        st.session_state["crm_selected_ids"] = set()
+    if "crm_editing_id" not in st.session_state:
+        st.session_state["crm_editing_id"] = None
+
+    filtered_ids = [c["id"] for c in filtered_contacts]
+    # Prune any stale IDs
+    st.session_state["crm_selected_ids"] = st.session_state["crm_selected_ids"].intersection(set(filtered_ids))
+    selected_ids = st.session_state["crm_selected_ids"]
+    s_count = len(selected_ids)
+
+    # Selection Toolbar
     if filtered_contacts:
-        export_csv_data = export_contacts_to_csv(filtered_contacts)
-        st.download_button(
-            label=f"📤 Export Filtered Leads ({len(filtered_contacts)} contacts) to CSV",
-            data=export_csv_data,
-            file_name="contacts_filtered_export.csv",
-            mime="text/csv"
-        )
+        col_sel1, col_sel2, col_sel3, col_sel4 = st.columns([1.5, 1.5, 2.5, 2.5])
+        with col_sel1:
+            if st.button(f"☑️ Select All ({len(filtered_contacts)})", key="btn_sel_all_crm", use_container_width=True):
+                st.session_state["crm_selected_ids"] = set(filtered_ids)
+                st.rerun()
+        with col_sel2:
+            if st.button("⬜ Clear Selection", key="btn_clear_sel_crm", use_container_width=True):
+                st.session_state["crm_selected_ids"] = set()
+                st.rerun()
+        with col_sel3:
+            if s_count > 0:
+                st.markdown(f"<div style='padding:7px 12px; background:rgba(238,83,36,0.18); border:1px solid #EE5324; border-radius:8px; color:#FF7B4D; font-weight:700; text-align:center;'>📌 {s_count} lead(s) selected</div>", unsafe_allow_html=True)
+            else:
+                st.caption(f"Showing **{len(filtered_contacts)}** contact(s). Select leads below for bulk actions.")
+        with col_sel4:
+            export_csv_data = export_contacts_to_csv(filtered_contacts)
+            st.download_button(
+                label=f"📤 Export ({len(filtered_contacts)}) to CSV",
+                data=export_csv_data,
+                file_name="contacts_export.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+    # ⚡ BULK ACTIONS COMMAND CENTER (Appears when 1+ contacts selected)
+    if s_count > 0:
+        with st.container():
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, rgba(14, 46, 39, 0.9) 0%, rgba(8, 28, 24, 0.98) 100%); border: 1.5px solid #EE5324; border-radius: 14px; padding: 16px 20px; margin: 12px 0 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.45);">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-size:1.1rem; font-weight:800; color:#FFFFFF; letter-spacing:0.5px;">⚡ BULK ACTIONS <span style="color:#FF7B4D;">({s_count} Leads Selected)</span></div>
+                    <div style="font-size:0.82rem; color:#94A3B8;">Apply tag changes, update details, or delete selected contacts in 1 click</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            bulk_tab_tag, bulk_tab_details, bulk_tab_delete = st.tabs([
+                "🏷️ Bulk Tag Management",
+                "✏️ Bulk Edit Details & Variables",
+                "🗑️ Bulk Delete"
+            ])
+
+            with bulk_tab_tag:
+                col_bt1, col_bt2 = st.columns([1.3, 2.7])
+                with col_bt1:
+                    bulk_tag_mode = st.radio(
+                        "Tag Action",
+                        ["➕ Add Tags (Keep Existing)", "🔄 Replace All Tags", "➖ Remove Specific Tags"],
+                        key="bulk_tag_mode"
+                    )
+                with col_bt2:
+                    all_avail_tags = get_all_distinct_tags(include_predefined=True)
+                    bulk_chosen_tags = st.multiselect("Select Predefined / Existing Tags", options=all_avail_tags, key="bulk_tags_multisel")
+                    bulk_custom_tag = st.text_input("Or Type New Tag to Apply", placeholder="e.g. Q4 Audit Target", key="bulk_custom_tag")
+
+                full_bulk_tags = list(set(bulk_chosen_tags + ([bulk_custom_tag.strip()] if bulk_custom_tag.strip() else [])))
+                if st.button(f"🚀 Apply Tags to {s_count} Selected Leads", type="primary", key="btn_apply_bulk_tags"):
+                    if not full_bulk_tags and "Replace" not in bulk_tag_mode:
+                        st.warning("Please select or enter at least one tag.")
+                    else:
+                        s_list = list(selected_ids)
+                        if "Add Tags" in bulk_tag_mode:
+                            bulk_add_tags_to_contacts(s_list, full_bulk_tags)
+                            st.success(f"✅ Added tags {full_bulk_tags} to {len(s_list)} contact(s)!")
+                        elif "Replace" in bulk_tag_mode:
+                            bulk_set_tags_for_contacts(s_list, full_bulk_tags)
+                            st.success(f"✅ Replaced tags with {full_bulk_tags} on {len(s_list)} contact(s)!")
+                        else:
+                            bulk_remove_tags_from_contacts(s_list, full_bulk_tags)
+                            st.success(f"✅ Removed tags {full_bulk_tags} from {len(s_list)} contact(s)!")
+                        st.rerun()
+
+            with bulk_tab_details:
+                st.caption(f"Update company or inject custom variables across all {s_count} selected leads:")
+                col_bd1, col_bd2 = st.columns(2)
+                with col_bd1:
+                    bulk_company = st.text_input("Set Company Name (leave blank to keep unchanged)", placeholder="e.g. Acme Brands", key="bulk_company_inp")
+                with col_bd2:
+                    st.caption("Add/Update Custom Variables (JSON):")
+                    bulk_vars_raw = st.text_area("Variables JSON to Merge", value="{\n  \"Role\": \"Founder\"\n}", height=75, key="bulk_vars_json")
+
+                if st.button(f"💾 Update Details on {s_count} Leads", key="btn_bulk_update_details"):
+                    try:
+                        parsed_vars = json.loads(bulk_vars_raw) if bulk_vars_raw.strip() else {}
+                    except Exception as b_err:
+                        st.warning(f"Invalid JSON: {b_err}")
+                        parsed_vars = {}
+
+                    bulk_update_contacts_details(
+                        contact_ids=list(selected_ids),
+                        company=bulk_company if bulk_company.strip() else None,
+                        custom_vars_to_merge=parsed_vars if parsed_vars else None
+                    )
+                    st.success(f"✅ Updated details on {s_count} contact(s)!")
+                    st.rerun()
+
+            with bulk_tab_delete:
+                st.error(f"⚠️ Caution: This will permanently delete {s_count} selected contact(s) from your database.")
+                confirm_del = st.checkbox(f"Yes, permanently delete these {s_count} contact(s)", key="confirm_bulk_del")
+                if confirm_del:
+                    if st.button(f"🗑️ Confirm Delete {s_count} Contacts", type="primary", key="btn_confirm_bulk_del"):
+                        del_num = bulk_delete_contacts(list(selected_ids))
+                        st.session_state["crm_selected_ids"] = set()
+                        st.success(f"Deleted {del_num} contact(s).")
+                        st.rerun()
+
+        st.markdown("<br>", unsafe_allow_html=True)
 
     if not filtered_contacts:
         st.info("No contacts match the selected search/tag filter.")
     else:
-        st.write(f"Showing **{len(filtered_contacts)}** contact(s):")
-
         for contact in filtered_contacts:
+            c_id = contact["id"]
+            is_editing = (st.session_state.get("crm_editing_id") == c_id)
+            is_selected = (c_id in selected_ids)
+
             with st.container():
-                col_c1, col_c2, col_c3, col_c4 = st.columns([2.5, 2.5, 3, 1])
+                col_chk, col_c1, col_c2, col_c3, col_c4 = st.columns([0.45, 2.5, 2.5, 3.1, 1.45])
+                with col_chk:
+                    checked = st.checkbox("", key=f"sel_c_{c_id}", value=is_selected)
+                    if checked != is_selected:
+                        if checked:
+                            st.session_state["crm_selected_ids"].add(c_id)
+                        else:
+                            st.session_state["crm_selected_ids"].discard(c_id)
+                        st.rerun()
+
                 with col_c1:
                     st.markdown(f"**{contact['name']}**")
-                    st.caption(f"ID #{contact['id']} | Added: {contact['created_at']}")
+                    st.caption(f"ID #{c_id} | Added: {contact['created_at']}")
                 with col_c2:
                     st.markdown(f"📧 `{contact['email']}`")
                     st.markdown(f"🏢 {contact.get('company') or 'No Company'}")
                 with col_c3:
-                    # Tag Badges
+                    # Tag Badges with distinct intelligent colors
                     tags_list = contact.get("tags_list") or []
                     if tags_list:
-                        tags_html = " ".join([
-                            f"<span style='background:rgba(16, 185, 129, 0.12);color:#34D399;border:1px solid rgba(16, 185, 129, 0.35);font-size:0.78rem;font-weight:700;padding:3px 9px;border-radius:6px;margin-right:5px;display:inline-block;letter-spacing:0.3px;'>🏷️ {t}</span>"
-                            for t in tags_list
-                        ])
+                        tags_html = ""
+                        for t in tags_list:
+                            bg = "rgba(16, 185, 129, 0.14)"
+                            color = "#34D399"
+                            border = "rgba(16, 185, 129, 0.35)"
+                            if any(w in t.lower() for w in ["priority", "warm", "urgent"]):
+                                bg = "rgba(238, 83, 36, 0.16)"
+                                color = "#FF7B4D"
+                                border = "rgba(238, 83, 36, 0.45)"
+                            elif any(w in t.lower() for w in ["amazon", "shopify", "ecommerce", "brand"]):
+                                bg = "rgba(59, 130, 246, 0.14)"
+                                color = "#60A5FA"
+                                border = "rgba(59, 130, 246, 0.35)"
+                            elif any(w in t.lower() for w in ["do not", "stop", "unsub"]):
+                                bg = "rgba(239, 68, 68, 0.14)"
+                                color = "#F87171"
+                                border = "rgba(239, 68, 68, 0.35)"
+                            tags_html += f"<span style='background:{bg}; color:{color}; border:1px solid {border}; font-size:0.78rem; font-weight:700; padding:2px 8px; border-radius:6px; margin-right:4px; display:inline-block;'>🏷️ {t}</span> "
                         st.markdown(tags_html, unsafe_allow_html=True)
 
                     vars_dict = contact.get("custom_variables_dict") or {}
@@ -876,12 +1023,93 @@ with tab_crm:
                         st.markdown(f"**Vars:** {chips}")
                     elif not tags_list:
                         st.caption("No tags or variables")
+
                 with col_c4:
-                    if st.button("🗑️ Delete", key=f"del_contact_{contact['id']}"):
-                        delete_contact(contact["id"])
-                        st.warning(f"Contact #{contact['id']} deleted.")
-                        st.rerun()
-                st.markdown("<hr style='margin: 0.5rem 0;'>", unsafe_allow_html=True)
+                    col_btn_e, col_btn_d = st.columns(2)
+                    with col_btn_e:
+                        if st.button("✏️", key=f"edit_btn_{c_id}", help="Edit Contact Details & Tags"):
+                            if st.session_state.get("crm_editing_id") == c_id:
+                                st.session_state["crm_editing_id"] = None
+                            else:
+                                st.session_state["crm_editing_id"] = c_id
+                            st.rerun()
+                    with col_btn_d:
+                        if st.button("🗑️", key=f"del_contact_{c_id}", help="Delete Contact"):
+                            delete_contact(c_id)
+                            st.session_state["crm_selected_ids"].discard(c_id)
+                            st.warning(f"Contact #{c_id} deleted.")
+                            st.rerun()
+
+                # INLINE EDIT EXPANDER/FORM
+                if is_editing:
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="background: rgba(14, 46, 39, 0.65); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin: 8px 0 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
+                            <strong style="color: #34D399;">✏️ Edit Lead #{c_id}: {contact['name']}</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        with st.form(f"edit_contact_form_{c_id}"):
+                            ec1, ec2, ec3 = st.columns(3)
+                            with ec1:
+                                edit_name = st.text_input("Full Name *", value=contact["name"])
+                            with ec2:
+                                edit_email = st.text_input("Email Address *", value=contact["email"])
+                            with ec3:
+                                edit_company = st.text_input("Company", value=contact.get("company") or "")
+
+                            all_avail_tags = get_all_distinct_tags(include_predefined=True)
+                            curr_tags = contact.get("tags_list") or []
+                            col_et1, col_et2 = st.columns([2, 1])
+                            with col_et1:
+                                edit_selected_tags = st.multiselect(
+                                    "Tags (Select Predefined / Existing)",
+                                    options=all_avail_tags,
+                                    default=[t for t in curr_tags if t in all_avail_tags]
+                                )
+                            with col_et2:
+                                edit_new_tags = st.text_input("Or Add New Tag(s)", placeholder="e.g. Q4 Audit", help="Comma separated")
+
+                            edit_vars_json = st.text_area(
+                                "Custom Variables JSON",
+                                value=json.dumps(contact.get("custom_variables_dict") or {}, indent=2),
+                                height=80
+                            )
+
+                            col_esave, col_ecancel = st.columns([1.5, 4])
+                            with col_esave:
+                                save_edit_btn = st.form_submit_button("💾 Save Changes", type="primary", use_container_width=True)
+                            with col_ecancel:
+                                cancel_edit_btn = st.form_submit_button("Cancel", use_container_width=True)
+
+                            if save_edit_btn:
+                                if not edit_name.strip() or not edit_email.strip():
+                                    st.error("Name and Email are required.")
+                                else:
+                                    try:
+                                        parsed_cv = json.loads(edit_vars_json) if edit_vars_json.strip() else {}
+                                    except Exception:
+                                        parsed_cv = contact.get("custom_variables_dict") or {}
+
+                                    extra_t = [t.strip() for t in edit_new_tags.split(",") if t.strip()]
+                                    final_t = list(set(edit_selected_tags + extra_t))
+
+                                    update_contact(
+                                        contact_id=c_id,
+                                        name=edit_name.strip(),
+                                        email=edit_email.strip(),
+                                        company=edit_company.strip(),
+                                        tags=final_t,
+                                        custom_variables=parsed_cv
+                                    )
+                                    st.session_state["crm_editing_id"] = None
+                                    st.success(f"✅ Saved changes for contact #{c_id}!")
+                                    st.rerun()
+
+                            if cancel_edit_btn:
+                                st.session_state["crm_editing_id"] = None
+                                st.rerun()
+
+                st.markdown("<hr style='margin: 0.4rem 0; opacity: 0.15;'>", unsafe_allow_html=True)
 
 # ==============================================================================
 # TAB 2: TEMPLATE BUILDER (SPINTAX & VARIABLES)

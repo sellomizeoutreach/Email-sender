@@ -41,7 +41,13 @@ from database import (
     update_smtp_account,
     delete_smtp_account,
     get_next_available_smtp_account,
-    increment_smtp_sent
+    increment_smtp_sent,
+    get_predefined_tags,
+    bulk_add_tags_to_contacts,
+    bulk_remove_tags_from_contacts,
+    bulk_set_tags_for_contacts,
+    bulk_update_contacts_details,
+    bulk_delete_contacts
 )
 from smtp_dispatcher import (
     test_smtp_connection,
@@ -389,6 +395,60 @@ class TestEmailAutomationSystem(unittest.TestCase):
             test_ok, test_msg = test_smtp_connection("smtp.hostinger.com", 465, "outreach@testagency.com", "fake_password")
             self.assertTrue(test_ok)
             self.assertIn("Authentication successful", test_msg)
+
+    def test_14_bulk_contact_operations_and_predefined_tags(self):
+        """Test predefined outreach tags, bulk tagging, bulk details edit, and bulk delete."""
+        # 1. Verify predefined tags list
+        predefined = get_predefined_tags()
+        self.assertIn("Amazon Brand", predefined)
+        self.assertIn("Shopify DTC", predefined)
+        self.assertIn("High Priority", predefined)
+        self.assertIn("Cold Outreach", predefined)
+
+        # 2. Create 3 test contacts
+        c1 = create_contact("Lead One", "one@brand.com", "Brand 1", "Cold Outreach", {"Role": "CEO"}, db_path=TEST_DB)
+        c2 = create_contact("Lead Two", "two@brand.com", "Brand 2", "Cold Outreach", {"Role": "Director"}, db_path=TEST_DB)
+        c3 = create_contact("Lead Three", "three@brand.com", "Brand 3", "Other", {"Role": "Owner"}, db_path=TEST_DB)
+
+        # 3. Bulk Add Tags
+        added_count = bulk_add_tags_to_contacts([c1, c2], ["Amazon Brand", "Audit Ready"], db_path=TEST_DB)
+        self.assertEqual(added_count, 2)
+        rec1 = get_contact_by_id(c1, db_path=TEST_DB)
+        self.assertIn("Amazon Brand", rec1["tags_list"])
+        self.assertIn("Audit Ready", rec1["tags_list"])
+        self.assertIn("Cold Outreach", rec1["tags_list"]) # preserved
+
+        # 4. Bulk Remove Tags
+        rem_count = bulk_remove_tags_from_contacts([c1, c2], ["Cold Outreach"], db_path=TEST_DB)
+        self.assertEqual(rem_count, 2)
+        rec1 = get_contact_by_id(c1, db_path=TEST_DB)
+        self.assertNotIn("Cold Outreach", rec1["tags_list"])
+
+        # 5. Bulk Set Tags (replace all)
+        set_count = bulk_set_tags_for_contacts([c1, c2], ["Shopify DTC", "High Priority"], db_path=TEST_DB)
+        self.assertEqual(set_count, 2)
+        rec1 = get_contact_by_id(c1, db_path=TEST_DB)
+        self.assertEqual(sorted(rec1["tags_list"]), ["High Priority", "Shopify DTC"])
+
+        # 6. Bulk Update Details (Company & Variables)
+        up_count = bulk_update_contacts_details(
+            contact_ids=[c1, c2],
+            company="Unified Brand Corp",
+            custom_vars_to_merge={"Niche": "Beauty & Personal Care"},
+            db_path=TEST_DB
+        )
+        self.assertEqual(up_count, 2)
+        rec1 = get_contact_by_id(c1, db_path=TEST_DB)
+        self.assertEqual(rec1["company"], "Unified Brand Corp")
+        self.assertEqual(rec1["custom_variables_dict"]["Role"], "CEO") # preserved
+        self.assertEqual(rec1["custom_variables_dict"]["Niche"], "Beauty & Personal Care") # merged
+
+        # 7. Bulk Delete
+        del_count = bulk_delete_contacts([c1, c2, c3], db_path=TEST_DB)
+        self.assertEqual(del_count, 3)
+        self.assertIsNone(get_contact_by_id(c1, db_path=TEST_DB))
+        self.assertIsNone(get_contact_by_id(c2, db_path=TEST_DB))
+        self.assertIsNone(get_contact_by_id(c3, db_path=TEST_DB))
 
 if __name__ == "__main__":
     unittest.main()
