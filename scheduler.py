@@ -38,9 +38,11 @@ from database import (
     update_email,
     get_next_available_smtp_account,
     increment_smtp_sent,
+    advance_contact_followup,
     init_db
 )
-from smtp_dispatcher import send_smtp_email
+from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces
+from tracker import inject_tracking_pixel, start_tracking_server
 
 # Configure logging
 logging.basicConfig(
@@ -145,14 +147,16 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
         mark_email_error(email_id, status="Error", error_message=err_msg)
         return
 
-    # Prepare signature and payload
+    # Prepare signature, tracking pixel, and payload
     signature_html = (get_config("signature_html") or "").strip()
     bcc_address = (get_config("bcc_email") or "").strip()
-    final_payload = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
+    combined_body = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
+    final_payload = inject_tracking_pixel(combined_body, email_id)
 
     if dry_run:
         logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
         mark_email_sent(email_id)
+        advance_contact_followup(recipient, delay_days=4)
         return
 
     success, msg = send_smtp_email(
@@ -171,6 +175,8 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False):
             sent_via=f"Hostinger ({smtp_account['email']})",
             smtp_account_id=smtp_account["id"]
         )
+        # Advance contact outreach status, date, and next follow-up
+        advance_contact_followup(recipient, delay_days=4)
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
     else:
         mark_email_error(email_id, status="Error", error_message=msg)
@@ -231,11 +237,12 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
         if bcc_address:
             mail.BCC = bcc_address
 
-        # Concatenate approved HTML body with signature HTML
+        # Concatenate approved HTML body with signature HTML and tracking pixel
         if signature_html:
-            final_payload = f"{approved_email_html}<br><br>{signature_html}"
+            combined_body = f"{approved_email_html}<br><br>{signature_html}"
         else:
-            final_payload = approved_email_html
+            combined_body = approved_email_html
+        final_payload = inject_tracking_pixel(combined_body, email_id)
 
         # Assign directly to HTMLBody
         mail.HTMLBody = final_payload
@@ -248,6 +255,7 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False):
         mail.Send()
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}'.")
         mark_email_sent(email_id)
+        advance_contact_followup(recipient, delay_days=4)
 
     except Exception as dispatch_err:
         logger.error(f"Error dispatching Email ID #{email_id}: {dispatch_err}")
@@ -307,12 +315,28 @@ def start_scheduler_loop(interval: int = 60, stop_event=None):
     scheduler as a background thread within the unified desktop app.
     """
     init_db()
-    logger.info("Background Outlook Dispatch Scheduler loop started.")
+    try:
+        start_tracking_server(port=8502)
+    except Exception as t_err:
+        logger.warning(f"Could not auto-start open tracking server: {t_err}")
+
+    logger.info("Background Email Dispatch & Open Tracking Scheduler loop started.")
+    cycle_counter = 0
+
     while stop_event is None or not stop_event.is_set():
+        cycle_counter += 1
         try:
             run_scheduler_cycle(dry_run=False)
         except Exception as cycle_err:
             logger.error(f"Unexpected error in scheduler cycle: {cycle_err}")
+
+        # Periodically scan Hostinger IMAP for NDR bounces (e.g. every 10 cycles ~ 10 mins)
+        if cycle_counter % 10 == 0:
+            try:
+                logger.info("Running scheduled Hostinger bounce scan...")
+                scan_all_hostinger_bounces()
+            except Exception as b_err:
+                logger.debug(f"Periodic bounce check skipped: {b_err}")
 
         # Sleep in increments of 1 second for responsive shutdown
         slept = 0

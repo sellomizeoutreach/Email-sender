@@ -7,8 +7,8 @@ import sys
 import sqlite3
 import os
 import json
-from datetime import datetime
-from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Union
 
 def get_db_path() -> str:
     """
@@ -57,11 +57,25 @@ def init_db(db_path: str = DB_FILE):
         )
     """)
 
-    # Schema migration: ensure tags column exists if table was previously created
-    try:
-        cursor.execute("ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT ''")
-    except Exception:
-        pass  # Column already exists
+    # Schema migrations for contacts table (Excel CRM fields)
+    contact_migrations = [
+        ("tags", "TEXT DEFAULT ''"),
+        ("lead_source", "TEXT DEFAULT 'Other'"),
+        ("priority", "TEXT DEFAULT 'Medium'"),
+        ("contacted", "TEXT DEFAULT 'No'"),
+        ("date_first_emailed", "TEXT DEFAULT ''"),
+        ("status", "TEXT DEFAULT 'Not Contacted'"),
+        ("follow_ups_sent", "INTEGER DEFAULT 0"),
+        ("last_contact_date", "TEXT DEFAULT ''"),
+        ("next_follow_up", "TEXT DEFAULT ''"),
+        ("owner", "TEXT DEFAULT ''"),
+        ("notes", "TEXT DEFAULT ''"),
+    ]
+    for col_name, col_def in contact_migrations:
+        try:
+            cursor.execute(f"ALTER TABLE contacts ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
 
     # 3. Templates table (Reusable Spintax & Variable templates)
     cursor.execute("""
@@ -87,20 +101,29 @@ def init_db(db_path: str = DB_FILE):
             error_message TEXT,
             sent_via TEXT DEFAULT '',
             smtp_account_id INTEGER DEFAULT NULL,
+            opened_at TEXT DEFAULT '',
+            open_count INTEGER DEFAULT 0,
+            is_bounced INTEGER DEFAULT 0,
+            bounce_reason TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
     """)
 
-    # Schema migration: ensure sent_via and smtp_account_id exist in emails table
-    try:
-        cursor.execute("ALTER TABLE emails ADD COLUMN sent_via TEXT DEFAULT ''")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE emails ADD COLUMN smtp_account_id INTEGER DEFAULT NULL")
-    except Exception:
-        pass
+    # Schema migration: ensure emails tracking and dispatch columns exist
+    email_migrations = [
+        ("sent_via", "TEXT DEFAULT ''"),
+        ("smtp_account_id", "INTEGER DEFAULT NULL"),
+        ("opened_at", "TEXT DEFAULT ''"),
+        ("open_count", "INTEGER DEFAULT 0"),
+        ("is_bounced", "INTEGER DEFAULT 0"),
+        ("bounce_reason", "TEXT DEFAULT ''")
+    ]
+    for col_name, col_def in email_migrations:
+        try:
+            cursor.execute(f"ALTER TABLE emails ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
 
     # 5. SMTP Accounts table for Hostinger / direct SMTP multi-account rotation
     cursor.execute("""
@@ -239,6 +262,16 @@ def create_contact(
     company: str = "",
     tags: Any = "",
     custom_variables: Optional[Dict[str, Any]] = None,
+    lead_source: str = "Other",
+    priority: str = "Medium",
+    contacted: str = "No",
+    date_first_emailed: str = "",
+    status: str = "Not Contacted",
+    follow_ups_sent: int = 0,
+    last_contact_date: str = "",
+    next_follow_up: str = "",
+    owner: str = "",
+    notes: str = "",
     db_path: str = DB_FILE
 ) -> int:
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
@@ -247,20 +280,56 @@ def create_contact(
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO contacts (name, email, company, tags, custom_variables, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (name.strip(), email.strip(), company.strip(), tags_str, vars_json, now_iso))
+        INSERT INTO contacts (
+            name, email, company, tags, custom_variables,
+            lead_source, priority, contacted, date_first_emailed,
+            status, follow_ups_sent, last_contact_date, next_follow_up,
+            owner, notes, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        name.strip(), email.strip(), company.strip(), tags_str, vars_json,
+        (lead_source or "Other").strip(), (priority or "Medium").strip(),
+        (contacted or "No").strip(), (date_first_emailed or "").strip(),
+        (status or "Not Contacted").strip(), int(follow_ups_sent or 0),
+        (last_contact_date or "").strip(), (next_follow_up or "").strip(),
+        (owner or "").strip(), (notes or "").strip(), now_iso
+    ))
     contact_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return contact_id
 
+def _populate_contact_defaults(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure all CRM spreadsheet fields have standardized non-null default values."""
+    try:
+        d["custom_variables_dict"] = json.loads(d.get("custom_variables") or "{}")
+    except Exception:
+        d["custom_variables_dict"] = {}
+    raw_tags = d.get("tags") or ""
+    d["tags_list"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    d["lead_source"] = d.get("lead_source") or "Other"
+    d["priority"] = d.get("priority") or "Medium"
+    d["contacted"] = d.get("contacted") or "No"
+    d["date_first_emailed"] = d.get("date_first_emailed") or ""
+    d["status"] = d.get("status") or "Not Contacted"
+    try:
+        d["follow_ups_sent"] = int(d.get("follow_ups_sent") if d.get("follow_ups_sent") is not None else 0)
+    except Exception:
+        d["follow_ups_sent"] = 0
+    d["last_contact_date"] = d.get("last_contact_date") or ""
+    d["next_follow_up"] = d.get("next_follow_up") or ""
+    d["owner"] = d.get("owner") or ""
+    d["notes"] = d.get("notes") or ""
+    return d
+
 def get_contacts(
     tags_filter: Optional[List[str]] = None,
     search_query: Optional[str] = None,
+    status_filter: Optional[str] = None,
     db_path: str = DB_FILE
 ) -> List[Dict[str, Any]]:
-    """Retrieve contacts with optional filtering by tags and search query."""
+    """Retrieve contacts with optional filtering by tags, search query, and status."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM contacts ORDER BY id DESC")
@@ -272,21 +341,16 @@ def get_contacts(
     clean_search = search_query.strip().lower() if search_query else ""
 
     for r in rows:
-        d = dict(r)
-        # Parse custom variables
-        try:
-            d["custom_variables_dict"] = json.loads(d.get("custom_variables") or "{}")
-        except Exception:
-            d["custom_variables_dict"] = {}
+        d = _populate_contact_defaults(dict(r))
 
-        # Parse tags into list
-        raw_tags = d.get("tags") or ""
-        tags_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
-        d["tags_list"] = tags_list
-        tags_lower = [t.lower() for t in tags_list]
+        # Status filter check
+        if status_filter and status_filter.strip() and status_filter != "-- All --":
+            if d["status"].strip().lower() != status_filter.strip().lower():
+                continue
 
         # Tag filter check (contact must match at least one selected tag if filter is set)
         if normalized_tags_filter:
+            tags_lower = [t.lower() for t in d["tags_list"]]
             if not any(filt_tag in tags_lower for filt_tag in normalized_tags_filter):
                 continue
 
@@ -295,8 +359,10 @@ def get_contacts(
             name_match = clean_search in d.get("name", "").lower()
             email_match = clean_search in d.get("email", "").lower()
             company_match = clean_search in (d.get("company") or "").lower()
-            tag_match = any(clean_search in t for t in tags_lower)
-            if not (name_match or email_match or company_match or tag_match):
+            owner_match = clean_search in (d.get("owner") or "").lower()
+            tag_match = any(clean_search in t for t in [t.lower() for t in d["tags_list"]])
+            notes_match = clean_search in (d.get("notes") or "").lower()
+            if not (name_match or email_match or company_match or owner_match or tag_match or notes_match):
                 continue
 
         results.append(d)
@@ -310,14 +376,7 @@ def get_contact_by_id(contact_id: int, db_path: str = DB_FILE) -> Optional[Dict[
     conn.close()
     if not row:
         return None
-    d = dict(row)
-    try:
-        d["custom_variables_dict"] = json.loads(d.get("custom_variables") or "{}")
-    except Exception:
-        d["custom_variables_dict"] = {}
-    raw_tags = d.get("tags") or ""
-    d["tags_list"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
-    return d
+    return _populate_contact_defaults(dict(row))
 
 def get_contact_by_email(email: str, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
     conn = get_connection(db_path)
@@ -327,33 +386,84 @@ def get_contact_by_email(email: str, db_path: str = DB_FILE) -> Optional[Dict[st
     conn.close()
     if not row:
         return None
-    d = dict(row)
-    try:
-        d["custom_variables_dict"] = json.loads(d.get("custom_variables") or "{}")
-    except Exception:
-        d["custom_variables_dict"] = {}
-    raw_tags = d.get("tags") or ""
-    d["tags_list"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
-    return d
+    return _populate_contact_defaults(dict(row))
 
 def update_contact(
     contact_id: int,
-    name: str,
-    email: str,
-    company: str = "",
-    tags: Any = "",
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    company: Optional[str] = None,
+    tags: Optional[Any] = None,
     custom_variables: Optional[Dict[str, Any]] = None,
+    lead_source: Optional[str] = None,
+    priority: Optional[str] = None,
+    contacted: Optional[str] = None,
+    date_first_emailed: Optional[str] = None,
+    status: Optional[str] = None,
+    follow_ups_sent: Optional[int] = None,
+    last_contact_date: Optional[str] = None,
+    next_follow_up: Optional[str] = None,
+    owner: Optional[str] = None,
+    notes: Optional[str] = None,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    vars_json = json.dumps(custom_variables or {})
-    tags_str = _normalize_tags(tags)
-    cursor.execute("""
-        UPDATE contacts SET name = ?, email = ?, company = ?, tags = ?, custom_variables = ?
-        WHERE id = ?
-    """, (name.strip(), email.strip(), company.strip(), tags_str, vars_json, contact_id))
-    conn.commit()
+
+    fields = []
+    values = []
+
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name.strip())
+    if email is not None:
+        fields.append("email = ?")
+        values.append(email.strip())
+    if company is not None:
+        fields.append("company = ?")
+        values.append(company.strip())
+    if tags is not None:
+        fields.append("tags = ?")
+        values.append(_normalize_tags(tags))
+    if custom_variables is not None:
+        fields.append("custom_variables = ?")
+        values.append(json.dumps(custom_variables))
+    if lead_source is not None:
+        fields.append("lead_source = ?")
+        values.append(lead_source.strip())
+    if priority is not None:
+        fields.append("priority = ?")
+        values.append(priority.strip())
+    if contacted is not None:
+        fields.append("contacted = ?")
+        values.append(contacted.strip())
+    if date_first_emailed is not None:
+        fields.append("date_first_emailed = ?")
+        values.append(date_first_emailed.strip())
+    if status is not None:
+        fields.append("status = ?")
+        values.append(status.strip())
+    if follow_ups_sent is not None:
+        fields.append("follow_ups_sent = ?")
+        values.append(int(follow_ups_sent))
+    if last_contact_date is not None:
+        fields.append("last_contact_date = ?")
+        values.append(last_contact_date.strip())
+    if next_follow_up is not None:
+        fields.append("next_follow_up = ?")
+        values.append(next_follow_up.strip())
+    if owner is not None:
+        fields.append("owner = ?")
+        values.append(owner.strip())
+    if notes is not None:
+        fields.append("notes = ?")
+        values.append(notes.strip())
+
+    if fields:
+        values.append(contact_id)
+        cursor.execute(f"UPDATE contacts SET {', '.join(fields)} WHERE id = ?", tuple(values))
+        conn.commit()
+
     conn.close()
 
 def upsert_contact_by_email(
@@ -362,11 +472,21 @@ def upsert_contact_by_email(
     company: str = "",
     tags: Any = "",
     custom_variables: Optional[Dict[str, Any]] = None,
+    lead_source: Optional[str] = None,
+    priority: Optional[str] = None,
+    contacted: Optional[str] = None,
+    date_first_emailed: Optional[str] = None,
+    status: Optional[str] = None,
+    follow_ups_sent: Optional[int] = None,
+    last_contact_date: Optional[str] = None,
+    next_follow_up: Optional[str] = None,
+    owner: Optional[str] = None,
+    notes: Optional[str] = None,
     db_path: str = DB_FILE
 ) -> (int, bool):
     """
     If an email address already exists in the database, updates the existing row
-    by merging new tags and custom variables rather than creating a duplicate.
+    by merging new tags and custom variables and updating non-empty CRM fields.
     Returns (contact_id, is_created).
     """
     clean_email = email.strip()
@@ -384,19 +504,36 @@ def upsert_contact_by_email(
         if custom_variables:
             merged_vars.update(custom_variables)
 
-        # Update contact record
-        update_name = name.strip() if name.strip() else existing["name"]
-        update_company = company.strip() if company.strip() else existing.get("company", "")
+        # Build update kwargs
+        update_kwargs: Dict[str, Any] = {
+            "name": name.strip() if name.strip() else existing["name"],
+            "company": company.strip() if company.strip() else existing.get("company", ""),
+            "tags": merged_tags,
+            "custom_variables": merged_vars,
+            "db_path": db_path
+        }
+        if lead_source is not None and lead_source.strip():
+            update_kwargs["lead_source"] = lead_source.strip()
+        if priority is not None and priority.strip():
+            update_kwargs["priority"] = priority.strip()
+        if contacted is not None and contacted.strip():
+            update_kwargs["contacted"] = contacted.strip()
+        if date_first_emailed is not None and date_first_emailed.strip():
+            update_kwargs["date_first_emailed"] = date_first_emailed.strip()
+        if status is not None and status.strip():
+            update_kwargs["status"] = status.strip()
+        if follow_ups_sent is not None:
+            update_kwargs["follow_ups_sent"] = int(follow_ups_sent)
+        if last_contact_date is not None and last_contact_date.strip():
+            update_kwargs["last_contact_date"] = last_contact_date.strip()
+        if next_follow_up is not None and next_follow_up.strip():
+            update_kwargs["next_follow_up"] = next_follow_up.strip()
+        if owner is not None and owner.strip():
+            update_kwargs["owner"] = owner.strip()
+        if notes is not None and notes.strip():
+            update_kwargs["notes"] = notes.strip()
 
-        update_contact(
-            contact_id=contact_id,
-            name=update_name,
-            email=clean_email,
-            company=update_company,
-            tags=merged_tags,
-            custom_variables=merged_vars,
-            db_path=db_path
-        )
+        update_contact(contact_id=contact_id, **update_kwargs)
         return contact_id, False
     else:
         new_id = create_contact(
@@ -405,9 +542,142 @@ def upsert_contact_by_email(
             company=company,
             tags=tags,
             custom_variables=custom_variables,
+            lead_source=lead_source or "Other",
+            priority=priority or "Medium",
+            contacted=contacted or "No",
+            date_first_emailed=date_first_emailed or "",
+            status=status or "Not Contacted",
+            follow_ups_sent=follow_ups_sent if follow_ups_sent is not None else 0,
+            last_contact_date=last_contact_date or "",
+            next_follow_up=next_follow_up or "",
+            owner=owner or "",
+            notes=notes or "",
             db_path=db_path
         )
         return new_id, True
+
+def bulk_update_contact_grid(records: List[Dict[str, Any]], db_path: str = DB_FILE) -> int:
+    """
+    Bulk update contacts from the editable Excel-like spreadsheet grid.
+    Updates each record's editable fields in a single SQLite transaction.
+    """
+    if not records:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    updated_count = 0
+    for rec in records:
+        cid = rec.get("id") or rec.get("Lead ID")
+        if not cid:
+            continue
+        try:
+            # Handle formatted L-0001 or raw int
+            if isinstance(cid, str) and cid.startswith("L-"):
+                cid = int(cid.replace("L-", ""))
+            else:
+                cid = int(cid)
+        except Exception:
+            continue
+
+        name = str(rec.get("name") or rec.get("Contact Name") or "").strip()
+        email = str(rec.get("email") or rec.get("Email Address") or "").strip()
+        company = str(rec.get("company") or rec.get("Company") or "").strip()
+        tags = rec.get("tags") or rec.get("Tags") or ""
+        tags_str = _normalize_tags(tags)
+        lead_source = str(rec.get("lead_source") or rec.get("Lead Source") or "Other").strip()
+        priority = str(rec.get("priority") or rec.get("Priority") or "Medium").strip()
+        contacted = str(rec.get("contacted") or rec.get("Contacted?") or "No").strip()
+        date_first_emailed = str(rec.get("date_first_emailed") or rec.get("Date First Emailed") or "").strip()
+        status = str(rec.get("status") or rec.get("Status") or "Not Contacted").strip()
+        try:
+            raw_sent = rec.get("follow_ups_sent") if rec.get("follow_ups_sent") is not None else rec.get("Follow-Ups Sent")
+            follow_ups_sent = int(raw_sent if raw_sent is not None and str(raw_sent).strip() != "" else 0)
+        except Exception:
+            follow_ups_sent = 0
+        last_contact_date = str(rec.get("last_contact_date") or rec.get("Last Contact Date") or "").strip()
+        next_follow_up = str(rec.get("next_follow_up") or rec.get("Next Follow-Up") or "").strip()
+        owner = str(rec.get("owner") or rec.get("Owner") or "").strip()
+        notes = str(rec.get("notes") or rec.get("Notes") or "").strip()
+
+        cursor.execute("""
+            UPDATE contacts SET
+                name = ?, email = ?, company = ?, tags = ?,
+                lead_source = ?, priority = ?, contacted = ?,
+                date_first_emailed = ?, status = ?, follow_ups_sent = ?,
+                last_contact_date = ?, next_follow_up = ?, owner = ?, notes = ?
+            WHERE id = ?
+        """, (
+            name, email, company, tags_str,
+            lead_source, priority, contacted,
+            date_first_emailed, status, follow_ups_sent,
+            last_contact_date, next_follow_up, owner, notes,
+            cid
+        ))
+        updated_count += 1
+
+    conn.commit()
+    conn.close()
+    return updated_count
+
+def advance_contact_followup(
+    contact_id_or_email: Union[int, str],
+    delay_days: int = 4,
+    db_path: str = DB_FILE
+) -> bool:
+    """
+    Advance contact outreach sequence when an email is successfully dispatched:
+    - Sets contacted = 'Yes'
+    - If date_first_emailed is empty, sets it to today (YYYY-MM-DD)
+    - Sets last_contact_date to today (YYYY-MM-DD)
+    - Increments follow_ups_sent by 1
+    - Calculates next_follow_up as today + delay_days (YYYY-MM-DD)
+    - Updates status: if 'Not Contacted', transitions to 'Contacted'; if 'Contacted', transitions to 'Follow-Up Sent'
+    """
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    next_date_str = (datetime.now().astimezone() + timedelta(days=delay_days)).strftime("%Y-%m-%d")
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    if isinstance(contact_id_or_email, int) or (isinstance(contact_id_or_email, str) and contact_id_or_email.isdigit()):
+        cursor.execute("SELECT * FROM contacts WHERE id = ?", (int(contact_id_or_email),))
+    else:
+        cursor.execute("SELECT * FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (str(contact_id_or_email).strip(),))
+
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    cid = row["id"]
+    curr_first = row["date_first_emailed"] or today_str
+    try:
+        curr_sent = int(row["follow_ups_sent"] or 0) + 1
+    except Exception:
+        curr_sent = 1
+    curr_status = row["status"] or "Not Contacted"
+
+    if curr_status in ["Not Contacted", "", None]:
+        new_status = "Contacted"
+    elif curr_status in ["Contacted", "Follow-Up Sent"]:
+        new_status = "Follow-Up Sent"
+    else:
+        new_status = curr_status
+
+    cursor.execute("""
+        UPDATE contacts SET
+            contacted = 'Yes',
+            date_first_emailed = ?,
+            last_contact_date = ?,
+            follow_ups_sent = ?,
+            next_follow_up = ?,
+            status = ?
+        WHERE id = ?
+    """, (curr_first, today_str, curr_sent, next_date_str, new_status, cid))
+
+    conn.commit()
+    conn.close()
+    return True
 
 PREDEFINED_OUTREACH_TAGS = [
     "Amazon Brand",
@@ -870,6 +1140,145 @@ def delete_email(email_id: int, db_path: str = DB_FILE):
     cursor.execute("DELETE FROM emails WHERE id = ?", (email_id,))
     conn.commit()
     conn.close()
+
+def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
+    """
+    Called when an email tracking pixel is loaded.
+    Records timestamp, increments open_count, and flags contact as 'Opened / Interested'.
+    """
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM emails WHERE id = ?", (email_id,))
+    email_row = cursor.fetchone()
+    if not email_row:
+        conn.close()
+        return False
+
+    curr_opened_at = email_row["opened_at"] or now_iso
+    try:
+        curr_count = int(email_row["open_count"] or 0) + 1
+    except Exception:
+        curr_count = 1
+
+    cursor.execute("""
+        UPDATE emails SET opened_at = ?, open_count = ? WHERE id = ?
+    """, (curr_opened_at, curr_count, email_id))
+
+    # Update associated contact if found
+    recipient = email_row["recipient"]
+    if recipient:
+        cursor.execute("SELECT id, status, tags FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (recipient.strip(),))
+        contact_row = cursor.fetchone()
+        if contact_row:
+            cid = contact_row["id"]
+            c_status = contact_row["status"] or ""
+            # If lead hasn't replied or closed, update status to Opened / Interested
+            if c_status not in ["Replied", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]:
+                cursor.execute("UPDATE contacts SET status = 'Opened / Interested' WHERE id = ?", (cid,))
+
+    conn.commit()
+    conn.close()
+    return True
+
+def record_email_bounce(recipient_email: str, bounce_reason: str = "", db_path: str = DB_FILE) -> int:
+    """
+    Mark all emails and contacts associated with recipient_email as bounced.
+    """
+    clean_email = recipient_email.strip().lower()
+    if not clean_email:
+        return 0
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # 1. Update emails table
+    cursor.execute("""
+        UPDATE emails SET is_bounced = 1, bounce_reason = ?, status = 'Bounced'
+        WHERE LOWER(TRIM(recipient)) = ?
+    """, (bounce_reason.strip(), clean_email))
+
+    # 2. Update contacts table
+    cursor.execute("SELECT id, tags, notes FROM contacts WHERE LOWER(TRIM(email)) = ?", (clean_email,))
+    contact_rows = cursor.fetchall()
+    for crow in contact_rows:
+        cid = crow["id"]
+        old_tags = [t.strip() for t in (crow["tags"] or "").split(",") if t.strip()]
+        if "Bounced" not in old_tags:
+            old_tags.append("Bounced")
+        tags_str = ", ".join(sorted(list(set(old_tags))))
+
+        curr_notes = crow["notes"] or ""
+        reason_note = f"[Bounced: {bounce_reason}]" if bounce_reason else "[Bounced NDR]"
+        if reason_note not in curr_notes:
+            updated_notes = f"{curr_notes} {reason_note}".strip() if curr_notes else reason_note
+        else:
+            updated_notes = curr_notes
+
+        cursor.execute("""
+            UPDATE contacts SET status = 'Bounced', tags = ?, notes = ? WHERE id = ?
+        """, (tags_str, updated_notes, cid))
+
+    conn.commit()
+    conn.close()
+    return len(contact_rows)
+
+def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
+    """Calculate core outreach KPIs: Sent, Opens, Open Rate %, Bounces, Bounce Rate %, Follow-ups Due."""
+    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # Contacts stats
+    cursor.execute("SELECT COUNT(*) as total FROM contacts")
+    total_contacts = cursor.fetchone()["total"]
+
+    cursor.execute("SELECT COUNT(*) as contacted FROM contacts WHERE contacted = 'Yes'")
+    contacted_count = cursor.fetchone()["contacted"]
+
+    cursor.execute("""
+        SELECT COUNT(*) as due FROM contacts
+        WHERE next_follow_up IS NOT NULL
+          AND next_follow_up != ''
+          AND next_follow_up <= ?
+          AND status NOT IN ('Bounced', 'Do Not Contact', 'Closed Won', 'Closed Lost')
+    """, (today_str,))
+    followups_due = cursor.fetchone()["due"]
+
+    # Emails stats
+    cursor.execute("SELECT COUNT(*) as total_sent FROM emails WHERE status = 'Sent'")
+    total_sent = cursor.fetchone()["total_sent"]
+
+    cursor.execute("SELECT COUNT(*) as total_opened FROM emails WHERE status = 'Sent' AND open_count > 0")
+    total_opened = cursor.fetchone()["total_opened"]
+
+    cursor.execute("SELECT COUNT(*) as total_bounced FROM emails WHERE is_bounced = 1 OR status = 'Bounced'")
+    total_bounced = cursor.fetchone()["total_bounced"]
+
+    conn.close()
+
+    open_rate = round((total_opened / total_sent * 100), 1) if total_sent > 0 else 0.0
+    bounce_rate = round((total_bounced / total_sent * 100), 1) if total_sent > 0 else 0.0
+
+    return {
+        "total_contacts": total_contacts,
+        "contacted_count": contacted_count,
+        "total_sent": total_sent,
+        "total_opened": total_opened,
+        "open_rate": open_rate,
+        "total_bounced": total_bounced,
+        "bounce_rate": bounce_rate,
+        "followups_due": followups_due
+    }
+
+def get_bounced_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all contacts marked as bounced."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM contacts WHERE status = 'Bounced' OR tags LIKE '%Bounced%' ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [_populate_contact_defaults(dict(r)) for r in rows]
 
 # ------------------------------------------------------------------------------
 # SMTP ACCOUNTS HELPERS (HOSTINGER / MULTI-ACCOUNT ROTATION)

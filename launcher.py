@@ -120,7 +120,7 @@ def get_base_dir() -> str:
 def start_background_scheduler(stop_event: threading.Event):
     try:
         base_dir = get_base_dir()
-        for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "scheduler"]:
+        for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "tracker", "scheduler"]:
             py_path = os.path.join(base_dir, f"{mod_name}.py")
             if os.path.exists(py_path):
                 try:

@@ -15,6 +15,7 @@ import json
 import base64
 from datetime import datetime, timedelta
 import streamlit as st
+import pandas as pd
 
 # Check for rich visual editor component
 try:
@@ -30,7 +31,7 @@ import importlib.util
 # Ensure local project modules are always loaded directly from the current script directory (.py files)
 # rather than any stale frozen bytecode embedded inside PyInstaller's PYZ.
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
-for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "scheduler"]:
+for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "tracker", "scheduler"]:
     py_path = os.path.join(current_script_dir, f"{mod_name}.py")
     if os.path.exists(py_path):
         try:
@@ -53,6 +54,12 @@ from database import (
     get_contact_by_id,
     update_contact,
     upsert_contact_by_email,
+    bulk_update_contact_grid,
+    advance_contact_followup,
+    record_email_open,
+    record_email_bounce,
+    get_outreach_analytics,
+    get_bounced_contacts,
     get_all_distinct_tags,
     get_predefined_tags,
     get_contacts_by_tag,
@@ -84,7 +91,17 @@ from database import (
     update_smtp_account,
     delete_email
 )
-from smtp_dispatcher import test_smtp_connection
+from smtp_dispatcher import (
+    test_smtp_connection,
+    scan_hostinger_bounces,
+    scan_all_hostinger_bounces
+)
+from tracker import (
+    start_tracking_server,
+    get_tracking_base_url,
+    is_port_in_use,
+    inject_tracking_pixel
+)
 from contacts_handler import (
     generate_csv_template,
     export_contacts_to_csv,
@@ -100,8 +117,12 @@ from llm_engine import (
     generate_variations
 )
 
-# Ensure DB is initialized
+# Ensure DB is initialized and tracking server is running
 init_db()
+try:
+    start_tracking_server(port=8502)
+except Exception:
+    pass
 
 def get_logo_base64() -> str:
     """Read local brand logo and encode as base64 data URI."""
@@ -281,7 +302,7 @@ st.markdown("""
     /* Executive Glass KPI Stat Cards */
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(6, 1fr);
         gap: 1.1rem;
         margin-bottom: 1.75rem;
     }
@@ -687,22 +708,24 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Live Statistics Banner
+# Live Statistics Banner & Outreach Analytics
 all_emails = get_emails()
 all_contacts = get_contacts()
 contacts_list = all_contacts
 all_templates = get_templates()
+analytics = get_outreach_analytics()
 
 pending_count = sum(1 for e in all_emails if e["status"] == "Pending")
 flagged_count = sum(1 for e in all_emails if e["status"] == "Flagged")
-approved_count = sum(1 for e in all_emails if e["status"] == "Approved")
-sent_count = sum(1 for e in all_emails if e["status"] == "Sent")
 
 flagged_card_class = "stat-card-alert" if flagged_count > 0 else ""
 flagged_val_class = "stat-val-alert" if flagged_count > 0 else ""
 flagged_sub_class = "stat-sub-alert" if flagged_count > 0 else "stat-sub-clean"
 flagged_sub_text = f"🚨 {flagged_count} Action Required" if flagged_count > 0 else "✓ All Drafts Clean"
 flagged_icon = "🚨" if flagged_count > 0 else "🛡️"
+
+bounced_card_class = "stat-card-alert" if analytics["total_bounced"] > 0 else ""
+bounced_val_class = "stat-val-alert" if analytics["total_bounced"] > 0 else ""
 
 st.markdown(f"""
 <div class="stats-grid">
@@ -712,15 +735,7 @@ st.markdown(f"""
             <span class="stat-icon-badge">👥</span>
         </div>
         <div class="stat-value">{len(all_contacts)}</div>
-        <div class="stat-sub">Direct CRM Contacts</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-header">
-            <span class="stat-label">Templates</span>
-            <span class="stat-icon-badge">📝</span>
-        </div>
-        <div class="stat-value">{len(all_templates)}</div>
-        <div class="stat-sub">Spintax Ready</div>
+        <div class="stat-sub">{analytics["contacted_count"]} Contacted</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
@@ -743,8 +758,24 @@ st.markdown(f"""
             <span class="stat-label">Total Sent</span>
             <span class="stat-icon-badge">🚀</span>
         </div>
-        <div class="stat-value stat-val-glow">{sent_count}</div>
+        <div class="stat-value stat-val-glow">{analytics["total_sent"]}</div>
         <div class="stat-sub">Hostinger & Outlook</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-header">
+            <span class="stat-label">Open Rate</span>
+            <span class="stat-icon-badge">👁️</span>
+        </div>
+        <div class="stat-value" style="color: #34D399;">{analytics["open_rate"]}%</div>
+        <div class="stat-sub">{analytics["total_opened"]} Opened Pixel</div>
+    </div>
+    <div class="stat-card {bounced_card_class}">
+        <div class="stat-header">
+            <span class="stat-label">Bounces</span>
+            <span class="stat-icon-badge">⚠️</span>
+        </div>
+        <div class="stat-value {bounced_val_class}">{analytics["total_bounced"]}</div>
+        <div class="stat-sub">{analytics["bounce_rate"]}% Bounce Rate</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -752,11 +783,12 @@ st.markdown(f"""
 st.divider()
 
 # Primary App Navigation Tabs
-tab_crm, tab_templates, tab_campaign, tab_review, tab_settings = st.tabs([
+tab_crm, tab_templates, tab_campaign, tab_review, tab_analytics, tab_settings = st.tabs([
     "👥 Contact Manager",
     "📝 Template Builder",
     "🚀 Campaign Generator",
     "📥 Review Queue & Flags",
+    "📈 Outreach Analytics & Bounces",
     "⚙️ Configuration & Outbox"
 ])
 
@@ -776,6 +808,31 @@ with tab_crm:
                 c_email = st.text_input("Email Address *", placeholder="alex@company.com")
             with fc3:
                 c_company = st.text_input("Company Name", placeholder="Acme Brands")
+
+            # CRM Classification Fields
+            st.markdown("##### 📊 CRM Lead Attributes & Pipeline Classification")
+            col_crm1, col_crm2, col_crm3, col_crm4 = st.columns(4)
+            with col_crm1:
+                c_source = st.selectbox(
+                    "Lead Source",
+                    ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
+                    index=2
+                )
+            with col_crm2:
+                c_priority = st.selectbox(
+                    "Priority",
+                    ["High", "Medium", "Low"],
+                    index=1
+                )
+            with col_crm3:
+                c_owner = st.text_input("Lead Owner", placeholder="e.g. Alex M")
+            with col_crm4:
+                c_status = st.selectbox(
+                    "Pipeline Status",
+                    ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                    index=0
+                )
+            c_notes = st.text_input("Internal Notes", placeholder="e.g. Needs mobile listing optimization teardown")
 
             # Tag Management
             st.markdown("##### 🏷️ Contact Tags & Outreach Classification")
@@ -832,9 +889,14 @@ with tab_crm:
                         email=c_email.strip(),
                         company=c_company.strip(),
                         tags=combined_tags,
-                        custom_variables=cv_parsed
+                        custom_variables=cv_parsed,
+                        lead_source=c_source,
+                        priority=c_priority,
+                        owner=c_owner.strip() if c_owner else None,
+                        status=c_status,
+                        notes=c_notes.strip() if c_notes else None
                     )
-                    action_msg = "added" if is_new else "updated (merged tags)"
+                    action_msg = "added" if is_new else "updated (merged tags & details)"
                     st.success(f"✅ Contact '{c_name}' successfully {action_msg} (ID #{cid})!")
                     st.rerun()
 
@@ -872,17 +934,23 @@ with tab_crm:
 
     st.markdown("---")
 
-    # Advanced Filtering (Search + Filter by Tag)
+    # Advanced Filtering (Search + Filter by Tag + Status Filter)
     st.markdown("#### 🔍 Filter & Search Leads")
     distinct_tags = get_all_distinct_tags(include_predefined=True)
-    filter_col1, filter_col2 = st.columns([2, 2])
+    filter_col1, filter_col2, filter_col3 = st.columns([1.8, 1.4, 1.4])
     with filter_col1:
-        search_query = st.text_input("Search Leads", placeholder="Search by Name, Email, Company, or Tags...", key="crm_search_query")
+        search_query = st.text_input("Search Leads", placeholder="Search by Name, Email, Company, Owner, Notes...", key="crm_search_query")
     with filter_col2:
-        tag_filter = st.multiselect("Filter by Tag", options=distinct_tags, placeholder="Select one or more tags...", key="crm_tag_filter")
+        tag_filter = st.multiselect("Filter by Tag", options=distinct_tags, placeholder="Select tags...", key="crm_tag_filter")
+    with filter_col3:
+        status_filter_choice = st.selectbox(
+            "Filter by Pipeline Status",
+            ["-- All Statuses --", "Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+            key="crm_status_filter_choice"
+        )
 
-    # Data Table of Filtered Contacts
-    filtered_contacts = get_contacts(tags_filter=tag_filter, search_query=search_query)
+    active_status_filter = None if status_filter_choice == "-- All Statuses --" else status_filter_choice
+    filtered_contacts = get_contacts(tags_filter=tag_filter, search_query=search_query, status_filter=active_status_filter)
 
     # Initialize CRM selection and editing session state
     if "crm_selected_ids" not in st.session_state:
@@ -891,12 +959,11 @@ with tab_crm:
         st.session_state["crm_editing_id"] = None
 
     filtered_ids = [c["id"] for c in filtered_contacts]
-    # Prune any stale IDs
     st.session_state["crm_selected_ids"] = st.session_state["crm_selected_ids"].intersection(set(filtered_ids))
     selected_ids = st.session_state["crm_selected_ids"]
     s_count = len(selected_ids)
 
-    # Selection Toolbar
+    # Selection Toolbar & Export
     if filtered_contacts:
         col_sel1, col_sel2, col_sel3, col_sel4 = st.columns([1.5, 1.5, 2.5, 2.5])
         with col_sel1:
@@ -911,7 +978,7 @@ with tab_crm:
             if s_count > 0:
                 st.markdown(f"<div style='padding:7px 12px; background:rgba(238,83,36,0.18); border:1px solid #EE5324; border-radius:8px; color:#FF7B4D; font-weight:700; text-align:center;'>📌 {s_count} lead(s) selected</div>", unsafe_allow_html=True)
             else:
-                st.caption(f"Showing **{len(filtered_contacts)}** contact(s). Select leads below for bulk actions.")
+                st.caption(f"Showing **{len(filtered_contacts)}** contact(s).")
         with col_sel4:
             export_csv_data = export_contacts_to_csv(filtered_contacts)
             st.download_button(
@@ -1006,9 +1073,175 @@ with tab_crm:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+    # CRM Display Mode Selector
+    st.markdown("---")
+    col_layout_mode, col_layout_hint = st.columns([2.5, 3.5])
+    with col_layout_mode:
+        crm_layout_mode = st.radio(
+            "CRM Display Mode",
+            ["📊 Excel Spreadsheet Grid View", "🗂️ Detailed Card View"],
+            horizontal=True,
+            key="crm_display_layout_mode"
+        )
+    with col_layout_hint:
+        if crm_layout_mode.startswith("📊 Excel"):
+            st.caption("📊 **Interactive Grid Mode**: Edit any cell or dropdown directly like an Excel sheet. Hit **Save Spreadsheet Changes** to persist.")
+        else:
+            st.caption("🗂️ **Card Mode**: Detailed card view with variable chips and individual edit panels.")
+
     if not filtered_contacts:
-        st.info("No contacts match the selected search/tag filter.")
+        st.info("No contacts match the selected filter.")
+    elif crm_layout_mode.startswith("📊 Excel"):
+        # ==============================================================================
+        # 📊 EXCEL SPREADSHEET GRID VIEW (st.data_editor with dropdowns)
+        # ==============================================================================
+        grid_rows = []
+        for c in filtered_contacts:
+            grid_rows.append({
+                "id": c["id"],
+                "Lead ID": f"L-{c['id']:04d}",
+                "Company": c.get("company") or "",
+                "Contact Name": c.get("name") or "",
+                "Email Address": c.get("email") or "",
+                "Lead Source": c.get("lead_source") or "Other",
+                "Priority": c.get("priority") or "Medium",
+                "Contacted?": c.get("contacted") or "No",
+                "Date First Emailed": c.get("date_first_emailed") or "",
+                "Status": c.get("status") or "Not Contacted",
+                "Follow-Ups Sent": int(c.get("follow_ups_sent") if c.get("follow_ups_sent") is not None else 0),
+                "Last Contact Date": c.get("last_contact_date") or "",
+                "Next Follow-Up": c.get("next_follow_up") or "",
+                "Owner": c.get("owner") or "",
+                "Notes": c.get("notes") or "",
+                "Tags": c.get("tags") or ", ".join(c.get("tags_list", []))
+            })
+
+        df_grid = pd.DataFrame(grid_rows)
+
+        column_config = {
+            "id": None,  # Hide raw integer ID column
+            "Lead ID": st.column_config.TextColumn(
+                "Lead ID",
+                help="System Unique Lead ID (Read Only)",
+                disabled=True,
+                width="small"
+            ),
+            "Company": st.column_config.TextColumn(
+                "Company",
+                help="Brand or business name",
+                width="medium"
+            ),
+            "Contact Name": st.column_config.TextColumn(
+                "Contact Name",
+                help="Lead contact name",
+                width="medium",
+                required=True
+            ),
+            "Email Address": st.column_config.TextColumn(
+                "Email Address",
+                help="Contact email address",
+                width="medium",
+                required=True
+            ),
+            "Lead Source": st.column_config.SelectboxColumn(
+                "Lead Source",
+                help="Acquisition channel dropdown",
+                options=["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
+                width="medium"
+            ),
+            "Priority": st.column_config.SelectboxColumn(
+                "Priority",
+                help="Lead priority dropdown",
+                options=["High", "Medium", "Low"],
+                width="small"
+            ),
+            "Contacted?": st.column_config.SelectboxColumn(
+                "Contacted?",
+                help="Has this lead been emailed?",
+                options=["No", "Yes"],
+                width="small"
+            ),
+            "Date First Emailed": st.column_config.TextColumn(
+                "Date First Emailed",
+                help="Date of first outreach email (YYYY-MM-DD)",
+                width="small"
+            ),
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                help="Lead CRM status dropdown",
+                options=[
+                    "Not Contacted",
+                    "Contacted",
+                    "Follow-Up Sent",
+                    "Opened / Interested",
+                    "Replied",
+                    "Meeting Booked",
+                    "Closed Won",
+                    "Closed Lost",
+                    "Bounced",
+                    "Do Not Contact"
+                ],
+                width="medium"
+            ),
+            "Follow-Ups Sent": st.column_config.NumberColumn(
+                "Follow-Ups Sent",
+                help="Count of follow-up emails dispatched",
+                min_value=0,
+                max_value=100,
+                step=1,
+                width="small"
+            ),
+            "Last Contact Date": st.column_config.TextColumn(
+                "Last Contact Date",
+                help="Date of latest email dispatch (YYYY-MM-DD)",
+                width="small"
+            ),
+            "Next Follow-Up": st.column_config.TextColumn(
+                "Next Follow-Up",
+                help="Scheduled date for next follow-up touchpoint (YYYY-MM-DD)",
+                width="small"
+            ),
+            "Owner": st.column_config.TextColumn(
+                "Owner",
+                help="Assigned team member or rep",
+                width="small"
+            ),
+            "Notes": st.column_config.TextColumn(
+                "Notes",
+                help="Account context, objections, or observations",
+                width="large"
+            ),
+            "Tags": st.column_config.TextColumn(
+                "Tags",
+                help="Comma-separated outreach tags",
+                width="medium"
+            )
+        }
+
+        edited_grid = st.data_editor(
+            df_grid,
+            column_config=column_config,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            key="crm_spreadsheet_editor"
+        )
+
+        col_save_grid, col_reset_grid, _ = st.columns([2, 1.5, 3.5])
+        with col_save_grid:
+            if st.button("💾 Save Spreadsheet Changes", type="primary", use_container_width=True, key="btn_save_crm_spreadsheet"):
+                records_to_save = edited_grid.to_dict(orient="records")
+                saved_count = bulk_update_contact_grid(records_to_save)
+                st.success(f"✅ Successfully saved changes to {saved_count} contact(s)!")
+                st.rerun()
+        with col_reset_grid:
+            if st.button("🔄 Reset View", use_container_width=True, key="btn_reset_crm_spreadsheet"):
+                st.rerun()
+
     else:
+        # ==============================================================================
+        # 🗂️ DETAILED CARD VIEW
+        # ==============================================================================
         for contact in filtered_contacts:
             c_id = contact["id"]
             is_editing = (st.session_state.get("crm_editing_id") == c_id)
@@ -1027,10 +1260,16 @@ with tab_crm:
 
                 with col_c1:
                     st.markdown(f"**{contact['name']}**")
-                    st.caption(f"ID #{c_id} | Added: {contact['created_at']}")
+                    st.caption(f"Lead ID: `L-{c_id:04d}` | Added: {contact['created_at']}")
+                    if contact.get("owner"):
+                        st.caption(f"👤 Owner: {contact['owner']}")
                 with col_c2:
                     st.markdown(f"📧 `{contact['email']}`")
                     st.markdown(f"🏢 {contact.get('company') or 'No Company'}")
+                    # Pipeline status badge
+                    p_status = contact.get("status") or "Not Contacted"
+                    status_color = "#34D399" if p_status == "Contacted" else ("#60A5FA" if "Opened" in p_status else ("#F87171" if p_status == "Bounced" else "#94A3B8"))
+                    st.markdown(f"<span style='font-size:0.8rem; font-weight:700; color:{status_color};'>● {p_status}</span> (Sent: {contact.get('follow_ups_sent', 0)})", unsafe_allow_html=True)
                 with col_c3:
                     # Tag Badges with distinct intelligent colors
                     tags_list = contact.get("tags_list") or []
@@ -1048,7 +1287,7 @@ with tab_crm:
                                 bg = "rgba(59, 130, 246, 0.14)"
                                 color = "#60A5FA"
                                 border = "rgba(59, 130, 246, 0.35)"
-                            elif any(w in t.lower() for w in ["do not", "stop", "unsub"]):
+                            elif any(w in t.lower() for w in ["bounced", "do not", "stop", "unsub"]):
                                 bg = "rgba(239, 68, 68, 0.14)"
                                 color = "#F87171"
                                 border = "rgba(239, 68, 68, 0.35)"
@@ -1076,8 +1315,9 @@ with tab_crm:
                                 icon = "🧩"
                             var_badges.append(f"<span style='background:rgba(255,255,255,0.06); color:#CBD5E1; border:1px solid rgba(255,255,255,0.12); font-size:0.75rem; padding:2px 7px; border-radius:5px; margin-right:4px; display:inline-block;'>{icon} <b>[{k}]</b>: {v}</span> ")
                         st.markdown("".join(var_badges), unsafe_allow_html=True)
-                    elif not tags_list:
-                        st.caption("No tags or variables")
+
+                    if contact.get("notes"):
+                        st.caption(f"📝 {contact['notes']}")
 
                 with col_c4:
                     col_btn_e, col_btn_d = st.columns(2)
@@ -1111,6 +1351,27 @@ with tab_crm:
                                 edit_email = st.text_input("Email Address *", value=contact["email"])
                             with ec3:
                                 edit_company = st.text_input("Company", value=contact.get("company") or "")
+
+                            ec_r1, ec_r2, ec_r3, ec_r4 = st.columns(4)
+                            with ec_r1:
+                                source_opts = ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"]
+                                curr_src = contact.get("lead_source") or "Other"
+                                src_idx = source_opts.index(curr_src) if curr_src in source_opts else 7
+                                edit_source = st.selectbox("Lead Source", source_opts, index=src_idx, key=f"esrc_{c_id}")
+                            with ec_r2:
+                                prio_opts = ["High", "Medium", "Low"]
+                                curr_prio = contact.get("priority") or "Medium"
+                                prio_idx = prio_opts.index(curr_prio) if curr_prio in prio_opts else 1
+                                edit_priority = st.selectbox("Priority", prio_opts, index=prio_idx, key=f"eprio_{c_id}")
+                            with ec_r3:
+                                edit_owner = st.text_input("Lead Owner", value=contact.get("owner") or "", key=f"eown_{c_id}")
+                            with ec_r4:
+                                stat_opts = ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]
+                                curr_st = contact.get("status") or "Not Contacted"
+                                st_idx = stat_opts.index(curr_st) if curr_st in stat_opts else 0
+                                edit_status = st.selectbox("Pipeline Status", stat_opts, index=st_idx, key=f"estat_{c_id}")
+
+                            edit_notes = st.text_input("Internal Notes", value=contact.get("notes") or "", key=f"enotes_{c_id}")
 
                             all_avail_tags = get_all_distinct_tags(include_predefined=True)
                             curr_tags = contact.get("tags_list") or []
@@ -1171,7 +1432,12 @@ with tab_crm:
                                         email=edit_email.strip(),
                                         company=edit_company.strip(),
                                         tags=final_t,
-                                        custom_variables=parsed_cv
+                                        custom_variables=parsed_cv,
+                                        lead_source=edit_source,
+                                        priority=edit_priority,
+                                        owner=edit_owner.strip() if edit_owner else None,
+                                        status=edit_status,
+                                        notes=edit_notes.strip() if edit_notes else None
                                     )
                                     st.session_state["crm_editing_id"] = None
                                     st.success(f"✅ Saved changes for contact #{c_id}!")
@@ -1381,15 +1647,32 @@ with tab_campaign:
     elif not templates_list:
         st.warning("⚠️ You have no templates saved. Please create a template in the 'Template Builder' tab first.")
     else:
-        all_distinct_tags = get_all_distinct_tags()
-        tag_selector_options = ["-- All Contacts --"] + all_distinct_tags
+        # Campaign Sequence Stage & Audience Targeting
+        stage_selector_options = [
+            "All Active Leads (Excludes Bounced / Unsubscribed)",
+            "❄️ Cold Outreach (Not Contacted Yet)",
+            "📬 Follow-Up #1 (1 Email Sent)",
+            "🔁 Follow-Up #2+ (2+ Touchpoints in Sequence)",
+            "🔥 Opened / Interested Leads (Pixel Tracked)",
+            "⏰ Follow-Up Due Today (Scheduled Touchpoints)"
+        ]
 
-        col_tag_sel, col_tpl_sel = st.columns([1, 1])
+        all_distinct_tags = get_all_distinct_tags()
+        tag_selector_options = ["-- All Tags --"] + all_distinct_tags
+
+        col_stage_sel, col_tag_sel, col_tpl_sel = st.columns([1.2, 1, 1])
+        with col_stage_sel:
+            selected_stage_filter = st.selectbox(
+                "🎯 Campaign Sequence Stage",
+                options=stage_selector_options,
+                help="Filter leads based on their outreach status, touchpoint counts, or pixel tracking."
+            )
+
         with col_tag_sel:
             selected_tag_filter = st.selectbox(
-                "🏷️ Select by Tag (Target Audience)",
+                "🏷️ Audience Tag Filter",
                 options=tag_selector_options,
-                help="Choose a tag to automatically queue all matching brand leads."
+                help="Choose a tag to filter specific audience segments (e.g. Amazon Brand, Shopify DTC)."
             )
 
         with col_tpl_sel:
@@ -1400,24 +1683,78 @@ with tab_campaign:
                 format_func=lambda tid: template_options[tid]
             )
 
-        # Determine queued contacts based on tag selection
-        if selected_tag_filter != "-- All Contacts --":
-            matching_contacts = get_contacts(tags_filter=[selected_tag_filter])
-            default_selection = [c["id"] for c in matching_contacts]
-            st.info(f"🎯 Auto-queued **{len(matching_contacts)}** contact(s) with tag **'{selected_tag_filter}'**.")
-        else:
-            matching_contacts = contacts_list
-            select_all = st.checkbox("Select All Contacts", value=True)
-            default_selection = [c["id"] for c in matching_contacts] if select_all else ([matching_contacts[0]["id"]] if matching_contacts else [])
+        # Base filter: Exclude Bounced, Closed Lost, and Do Not Contact unless specifically requested
+        active_candidates = [
+            c for c in contacts_list
+            if c.get("status") not in ["Bounced", "Do Not Contact", "Closed Lost"] and not c.get("is_bounced")
+        ]
+        bounced_excluded_count = len(contacts_list) - len(active_candidates)
 
-        contact_options = {c["id"]: f"{c['name']} ({c.get('company') or 'No Company'} - {c['email']}) [Tags: {c.get('tags') or 'None'}]" for c in contacts_list}
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Stage Filtering
+        if selected_stage_filter.startswith("❄️ Cold"):
+            stage_filtered = [
+                c for c in active_candidates
+                if (c.get("status") in ["Not Contacted", None, ""] or c.get("contacted") in ["No", None, ""] or c.get("follow_ups_sent", 0) == 0)
+            ]
+        elif selected_stage_filter.startswith("📬 Follow-Up #1"):
+            stage_filtered = [
+                c for c in active_candidates
+                if (c.get("follow_ups_sent") == 1 or c.get("status") == "Contacted")
+            ]
+        elif selected_stage_filter.startswith("🔁 Follow-Up #2+"):
+            stage_filtered = [
+                c for c in active_candidates
+                if (c.get("follow_ups_sent", 0) >= 2 or c.get("status") == "Follow-Up Sent")
+            ]
+        elif selected_stage_filter.startswith("🔥 Opened"):
+            stage_filtered = [
+                c for c in active_candidates
+                if ("Opened" in (c.get("status") or "") or "Interested" in (c.get("status") or ""))
+            ]
+        elif selected_stage_filter.startswith("⏰ Follow-Up Due"):
+            stage_filtered = [
+                c for c in active_candidates
+                if (c.get("next_follow_up") and c.get("next_follow_up") <= today_str)
+            ]
+        else:
+            stage_filtered = active_candidates
+
+        # Tag Filtering
+        if selected_tag_filter != "-- All Tags --":
+            matching_contacts = [c for c in stage_filtered if selected_tag_filter in (c.get("tags_list") or [])]
+        else:
+            matching_contacts = stage_filtered
+
+        # Sequence Cadence / Delay Setting
+        col_cadence1, col_cadence2 = st.columns([1.2, 2.8])
+        with col_cadence1:
+            followup_delay_days = st.number_input(
+                "Follow-Up Cadence Interval (Days)",
+                min_value=1,
+                max_value=30,
+                value=4,
+                help="When emails are dispatched, recipient Next Follow-Up dates will advance by this interval."
+            )
+        with col_cadence2:
+            next_due_date = (datetime.now() + timedelta(days=int(followup_delay_days))).strftime("%B %d, %Y")
+            st.info(f"📅 **Sequence Cadence**: Next follow-up touchpoint will be scheduled for **{next_due_date}** (+{followup_delay_days} days). {bounced_excluded_count} bounced/inactive lead(s) automatically protected.")
+
+        select_all = st.checkbox(f"Select All Matching Leads ({len(matching_contacts)})", value=True)
+        default_selection = [c["id"] for c in matching_contacts] if select_all else []
+
+        contact_options = {
+            c["id"]: f"{c['name']} ({c.get('company') or 'No Company'} - {c['email']}) [Stage: {c.get('status') or 'Not Contacted'} | Sent: {c.get('follow_ups_sent', 0)}]"
+            for c in matching_contacts
+        }
 
         selected_contact_ids = st.multiselect(
             "Target Contacts Queued for Generation *",
             options=list(contact_options.keys()),
             default=default_selection,
             format_func=lambda cid: contact_options.get(cid, str(cid)),
-            key=f"camp_contacts_select_{selected_tag_filter}"
+            key=f"camp_contacts_select_{selected_stage_filter}_{selected_tag_filter}"
         )
 
         custom_prompt_notes = st.text_area(
@@ -1751,7 +2088,139 @@ with tab_review:
                                     st.error(f"Revision failed: {rev_err}")
 
 # ==============================================================================
-# TAB 5: CONFIGURATION & OUTBOX
+# TAB 5: OUTREACH ANALYTICS, OPEN TRACKING & BOUNCES
+# ==============================================================================
+with tab_analytics:
+    st.subheader("📈 Outreach Analytics, Open Tracking & Bounce Report")
+    st.caption("Real-time email performance telemetry, 1x1 transparent pixel open tracking, and Hostinger IMAP bounce detection.")
+
+    analytics_live = get_outreach_analytics()
+    bounced_leads = get_bounced_contacts()
+
+    # Detailed KPI metric row
+    col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
+    col_m1.metric("Total Leads", len(all_contacts))
+    col_m2.metric("Total Sent", analytics_live["total_sent"])
+    col_m3.metric("Opens Detected", analytics_live["total_opened"])
+    col_m4.metric("Open Rate", f"{analytics_live['open_rate']}%")
+    col_m5.metric("Total Bounces", analytics_live["total_bounced"])
+    col_m6.metric("Bounce Rate", f"{analytics_live['bounce_rate']}%")
+
+    st.markdown("---")
+
+    # Section 1: Hostinger IMAP Bounce Scanner
+    col_b_hdr, col_b_scan = st.columns([3, 1.2])
+    with col_b_hdr:
+        st.markdown("### ⚠️ Hostinger Bounce Detection & NDR Scanner")
+        st.caption("Scans connected Hostinger accounts via IMAP (`imap.hostinger.com:993` SSL) for Delivery Status Notifications (NDRs) and Mailer-Daemon bounce reports to protect your sender score.")
+    with col_b_scan:
+        scan_now_btn = st.button("🔍 Scan Hostinger Bounces Now", type="primary", use_container_width=True, key="scan_bounces_btn")
+
+    if scan_now_btn:
+        with st.spinner("Connecting to Hostinger IMAP and checking inboxes for delivery failure notifications..."):
+            bounce_results = scan_all_hostinger_bounces()
+            total_detected = sum(r.get("bounces_detected", 0) for r in bounce_results.values() if isinstance(r, dict))
+            st.success(f"✅ Hostinger IMAP Scan Complete! Detected **{total_detected}** bounced message(s) across {len(bounce_results)} account(s).")
+            st.rerun()
+
+    # Section 2: Bounced Leads Management
+    st.markdown("#### 🛡️ Deliverability Quarantine & Bounced Contacts")
+    if not bounced_leads:
+        st.info("🎉 Zero bounced contacts detected! Your sending domain health and list quality are clean.")
+    else:
+        st.warning(f"⚠️ **{len(bounced_leads)}** contact(s) have been flagged as Bounced. These leads are automatically excluded from campaigns.")
+
+        bounced_rows = []
+        for b in bounced_leads:
+            bounced_rows.append({
+                "ID": b["id"],
+                "Lead Name": b["name"],
+                "Company": b.get("company") or "",
+                "Email Address": b["email"],
+                "Status": b.get("status") or "Bounced",
+                "Bounce Reason": b.get("bounce_reason") or "Delivery failure (Hostinger NDR)",
+                "Follow-ups Sent": b.get("follow_ups_sent", 0),
+                "Last Contact Date": b.get("last_contact_date") or ""
+            })
+        st.dataframe(pd.DataFrame(bounced_rows), use_container_width=True, hide_index=True)
+
+        col_b_act1, col_b_act2, _ = st.columns([1.8, 1.8, 2.4])
+        with col_b_act1:
+            if st.button("🛑 Mark All as 'Do Not Contact'", key="btn_mark_dnc"):
+                b_ids = [b["id"] for b in bounced_leads]
+                bulk_update_contacts_details(b_ids, status="Do Not Contact")
+                st.success(f"Updated {len(b_ids)} leads to 'Do Not Contact'.")
+                st.rerun()
+        with col_b_act2:
+            if st.button("🔄 Clear Bounce Status (Retry)", key="btn_clear_bounces"):
+                for b in bounced_leads:
+                    update_contact(b["id"], status="Not Contacted", is_bounced=0, bounce_reason=None)
+                st.success(f"Reset {len(bounced_leads)} leads back to 'Not Contacted'.")
+                st.rerun()
+
+    st.markdown("---")
+
+    # Section 3: Open Tracking Diagnostics & Server Status
+    st.markdown("### 👁️ 1x1 Pixel Open Tracking Telemetry")
+    st.caption("Sellomize Reach embeds an invisible transparent 1x1 PNG tracking pixel into HTML emails. When opened by the recipient, it logs the open event, increments open count, and updates lead status to 'Opened / Interested'.")
+
+    server_running = is_port_in_use(8502)
+    col_trk1, col_trk2 = st.columns([1.5, 2.5])
+    with col_trk1:
+        if server_running:
+            st.markdown("""
+            <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin-bottom: 12px;">
+                <span style="color: #34D399; font-weight: 700; font-size: 1.05rem;">● Tracking Server Active</span><br>
+                <span style="color: #94A3B8; font-size: 0.85rem;">Listening on local port <code>8502</code></span>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid #EF4444; border-radius: 10px; padding: 14px 18px; margin-bottom: 12px;">
+                <span style="color: #F87171; font-weight: 700; font-size: 1.05rem;">● Tracking Server Offline</span><br>
+                <span style="color: #94A3B8; font-size: 0.85rem;">Port <code>8502</code> not responding.</span>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("🚀 Start Tracking Server", key="start_trk_srv"):
+                start_tracking_server(port=8502)
+                st.rerun()
+
+    with col_trk2:
+        curr_base_url = get_tracking_base_url()
+        new_base_url = st.text_input(
+            "Tracking Server Public / Base URL",
+            value=curr_base_url,
+            help="For external recipients to report opens, enter your public domain, static IP, or ngrok tunnel URL (e.g. https://track.yourdomain.com or https://abc.ngrok.app)."
+        )
+        if new_base_url.strip() and new_base_url.strip() != curr_base_url:
+            if st.button("💾 Update Tracking Base URL", key="btn_save_trk_url"):
+                set_config("tracking_base_url", new_base_url.strip())
+                st.success("Tracking base URL updated!")
+                st.rerun()
+
+    # Section 4: Sent Emails with Open Tracking Status
+    st.markdown("#### 📬 Sent Messages Delivery & Read Receipts")
+    sent_emails = [e for e in all_emails if e.get("status") == "Sent"]
+    if not sent_emails:
+        st.info("No sent emails recorded yet. Approved emails will show here with their live open receipts.")
+    else:
+        sent_rows = []
+        for se in sent_emails:
+            opened_txt = f"✅ Opened ({se.get('open_count', 0)}x at {se.get('opened_at')})" if se.get("opened_at") else "⏳ Unopened"
+            bounce_txt = f"⚠️ Bounced: {se.get('bounce_reason')}" if se.get("is_bounced") else "Healthy"
+            sent_rows.append({
+                "ID": se["id"],
+                "Recipient": se.get("recipient"),
+                "Subject": se.get("subject"),
+                "Dispatched Via": se.get("sent_via") or "Hostinger SMTP",
+                "Sent At": se.get("sent_at") or se.get("scheduled_time") or "",
+                "Open Status": opened_txt,
+                "Delivery Health": bounce_txt
+            })
+        st.dataframe(pd.DataFrame(sent_rows), use_container_width=True, hide_index=True)
+
+# ==============================================================================
+# TAB 6: CONFIGURATION & OUTBOX
 # ==============================================================================
 with tab_settings:
     st.subheader("⚙️ System Configuration & Outbox")

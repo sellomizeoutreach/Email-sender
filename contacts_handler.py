@@ -19,41 +19,61 @@ def generate_csv_template() -> str:
     """
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Name", "Email", "Company", "Tags", "Role", "Website", "ASIN"])
     writer.writerow([
+        "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
+        "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
+        "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags",
+        "Role", "Website", "ASIN"
+    ])
+    writer.writerow([
+        "L-0001",
+        "Skinfix",
         "Elena Rostova",
         "elena@skinfix.com",
-        "Skinfix",
+        "Website",
+        "High",
+        "No",
+        "",
+        "Not Contacted",
+        0,
+        "",
+        "2026-09-22",
+        "Alex M",
+        "Interested in A+ Content teardown",
         "Amazon Brand, High Priority",
         "Brand Director",
         "https://skinfix.com",
         "B07XYZ1234"
     ])
     writer.writerow([
+        "L-0002",
+        "Minori Beauty",
         "Marcus Brody",
         "marcus@minoribeauty.com",
-        "Minori Beauty",
+        "Cold Outreach",
+        "Medium",
+        "Yes",
+        "2026-09-15",
+        "Follow-Up Sent",
+        1,
+        "2026-09-15",
+        "2026-09-20",
+        "Jack C",
+        "Check back after product launch",
         "Shopify DTC, Audit Ready",
         "E-commerce Head",
         "https://minoribeauty.com",
         "B08ABC5678"
-    ])
-    writer.writerow([
-        "Amy Chen",
-        "amy@mypaume.com",
-        "Paume",
-        "E-Commerce, Warm Lead",
-        "Founder & CEO",
-        "https://mypaume.com",
-        "B09DEF9012"
     ])
     return output.getvalue()
 
 def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
     """
     Convert a list of contact dictionaries into a CSV string ready for download.
-    Dynamically expands custom variables into their own clean columns (e.g. Role, Website, ASIN)
-    so the CSV can be cleanly viewed and edited in Excel or Google Sheets.
+    Matches the Excel spreadsheet layout with dedicated columns for Lead ID, Company,
+    Contact Name, Email Address, Lead Source, Priority, Contacted?, Date First Emailed,
+    Status, Follow-Ups Sent, Last Contact Date, Next Follow-Up, Owner, Notes, Tags,
+    plus dynamically expanded custom variables (Role, Website, ASIN, etc.).
     """
     # 1. Discover all unique custom variable keys across the contacts
     all_var_keys = set()
@@ -73,8 +93,12 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
 
     sorted_var_keys = sorted(list(all_var_keys))
 
-    # 2. Build header: Base CRM fields + dynamic custom variable columns + Created_At
-    header = ["Name", "Email", "Company", "Tags"] + sorted_var_keys + ["Custom_Variables_JSON", "Created_At"]
+    # 2. Build header: Standard CRM fields matching the Excel layout + dynamic custom variable columns + Created_At
+    header = [
+        "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
+        "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
+        "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags"
+    ] + sorted_var_keys + ["Created_At"]
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -93,13 +117,24 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
         if not isinstance(cv_dict, dict):
             cv_dict = {}
 
+        lead_id = f"L-{c['id']:04d}" if c.get("id") else ""
         tags_str = c.get("tags") or ", ".join(c.get("tags_list", []))
-        cv_json = json.dumps(cv_dict) if cv_dict else "{}"
 
         row = [
-            c.get("name", ""),
-            c.get("email", ""),
-            c.get("company", ""),
+            lead_id,
+            c.get("company") or "",
+            c.get("name") or "",
+            c.get("email") or "",
+            c.get("lead_source") or "Other",
+            c.get("priority") or "Medium",
+            c.get("contacted") or "No",
+            c.get("date_first_emailed") or "",
+            c.get("status") or "Not Contacted",
+            c.get("follow_ups_sent") if c.get("follow_ups_sent") is not None else 0,
+            c.get("last_contact_date") or "",
+            c.get("next_follow_up") or "",
+            c.get("owner") or "",
+            c.get("notes") or "",
             tags_str
         ]
 
@@ -107,8 +142,7 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
         for vk in sorted_var_keys:
             row.append(str(cv_dict.get(vk, "")))
 
-        row.append(cv_json)
-        row.append(c.get("created_at", ""))
+        row.append(c.get("created_at") or "")
         writer.writerow(row)
 
     return output.getvalue()
@@ -195,7 +229,18 @@ def import_contacts_from_csv(
     last_name_col = find_col(["last name", "lastname", "lname", "surname"])
     email_col = find_col(["email", "email address", "contact email", "e-mail", "work email"])
     company_col = find_col(["company", "company name", "organization", "brand", "account", "business"])
-    tags_col = find_col(["tags", "tag", "labels", "category", "list", "status"])
+    tags_col = find_col(["tags", "tag", "labels", "category", "list"])
+    lead_id_col = find_col(["lead id", "lead_id", "id"])
+    lead_source_col = find_col(["lead source", "lead_source", "source"])
+    priority_col = find_col(["priority"])
+    contacted_col = find_col(["contacted", "contacted?"])
+    date_first_emailed_col = find_col(["date first emailed", "date_first_emailed", "first emailed"])
+    status_col = find_col(["status", "lead status", "outreach status"])
+    follow_ups_sent_col = find_col(["follow-ups sent", "follow_ups_sent", "followups sent", "followups", "follow-ups"])
+    last_contact_date_col = find_col(["last contact date", "last_contact_date", "last contacted"])
+    next_follow_up_col = find_col(["next follow-up", "next_follow_up", "next follow up", "follow-up date"])
+    owner_col = find_col(["owner", "assigned to", "lead owner", "sales rep"])
+    notes_col = find_col(["notes", "note", "comments", "remark"])
     vars_col = find_col(["custom_variables", "custom variables", "variables", "attributes", "metadata", "custom_variables_json"])
 
     if not email_col:
@@ -203,7 +248,12 @@ def import_contacts_from_csv(
         return stats
 
     # Identify all 'extra' columns that should be automatically captured as custom variables
-    standard_cols = {name_col, first_name_col, last_name_col, email_col, company_col, tags_col, vars_col}
+    standard_cols = {
+        name_col, first_name_col, last_name_col, email_col, company_col, tags_col,
+        lead_id_col, lead_source_col, priority_col, contacted_col, date_first_emailed_col,
+        status_col, follow_ups_sent_col, last_contact_date_col, next_follow_up_col,
+        owner_col, notes_col, vars_col
+    }
     extra_cols = [c for c in (reader.fieldnames or []) if c and c not in standard_cols and c.strip()]
 
     row_num = 1
@@ -227,6 +277,21 @@ def import_contacts_from_csv(
 
         raw_company = (row.get(company_col) or "").strip() if company_col else ""
         raw_tags = (row.get(tags_col) or "").strip() if tags_col else ""
+        raw_source = (row.get(lead_source_col) or "").strip() if lead_source_col else None
+        raw_priority = (row.get(priority_col) or "").strip() if priority_col else None
+        raw_contacted = (row.get(contacted_col) or "").strip() if contacted_col else None
+        raw_first_date = (row.get(date_first_emailed_col) or "").strip() if date_first_emailed_col else None
+        raw_status = (row.get(status_col) or "").strip() if status_col else None
+        raw_sent_val = None
+        if follow_ups_sent_col and row.get(follow_ups_sent_col):
+            try:
+                raw_sent_val = int(row.get(follow_ups_sent_col))
+            except Exception:
+                pass
+        raw_last_date = (row.get(last_contact_date_col) or "").strip() if last_contact_date_col else None
+        raw_next_date = (row.get(next_follow_up_col) or "").strip() if next_follow_up_col else None
+        raw_owner = (row.get(owner_col) or "").strip() if owner_col else None
+        raw_notes = (row.get(notes_col) or "").strip() if notes_col else None
 
         # Parse any explicit JSON variables column
         custom_vars_dict = {}
@@ -255,6 +320,16 @@ def import_contacts_from_csv(
                 company=raw_company,
                 tags=raw_tags,
                 custom_variables=custom_vars_dict,
+                lead_source=raw_source,
+                priority=raw_priority,
+                contacted=raw_contacted,
+                date_first_emailed=raw_first_date,
+                status=raw_status,
+                follow_ups_sent=raw_sent_val,
+                last_contact_date=raw_last_date,
+                next_follow_up=raw_next_date,
+                owner=raw_owner,
+                notes=raw_notes,
                 db_path=db_path
             )
             stats["total"] += 1

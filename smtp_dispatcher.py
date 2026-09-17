@@ -5,13 +5,15 @@ connection testing, and error recovery.
 """
 
 import smtplib
+import imaplib
+import email
 import ssl
 import re
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate, make_msgid
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 logger = logging.getLogger("smtp_dispatcher")
 
@@ -155,3 +157,155 @@ def send_smtp_email(
         err_msg = f"SMTP Dispatch failed via {user}: {send_err}"
         logger.error(err_msg)
         return False, err_msg
+
+def extract_bounced_info_from_msg(msg) -> Tuple[Optional[str], str]:
+    """
+    Extract failed recipient email address and diagnostic reason from an NDR message.
+    """
+    failed_email = None
+    reason = "Delivery failed / NDR"
+
+    # 1. Check direct headers
+    if msg.get("X-Failed-Recipients"):
+        failed_email = msg.get("X-Failed-Recipients").strip()
+
+    # 2. Walk MIME parts
+    body_text = ""
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        if content_type == "message/delivery-status":
+            status_payload = part.get_payload()
+            if isinstance(status_payload, list):
+                for subpart in status_payload:
+                    sub_text = str(subpart)
+                    match_rec = re.search(r"Final-Recipient:\s*(?:rfc822;)?\s*([^\s;<>]+@[^\s;<>]+)", sub_text, re.I)
+                    if match_rec:
+                        failed_email = match_rec.group(1).strip()
+                    match_diag = re.search(r"Diagnostic-Code:\s*(.+)", sub_text, re.I)
+                    if match_diag:
+                        reason = match_diag.group(1).strip()
+            elif isinstance(status_payload, str):
+                match_rec = re.search(r"Final-Recipient:\s*(?:rfc822;)?\s*([^\s;<>]+@[^\s;<>]+)", status_payload, re.I)
+                if match_rec:
+                    failed_email = match_rec.group(1).strip()
+                match_diag = re.search(r"Diagnostic-Code:\s*(.+)", status_payload, re.I)
+                if match_diag:
+                    reason = match_diag.group(1).strip()
+        elif content_type in ["text/plain", "text/html"]:
+            try:
+                payload_bytes = part.get_payload(decode=True)
+                if payload_bytes:
+                    body_text += " " + payload_bytes.decode("utf-8", errors="ignore")
+                else:
+                    raw_str = part.get_payload()
+                    if isinstance(raw_str, str):
+                        body_text += " " + raw_str
+            except Exception:
+                pass
+
+    if not failed_email and body_text:
+        patterns = [
+            r"Final-Recipient:\s*(?:rfc822;)?\s*<?([^\s;<>]+@[^\s;<>]+)>?",
+            r"Original-Recipient:\s*(?:rfc822;)?\s*<?([^\s;<>]+@[^\s;<>]+)>?",
+            r"failed(?:\s+to\s+deliver)?\s+to\s+<?([^\s;<>]+@[^\s;<>]+)>?",
+            r"<([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)>:",
+            r"to:\s*<([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)>"
+        ]
+        for pat in patterns:
+            m = re.search(pat, body_text, re.I)
+            if m:
+                failed_email = m.group(1).strip()
+                break
+
+    if body_text and reason == "Delivery failed / NDR":
+        diag_match = re.search(r"(55[0-9]\s+[0-9.]+\s+[^.\n\r]+)", body_text)
+        if diag_match:
+            reason = diag_match.group(1).strip()
+
+    return failed_email, reason
+
+def scan_hostinger_bounces(
+    smtp_account: Dict[str, Any],
+    imap_host: str = "imap.hostinger.com",
+    imap_port: int = 993,
+    max_emails: int = 40,
+    db_path: Optional[str] = None
+) -> List[Dict[str, str]]:
+    """
+    Connect to Hostinger IMAP on port 993 SSL, search for NDR/bounce notices in INBOX,
+    extract failed recipient emails and reasons, and mark them as bounced in SQLite.
+    """
+    from database import record_email_bounce, DB_FILE
+    target_db = db_path or DB_FILE
+
+    user = smtp_account.get("email", "").strip()
+    pwd = smtp_account.get("password", "").strip()
+    host = smtp_account.get("imap_host") or imap_host
+
+    if not user or not pwd:
+        return []
+
+    detected_bounces = []
+    mail = None
+    try:
+        context = ssl.create_default_context()
+        mail = imaplib.IMAP4_SSL(host, imap_port, ssl_context=context)
+        mail.login(user, pwd)
+        status, _ = mail.select("INBOX", readonly=True)
+        if status != "OK":
+            return []
+
+        search_criteria = '(OR (FROM "MAILER-DAEMON") (FROM "postmaster"))'
+        status, msg_ids = mail.search(None, search_criteria)
+        id_list = msg_ids[0].split() if (status == "OK" and msg_ids and msg_ids[0]) else []
+
+        if not id_list:
+            status, msg_ids2 = mail.search(None, '(OR (SUBJECT "Delivery Status") (SUBJECT "Undelivered"))')
+            if status == "OK" and msg_ids2 and msg_ids2[0]:
+                id_list = msg_ids2[0].split()
+
+        recent_ids = id_list[-max_emails:] if len(id_list) > max_emails else id_list
+
+        for m_id in recent_ids:
+            res, data = mail.fetch(m_id, "(RFC822)")
+            if res != "OK" or not data or not data[0]:
+                continue
+            raw_email = data[0][1]
+            if not isinstance(raw_email, bytes):
+                continue
+            msg = email.message_from_bytes(raw_email)
+            failed_email, reason = extract_bounced_info_from_msg(msg)
+            if failed_email and "@" in failed_email and failed_email.lower() != user.lower():
+                record_email_bounce(failed_email, bounce_reason=reason, db_path=target_db)
+                detected_bounces.append({
+                    "email": failed_email,
+                    "reason": reason,
+                    "mailbox": user
+                })
+
+        logger.info(f"Scanned {len(recent_ids)} NDR notice(s) for {user}; detected {len(detected_bounces)} bounce(s).")
+    except Exception as e:
+        logger.warning(f"Error scanning IMAP bounces for {user}: {e}")
+    finally:
+        if mail:
+            try:
+                mail.close()
+            except Exception:
+                pass
+            try:
+                mail.logout()
+            except Exception:
+                pass
+
+    return detected_bounces
+
+def scan_all_hostinger_bounces(db_path: Optional[str] = None) -> List[Dict[str, str]]:
+    """Scan all active Hostinger mailboxes for bounce notifications."""
+    from database import get_smtp_accounts, DB_FILE
+    target_db = db_path or DB_FILE
+    accounts = get_smtp_accounts(active_only=True, db_path=target_db)
+    all_bounces = []
+    for acc in accounts:
+        bounces = scan_hostinger_bounces(acc, db_path=target_db)
+        all_bounces.extend(bounces)
+    return all_bounces

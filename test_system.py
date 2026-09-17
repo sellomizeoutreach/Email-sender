@@ -50,12 +50,23 @@ from database import (
     bulk_delete_contacts,
     get_all_distinct_custom_variable_keys,
     parse_variables_from_text,
-    format_variables_as_lines
+    format_variables_as_lines,
+    bulk_update_contact_grid,
+    advance_contact_followup,
+    record_email_open,
+    record_email_bounce,
+    get_outreach_analytics,
+    get_bounced_contacts
 )
 from smtp_dispatcher import (
     test_smtp_connection,
     send_smtp_email,
-    html_to_plain_text
+    html_to_plain_text,
+    extract_bounced_info_from_msg
+)
+from tracker import (
+    inject_tracking_pixel,
+    get_tracking_base_url
 )
 from contacts_handler import (
     generate_csv_template,
@@ -265,7 +276,8 @@ class TestEmailAutomationSystem(unittest.TestCase):
         """Test CSV template generation, bulk import with deduplication, and export."""
         # 1. Template generation
         template_str = generate_csv_template()
-        self.assertIn("Name,Email,Company,Tags,Role,Website,ASIN", template_str)
+        self.assertIn("Lead ID,Company,Contact Name,Email Address,Lead Source,Priority", template_str)
+        self.assertIn("Status,Follow-Ups Sent,Last Contact Date,Next Follow-Up,Owner,Notes", template_str)
         self.assertIn("Skinfix", template_str)
 
         # 2. CSV Import
@@ -523,6 +535,171 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("Phone", exported_csv)
         self.assertIn("Head of Marketing", exported_csv)
         self.assertIn("https://pureglow.com", exported_csv)
+
+    def test_17_excel_crm_grid_and_followup_advance(self):
+        """Test Excel-like CRM grid bulk update and automated sequence followup advancing."""
+        cid, _ = upsert_contact_by_email(
+            name="Gregory House",
+            email="gregory@princetonplainsboro.org",
+            company="Princeton Diagnostics",
+            lead_source="LinkedIn",
+            priority="High",
+            owner="Jack C",
+            status="Not Contacted",
+            notes="Requires case study teardown",
+            db_path=TEST_DB
+        )
+        self.assertIsNotNone(cid)
+
+        # 1. Bulk update grid
+        grid_record = {
+            "id": cid,
+            "Contact Name": "Dr. Gregory House",
+            "Company": "Plainsboro Health",
+            "Lead Source": "Referral",
+            "Priority": "High",
+            "Contacted?": "No",
+            "Status": "Not Contacted",
+            "Follow-Ups Sent": 0,
+            "Owner": "Alex M",
+            "Notes": "Scheduled diagnostic audit",
+            "Tags": "Medical, Enterprise"
+        }
+        updated_count = bulk_update_contact_grid([grid_record], db_path=TEST_DB)
+        self.assertEqual(updated_count, 1)
+
+        c_after = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_after["name"], "Dr. Gregory House")
+        self.assertEqual(c_after["company"], "Plainsboro Health")
+        self.assertEqual(c_after["lead_source"], "Referral")
+        self.assertEqual(c_after["owner"], "Alex M")
+        self.assertEqual(c_after["notes"], "Scheduled diagnostic audit")
+        self.assertIn("Enterprise", c_after["tags_list"])
+
+        # 2. Automated sequence advancement (Touchpoint 1: Not Contacted -> Contacted)
+        adv_res = advance_contact_followup(cid, delay_days=5, db_path=TEST_DB)
+        self.assertTrue(adv_res)
+
+        c_adv = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_adv["contacted"], "Yes")
+        self.assertEqual(c_adv["follow_ups_sent"], 1)
+        self.assertEqual(c_adv["status"], "Contacted")
+        self.assertIsNotNone(c_adv["date_first_emailed"])
+        self.assertIsNotNone(c_adv["last_contact_date"])
+
+        expected_next = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
+        self.assertEqual(c_adv["next_follow_up"], expected_next)
+
+        # Automated sequence advancement (Touchpoint 2: Contacted -> Follow-Up Sent)
+        advance_contact_followup(cid, delay_days=5, db_path=TEST_DB)
+        c_adv2 = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_adv2["follow_ups_sent"], 2)
+        self.assertEqual(c_adv2["status"], "Follow-Up Sent")
+
+    def test_18_open_tracking_pixel_and_record_open(self):
+        """Test open tracking pixel injection and database open recording telemetry."""
+        # 1. Pixel injection
+        raw_html = "<html><body><p>Hello Prospect!</p></body></html>"
+        injected = inject_tracking_pixel(raw_html, email_id=456)
+        self.assertIn("/track/open/456.png", injected)
+        self.assertIn("width=\"1\" height=\"1\"", injected)
+
+        # 2. Record email open
+        cid, _ = upsert_contact_by_email(
+            name="Rachel Green",
+            email="rachel@ralphlauren.com",
+            company="Ralph Lauren",
+            status="Contacted",
+            db_path=TEST_DB
+        )
+        eid = create_email(
+            email_html="<p>Fashion audit</p>",
+            subject="Spring 2026 Collection",
+            recipient="rachel@ralphlauren.com",
+            status="Sent",
+            db_path=TEST_DB
+        )
+
+        open_res = record_email_open(eid, db_path=TEST_DB)
+        self.assertTrue(open_res)
+
+        e_check = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertIsNotNone(e_check["opened_at"])
+        self.assertEqual(e_check["open_count"], 1)
+
+        # Contact status should be promoted to Opened / Interested
+        c_check = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_check["status"], "Opened / Interested")
+
+    def test_19_bounce_recording_and_analytics(self):
+        """Test bounce detection recording, deliverability quarantine, and outreach analytics."""
+        cid, _ = upsert_contact_by_email(
+            name="Invalid User",
+            email="invalid.mailbox.doesnotexist@nowhere987.org",
+            company="Ghost Inc",
+            status="Contacted",
+            db_path=TEST_DB
+        )
+        eid = create_email(
+            email_html="<p>Test</p>",
+            subject="Delivery Test",
+            recipient="invalid.mailbox.doesnotexist@nowhere987.org",
+            status="Sent",
+            db_path=TEST_DB
+        )
+
+        # Record bounce
+        bounce_ok = record_email_bounce(
+            recipient_email="invalid.mailbox.doesnotexist@nowhere987.org",
+            bounce_reason="550 5.1.1 Recipient address rejected: User unknown",
+            db_path=TEST_DB
+        )
+        self.assertTrue(bounce_ok)
+
+        # Verify contact status quarantined
+        c_bounced = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_bounced["status"], "Bounced")
+        self.assertIn("Bounced", c_bounced["tags_list"])
+        self.assertIn("550 5.1.1", c_bounced["notes"])
+
+        # Verify email marked as bounced
+        e_bounced = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(e_bounced["is_bounced"], 1)
+        self.assertIn("550 5.1.1", e_bounced["bounce_reason"])
+
+        # Verify get_bounced_contacts
+        bounced_list = get_bounced_contacts(db_path=TEST_DB)
+        self.assertTrue(any(b["email"] == "invalid.mailbox.doesnotexist@nowhere987.org" for b in bounced_list))
+
+        # Verify analytics report metrics
+        analytics = get_outreach_analytics(db_path=TEST_DB)
+        self.assertGreaterEqual(analytics["total_sent"], 1)
+        self.assertGreaterEqual(analytics["total_opened"], 1)
+        self.assertGreaterEqual(analytics["total_bounced"], 1)
+        self.assertIsInstance(analytics["open_rate"], float)
+        self.assertIsInstance(analytics["bounce_rate"], float)
+
+    def test_20_bounce_parsing_from_ndr(self):
+        """Test parsing of delivery status notifications (NDRs) to extract bounced address and reason."""
+        import email
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        msg = MIMEMultipart()
+        msg["From"] = "MAILER-DAEMON@hostinger.com"
+        msg["Subject"] = "Undelivered Mail Returned to Sender"
+        body = (
+            "This is the mail system at host mailer.hostinger.com.\n\n"
+            "I'm sorry to have to inform you that your message could not\n"
+            "be delivered to one or more recipients.\n\n"
+            "<failed.target@somedomain.com>: host mail.somedomain.com said:\n"
+            "550 5.1.1 User unknown (in reply to RCPT TO command)\n"
+        )
+        msg.attach(MIMEText(body, "plain"))
+
+        failed_email, reason = extract_bounced_info_from_msg(msg)
+        self.assertEqual(failed_email, "failed.target@somedomain.com")
+        self.assertIn("550 5.1.1 User unknown", reason)
 
 if __name__ == "__main__":
     unittest.main()
