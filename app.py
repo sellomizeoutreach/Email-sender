@@ -23,12 +23,24 @@ try:
 except ImportError:
     QUILL_AVAILABLE = False
 
-import importlib
-import database
-try:
-    importlib.reload(database)
-except Exception:
-    pass
+import os
+import sys
+import importlib.util
+
+# Ensure local project modules are always loaded directly from the current script directory (.py files)
+# rather than any stale frozen bytecode embedded inside PyInstaller's PYZ.
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "scheduler"]:
+    py_path = os.path.join(current_script_dir, f"{mod_name}.py")
+    if os.path.exists(py_path):
+        try:
+            spec = importlib.util.spec_from_file_location(mod_name, py_path)
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = mod
+                spec.loader.exec_module(mod)
+        except Exception:
+            pass
 
 from database import (
     init_db,

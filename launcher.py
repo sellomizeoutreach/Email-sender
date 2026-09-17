@@ -119,6 +119,19 @@ def get_base_dir() -> str:
 
 def start_background_scheduler(stop_event: threading.Event):
     try:
+        base_dir = get_base_dir()
+        for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "scheduler"]:
+            py_path = os.path.join(base_dir, f"{mod_name}.py")
+            if os.path.exists(py_path):
+                try:
+                    import importlib.util
+                    spec = importlib.util.spec_from_file_location(mod_name, py_path)
+                    if spec and spec.loader:
+                        mod = importlib.util.module_from_spec(spec)
+                        sys.modules[mod_name] = mod
+                        spec.loader.exec_module(mod)
+                except Exception:
+                    pass
         from scheduler import start_scheduler_loop
         logger.info("Initializing Email dispatch background thread...")
         start_scheduler_loop(interval=60, stop_event=stop_event)
