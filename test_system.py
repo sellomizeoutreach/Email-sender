@@ -47,7 +47,10 @@ from database import (
     bulk_remove_tags_from_contacts,
     bulk_set_tags_for_contacts,
     bulk_update_contacts_details,
-    bulk_delete_contacts
+    bulk_delete_contacts,
+    get_all_distinct_custom_variable_keys,
+    parse_variables_from_text,
+    format_variables_as_lines
 )
 from smtp_dispatcher import (
     test_smtp_connection,
@@ -262,7 +265,7 @@ class TestEmailAutomationSystem(unittest.TestCase):
         """Test CSV template generation, bulk import with deduplication, and export."""
         # 1. Template generation
         template_str = generate_csv_template()
-        self.assertIn("Name,Email,Company,Tags,Custom_Variables", template_str)
+        self.assertIn("Name,Email,Company,Tags,Role,Website,ASIN", template_str)
         self.assertIn("Skinfix", template_str)
 
         # 2. CSV Import
@@ -449,6 +452,77 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIsNone(get_contact_by_id(c1, db_path=TEST_DB))
         self.assertIsNone(get_contact_by_id(c2, db_path=TEST_DB))
         self.assertIsNone(get_contact_by_id(c3, db_path=TEST_DB))
+
+    def test_15_custom_variables_line_parser_and_helpers(self):
+        """Test intelligent parsing of line-based variables, JSON fallback, and formatting."""
+        # 1. Test Key: Value parsing
+        raw_lines = """
+        Role: Managing Director
+        Website: https://peakcoffee.com
+        ASIN: B08N5WRWNW
+        Location: Denver, CO
+        """
+        parsed = parse_variables_from_text(raw_lines)
+        self.assertEqual(parsed["Role"], "Managing Director")
+        self.assertEqual(parsed["Website"], "https://peakcoffee.com")
+        self.assertEqual(parsed["ASIN"], "B08N5WRWNW")
+        self.assertEqual(parsed["Location"], "Denver, CO")
+
+        # 2. Test JSON parsing fallback
+        raw_json = '{"Role": "Founder", "Website": "https://brand.com"}'
+        parsed_json = parse_variables_from_text(raw_json)
+        self.assertEqual(parsed_json["Role"], "Founder")
+        self.assertEqual(parsed_json["Website"], "https://brand.com")
+
+        # 3. Test Key = Value parsing
+        raw_eq = "Product = Nitro Cold Brew\nMonthly Revenue = $120,000"
+        parsed_eq = parse_variables_from_text(raw_eq)
+        self.assertEqual(parsed_eq["Product"], "Nitro Cold Brew")
+        self.assertEqual(parsed_eq["Monthly Revenue"], "$120,000")
+
+        # 4. Test format_variables_as_lines
+        lines_formatted = format_variables_as_lines(parsed_eq)
+        self.assertIn("Product: Nitro Cold Brew", lines_formatted)
+        self.assertIn("Monthly Revenue: $120,000", lines_formatted)
+
+        # 5. Test get_all_distinct_custom_variable_keys
+        create_contact("Key Lead", "keylead@co.com", "Co", "Tag1", {"CustomField123": "val"}, db_path=TEST_DB)
+        all_keys = get_all_distinct_custom_variable_keys(include_predefined=True, db_path=TEST_DB)
+        self.assertIn("Role", all_keys)
+        self.assertIn("Website", all_keys)
+        self.assertIn("ASIN", all_keys)
+        self.assertIn("CustomField123", all_keys)
+
+    def test_16_smart_csv_column_auto_absorption(self):
+        """Test that CSV import automatically absorbs non-standard columns as custom variables."""
+        # CSV with First Name, Last Name, Email, Company, Job Title, Store URL, ASIN, Phone
+        csv_data = (
+            "First Name,Last Name,Email,Company,Job Title,Store URL,ASIN,Phone\n"
+            "Jessica,Miller,jessica@pureglow.com,Pure Glow,Head of Marketing,https://pureglow.com,B09GLOW123,555-0199\n"
+        )
+        stats = import_contacts_from_csv(csv_data, db_path=TEST_DB)
+        self.assertEqual(stats["inserted"], 1)
+        self.assertEqual(stats["errors"], [])
+
+        contacts = get_contacts(db_path=TEST_DB)
+        jessica = next(c for c in contacts if c["email"] == "jessica@pureglow.com")
+        self.assertEqual(jessica["name"], "Jessica Miller")
+        self.assertEqual(jessica["company"], "Pure Glow")
+        
+        cv = jessica["custom_variables_dict"]
+        self.assertEqual(cv["Role"], "Head of Marketing") # normalized from Job Title
+        self.assertEqual(cv["Website"], "https://pureglow.com") # normalized from Store URL
+        self.assertEqual(cv["ASIN"], "B09GLOW123")
+        self.assertEqual(cv["Phone"], "555-0199")
+
+        # Verify export expands these custom variables into their own clean columns
+        exported_csv = export_contacts_to_csv([jessica])
+        self.assertIn("Role", exported_csv)
+        self.assertIn("Website", exported_csv)
+        self.assertIn("ASIN", exported_csv)
+        self.assertIn("Phone", exported_csv)
+        self.assertIn("Head of Marketing", exported_csv)
+        self.assertIn("https://pureglow.com", exported_csv)
 
 if __name__ == "__main__":
     unittest.main()

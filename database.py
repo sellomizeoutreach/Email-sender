@@ -451,6 +451,104 @@ def get_contacts_by_tag(tag: str, db_path: str = DB_FILE) -> List[Dict[str, Any]
     """Retrieve all contacts associated with a specific tag."""
     return get_contacts(tags_filter=[tag], db_path=db_path)
 
+PREDEFINED_COMMON_VARIABLES = [
+    "Role",
+    "Website",
+    "ASIN",
+    "Product",
+    "Category",
+    "Location",
+    "Phone",
+    "Store URL",
+    "Monthly Revenue"
+]
+
+def get_predefined_variable_keys() -> List[str]:
+    """Return common standard outreach variable suggestions."""
+    return list(PREDEFINED_COMMON_VARIABLES)
+
+def get_all_distinct_custom_variable_keys(include_predefined: bool = True, db_path: str = DB_FILE) -> List[str]:
+    """Retrieve all unique custom variable keys present across contacts, plus standard suggestions."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT custom_variables FROM contacts WHERE custom_variables IS NOT NULL AND custom_variables != ''")
+    rows = cursor.fetchall()
+    conn.close()
+
+    keys_set = set(PREDEFINED_COMMON_VARIABLES) if include_predefined else set()
+    for r in rows:
+        raw = r["custom_variables"]
+        try:
+            parsed = json.loads(raw) if raw else {}
+            if isinstance(parsed, dict):
+                for k in parsed.keys():
+                    if k and str(k).strip():
+                        keys_set.add(str(k).strip())
+        except Exception:
+            pass
+    return sorted(list(keys_set))
+
+def parse_variables_from_text(raw_text: str) -> Dict[str, str]:
+    """
+    Intelligently parse custom variables from user input.
+    Supports:
+    1. Valid JSON: {"Role": "CEO", "Website": "brand.com"}
+    2. Plain key-value lines:
+       Role: CEO
+       Website: brand.com
+       ASIN: B08N5WRWNW
+    3. Key = Value lines
+    """
+    if not raw_text or not raw_text.strip():
+        return {}
+    
+    text = raw_text.strip()
+    # Try parsing as JSON first
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return {str(k).strip(): str(v).strip() for k, v in parsed.items() if str(k).strip()}
+        except Exception:
+            pass
+
+    # Parse line by line: Key: Value or Key = Value
+    result = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        
+        delimiter = None
+        if ":" in line:
+            delimiter = ":"
+        elif "=" in line:
+            delimiter = "="
+        
+        if delimiter:
+            parts = line.split(delimiter, 1)
+            k = parts[0].strip().strip('"').strip("'")
+            v = parts[1].strip().strip('"').strip("'")
+            if k:
+                result[k] = v
+        else:
+            if "Note" not in result:
+                result["Note"] = line
+            else:
+                result["Note"] += f"; {line}"
+                
+    return result
+
+def format_variables_as_lines(variables: Dict[str, Any]) -> str:
+    """Format dictionary of variables into clean, human-readable Key: Value lines."""
+    if not variables:
+        return ""
+    lines = []
+    for k, v in variables.items():
+        if k and str(v).strip():
+            lines.append(f"{k}: {v}")
+    return "\n".join(lines)
+
 def delete_contact(contact_id: int, db_path: str = DB_FILE):
     conn = get_connection(db_path)
     cursor = conn.cursor()

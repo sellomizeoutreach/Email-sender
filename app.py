@@ -50,6 +50,10 @@ from database import (
     bulk_remove_tags_from_contacts,
     bulk_set_tags_for_contacts,
     bulk_update_contacts_details,
+    get_predefined_variable_keys,
+    get_all_distinct_custom_variable_keys,
+    parse_variables_from_text,
+    format_variables_as_lines,
     create_template,
     get_templates,
     get_template_by_id,
@@ -774,9 +778,24 @@ with tab_crm:
             with col_t2:
                 new_tags_raw = st.text_input("Or Add New Custom Tag(s)", placeholder="e.g. Beauty Brands, Q4 Leads", help="Comma-separated list of new custom tags.")
 
-            st.markdown("##### Custom Variables (Optional)")
-            st.caption("Add key-value pairs (e.g. `Role: CEO`, `Product: Coffee Maker`, `Niche: Home Decor`). These can be injected using `[Role]` or `[Niche]` in templates.")
-            custom_vars_raw = st.text_area("Custom Variables JSON", value="{\n  \"Role\": \"Brand Director\",\n  \"Category\": \"E-commerce\"\n}", height=80)
+            st.markdown("##### 🧩 Lead Variables & Outreach Attributes (No JSON needed)")
+            st.caption("Add variables you want to inject into email templates (e.g. `[Role]`, `[Website]`, `[ASIN]`). They will be substituted automatically.")
+
+            col_cv1, col_cv2, col_cv3 = st.columns(3)
+            with col_cv1:
+                cv_role = st.text_input("Role / Job Title", placeholder="e.g. Founder & CEO", help="Accessible via [Role] in email templates")
+            with col_cv2:
+                cv_website = st.text_input("Website / Store URL", placeholder="e.g. https://brand.com", help="Accessible via [Website] in email templates")
+            with col_cv3:
+                cv_asin = st.text_input("Amazon ASIN / Product ID", placeholder="e.g. B08N5WRWNW", help="Accessible via [ASIN] in email templates")
+
+            with st.expander("➕ Add More Variables (Simple Key: Value or JSON)", expanded=False):
+                st.caption("Type one variable per line (e.g. `Category: Skincare` or `Location: Austin, TX`). No JSON quotes or brackets needed!")
+                more_vars_raw = st.text_area(
+                    "Additional Variables",
+                    placeholder="Category: E-Commerce\nLocation: New York, USA\nProduct: Organic Coffee",
+                    height=75
+                )
 
             add_contact_btn = st.form_submit_button("Save Contact", type="primary")
 
@@ -784,22 +803,22 @@ with tab_crm:
                 if not c_name.strip() or not c_email.strip():
                     st.error("Name and Email Address are required.")
                 else:
-                    try:
-                        cv_parsed = json.loads(custom_vars_raw) if custom_vars_raw.strip() else {}
-                        if not isinstance(cv_parsed, dict):
-                            cv_parsed = {}
-                    except Exception as json_err:
-                        st.warning(f"Invalid JSON format for custom variables; saving as empty. ({json_err})")
-                        cv_parsed = {}
+                    cv_parsed = parse_variables_from_text(more_vars_raw)
+                    if cv_role.strip():
+                        cv_parsed["Role"] = cv_role.strip()
+                    if cv_website.strip():
+                        cv_parsed["Website"] = cv_website.strip()
+                    if cv_asin.strip():
+                        cv_parsed["ASIN"] = cv_asin.strip()
 
                     # Combine multiselect tags and new text tags
                     extra_tags = [t.strip() for t in new_tags_raw.split(",") if t.strip()]
                     combined_tags = list(set(selected_tags + extra_tags))
 
                     cid, is_new = upsert_contact_by_email(
-                        name=c_name,
-                        email=c_email,
-                        company=c_company,
+                        name=c_name.strip(),
+                        email=c_email.strip(),
+                        company=c_company.strip(),
                         tags=combined_tags,
                         custom_variables=cv_parsed
                     )
@@ -1026,8 +1045,25 @@ with tab_crm:
 
                     vars_dict = contact.get("custom_variables_dict") or {}
                     if vars_dict:
-                        chips = " ".join([f"`[{k}]: {v}`" for k, v in vars_dict.items()])
-                        st.markdown(f"**Vars:** {chips}")
+                        var_badges = []
+                        for k, v in vars_dict.items():
+                            k_lower = k.lower()
+                            if any(w in k_lower for w in ["role", "title", "position"]):
+                                icon = "💼"
+                            elif any(w in k_lower for w in ["web", "url", "domain", "store", "shop"]):
+                                icon = "🌐"
+                            elif any(w in k_lower for w in ["asin", "sku", "product"]):
+                                icon = "📦"
+                            elif any(w in k_lower for w in ["phone", "mobile", "tel"]):
+                                icon = "📞"
+                            elif any(w in k_lower for w in ["loc", "city", "country", "state"]):
+                                icon = "📍"
+                            elif any(w in k_lower for w in ["rev", "arr", "mrr", "$"]):
+                                icon = "💰"
+                            else:
+                                icon = "🧩"
+                            var_badges.append(f"<span style='background:rgba(255,255,255,0.06); color:#CBD5E1; border:1px solid rgba(255,255,255,0.12); font-size:0.75rem; padding:2px 7px; border-radius:5px; margin-right:4px; display:inline-block;'>{icon} <b>[{k}]</b>: {v}</span> ")
+                        st.markdown("".join(var_badges), unsafe_allow_html=True)
                     elif not tags_list:
                         st.caption("No tags or variables")
 
@@ -1076,11 +1112,25 @@ with tab_crm:
                             with col_et2:
                                 edit_new_tags = st.text_input("Or Add New Tag(s)", placeholder="e.g. Q4 Audit", help="Comma separated")
 
-                            edit_vars_json = st.text_area(
-                                "Custom Variables JSON",
-                                value=json.dumps(contact.get("custom_variables_dict") or {}, indent=2),
-                                height=80
-                            )
+                            st.markdown("##### 🧩 Lead Variables (No JSON needed)")
+                            c_cv = contact.get("custom_variables_dict") or {}
+                            col_ecv1, col_ecv2, col_ecv3 = st.columns(3)
+                            with col_ecv1:
+                                edit_role = st.text_input("Role / Job Title", value=str(c_cv.get("Role", "")), key=f"edit_role_{c_id}")
+                            with col_ecv2:
+                                edit_web = st.text_input("Website / Store URL", value=str(c_cv.get("Website", "")), key=f"edit_web_{c_id}")
+                            with col_ecv3:
+                                edit_asin = st.text_input("Amazon ASIN / Product", value=str(c_cv.get("ASIN", "")), key=f"edit_asin_{c_id}")
+
+                            other_vars = {k: v for k, v in c_cv.items() if k not in ["Role", "Website", "ASIN"]}
+                            with st.expander("➕ Other Variables (Key: Value or JSON)", expanded=bool(other_vars)):
+                                edit_other_vars_text = st.text_area(
+                                    "Additional Custom Variables",
+                                    value=format_variables_as_lines(other_vars),
+                                    key=f"edit_other_vars_{c_id}",
+                                    height=65,
+                                    help="One variable per line (e.g. Category: Skincare or Location: NYC). No JSON syntax required!"
+                                )
 
                             col_esave, col_ecancel = st.columns([1.5, 4])
                             with col_esave:
@@ -1092,10 +1142,13 @@ with tab_crm:
                                 if not edit_name.strip() or not edit_email.strip():
                                     st.error("Name and Email are required.")
                                 else:
-                                    try:
-                                        parsed_cv = json.loads(edit_vars_json) if edit_vars_json.strip() else {}
-                                    except Exception:
-                                        parsed_cv = contact.get("custom_variables_dict") or {}
+                                    parsed_cv = parse_variables_from_text(edit_other_vars_text)
+                                    if edit_role.strip():
+                                        parsed_cv["Role"] = edit_role.strip()
+                                    if edit_web.strip():
+                                        parsed_cv["Website"] = edit_web.strip()
+                                    if edit_asin.strip():
+                                        parsed_cv["ASIN"] = edit_asin.strip()
 
                                     extra_t = [t.strip() for t in edit_new_tags.split(",") if t.strip()]
                                     final_t = list(set(edit_selected_tags + extra_t))
@@ -1125,12 +1178,18 @@ with tab_templates:
     st.subheader("📝 Template Builder")
     st.caption("Create reusable cold outreach templates with dynamic variable insertion and Spintax variation.")
 
+    # Dynamic Variable Badges from CRM
+    detected_var_keys = get_all_distinct_custom_variable_keys(include_predefined=True)
+    var_chips = ["Name", "Company", "Email"] + [k for k in detected_var_keys if k not in ["Name", "Company", "Email"]]
+    var_chips_html = "".join([f"<code style='background:rgba(56, 189, 248, 0.12); color:#38BDF8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight:700; padding:2px 6px; border-radius:4px; margin-right:4px; display:inline-block;'>[{k}]</code> " for k in var_chips])
+
     # Syntax Guide Box
-    st.markdown("""
+    st.markdown(f"""
     <div class="syntax-help">
         <strong>💡 Template Formatting Guide:</strong><br>
-        • <strong>Variables:</strong> Use <code>[Name]</code>, <code>[Company]</code>, <code>[Email]</code>, or custom fields like <code>[Role]</code>. They will be automatically replaced with the lead's real CRM data.<br>
-        • <strong>Spintax:</strong> Use <code>{variation1|variation2|variation3}</code> syntax. The engine will randomly select one option for every contact to guarantee distinct email copy. Nested Spintax like <code>{Hi|{Good morning|Hello}}</code> is fully supported!
+        • <strong>Variables:</strong> Use brackets like <code>[Name]</code> or <code>[Company]</code>. They are automatically injected with prospect data.<br>
+        • <strong>Available Lead Variables:</strong> {var_chips_html}<br>
+        • <strong>Spintax:</strong> Use <code>{{variation1|variation2|variation3}}</code> syntax. The engine randomly selects an option per lead to ensure unique copy.
     </div>
     """, unsafe_allow_html=True)
 
