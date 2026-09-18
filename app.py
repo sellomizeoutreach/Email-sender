@@ -199,7 +199,7 @@ st.markdown("""
         letter-spacing: -0.4px !important;
         font-weight: 700 !important;
     }
-    p, span, label {
+    p, label {
         color: #334155;
     }
     hr {
@@ -410,7 +410,16 @@ st.markdown("""
         font-weight: 600;
     }
 
-    /* Modern Segmented Navigation Tabs (30% Sellomize Green Solid Active Tab) */
+    /* Modern Segmented Navigation Tabs (Sellomize 60-30-10 Enterprise Design) */
+    .stTabs,
+    div[data-testid="stTabs"] {
+        margin-bottom: 1.6rem !important;
+    }
+
+    /* Tab List Container Bar */
+    .stTabs [role="tablist"],
+    div[data-testid="stTabs"] [role="tablist"],
+    div[data-testid="stTabs"] > div:first-child,
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px !important;
         background: #F0F5F4 !important;
@@ -418,37 +427,120 @@ st.markdown("""
         border-radius: 12px !important;
         border: 1px solid rgba(8, 55, 49, 0.15) !important;
         box-shadow: inset 0 1px 3px rgba(8, 55, 49, 0.05) !important;
-        margin-bottom: 1.6rem !important;
+        display: flex !important;
+        align-items: center !important;
+        position: relative !important;
+        border-bottom: 1px solid rgba(8, 55, 49, 0.15) !important;
     }
-    .stTabs [data-baseweb="tab"] {
-        height: 44px !important;
+
+    /* Eliminate the default bottom pseudo-line on tablist */
+    .stTabs [role="tablist"]::after,
+    div[data-testid="stTabs"] [role="tablist"]::after {
+        display: none !important;
+        content: none !important;
+        height: 0 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+
+    /* Base Tab Pill (Unselected State) */
+    .stTabs [data-testid="stTab"],
+    .stTabs [role="tab"],
+    .stTabs [data-baseweb="tab"],
+    div[data-testid="stTabs"] button[role="tab"] {
+        height: 42px !important;
         border-radius: 8px !important;
-        color: #334155 !important;
-        font-weight: 600 !important;
-        font-size: 0.92rem !important;
         padding: 0 1.25rem !important;
         border: 1px solid transparent !important;
         background: transparent !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        cursor: pointer !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-decoration: none !important;
+        box-shadow: none !important;
     }
-    .stTabs [data-baseweb="tab"]:hover {
+
+    /* Unselected Tab Label & Icons (Sellomize Signature Deep Pine Green) */
+    .stTabs [data-testid="stTab"] p,
+    .stTabs [role="tab"] p,
+    .stTabs [data-baseweb="tab"] p,
+    div[data-testid="stTabs"] button[role="tab"] p,
+    .stTabs [data-testid="stTab"] span,
+    .stTabs [role="tab"] span,
+    .stTabs [data-testid="stTab"] div,
+    div[data-testid="stTabs"] button[role="tab"] div {
         color: #083731 !important;
-        background: rgba(8, 55, 49, 0.07) !important;
-        border-color: rgba(8, 55, 49, 0.12) !important;
+        font-weight: 600 !important;
+        font-size: 0.92rem !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        letter-spacing: 0.2px !important;
+        transition: color 0.15s ease !important;
     }
-    .stTabs [aria-selected="true"] {
+
+    /* Unselected Tab Hover State */
+    .stTabs [data-testid="stTab"]:hover,
+    .stTabs [role="tab"]:hover,
+    .stTabs [data-baseweb="tab"]:hover,
+    div[data-testid="stTabs"] button[role="tab"]:hover {
+        background: rgba(8, 55, 49, 0.08) !important;
+        border-color: rgba(8, 55, 49, 0.16) !important;
+    }
+    .stTabs [data-testid="stTab"]:hover p,
+    .stTabs [role="tab"]:hover p,
+    div[data-testid="stTabs"] button[role="tab"]:hover p {
+        color: #083731 !important;
+    }
+
+    /* Active Selected Tab (30% Deep Pine Green #083731 Container) */
+    .stTabs [data-testid="stTab"][aria-selected="true"],
+    .stTabs [data-testid="stTab"][data-selected="true"],
+    .stTabs [role="tab"][aria-selected="true"],
+    .stTabs [role="tab"][data-selected="true"],
+    .stTabs [aria-selected="true"],
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"],
+    div[data-testid="stTabs"] button[role="tab"][data-selected="true"] {
         background: #083731 !important;
         border: 1px solid #083731 !important;
-        color: #FFFFFF !important;
-        font-weight: 700 !important;
-        box-shadow: 0 4px 14px rgba(8, 55, 49, 0.25) !important;
+        box-shadow: 0 4px 14px rgba(8, 55, 49, 0.28) !important;
         border-radius: 8px !important;
     }
-    .stTabs [data-baseweb="tab-highlight"] {
-        display: none !important;
+
+    /* Active Selected Tab Text (CRISP 100% PURE WHITE #FFFFFF WITH ZERO LEAK) */
+    .stTabs [data-testid="stTab"][aria-selected="true"] p,
+    .stTabs [data-testid="stTab"][data-selected="true"] p,
+    .stTabs [role="tab"][aria-selected="true"] p,
+    .stTabs [role="tab"][data-selected="true"] p,
+    .stTabs [aria-selected="true"] p,
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p,
+    div[data-testid="stTabs"] button[role="tab"][data-selected="true"] p,
+    .stTabs [data-testid="stTab"][aria-selected="true"] span,
+    .stTabs [data-testid="stTab"][data-selected="true"] span,
+    .stTabs [role="tab"][aria-selected="true"] span,
+    .stTabs [aria-selected="true"] span,
+    .stTabs [aria-selected="true"] div,
+    .stTabs [aria-selected="true"] * {
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        fill: #FFFFFF !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
     }
+
+    /* Eradicate any Selection Indicator Bar or Underline artifact */
+    .stTabs .react-aria-SelectionIndicator,
+    .stTabs [data-testid="stTab"] .react-aria-SelectionIndicator,
+    div[data-testid="stTabs"] .react-aria-SelectionIndicator,
+    .stTabs [data-baseweb="tab-highlight"],
     .stTabs [data-baseweb="tab-border"] {
         display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        height: 0 !important;
+        width: 0 !important;
+        background: transparent !important;
+        border: none !important;
     }
 
     /* Primary CTA Buttons (10% Sellomize Flame Orange #FD4D1B) */
@@ -466,6 +558,15 @@ st.markdown("""
         box-shadow: 0 4px 14px rgba(253, 77, 27, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         letter-spacing: 0.3px !important;
+    }
+    button[kind="primary"] p,
+    button[kind="primary"] span,
+    [data-testid="baseButton-primary"] p,
+    [data-testid="baseButton-primary"] span,
+    div.stButton > button[kind="primary"] p,
+    div.stFormSubmitButton > button[kind="primary"] p {
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
     }
     button[kind="primary"]:hover,
     [data-testid="baseButton-primary"]:hover,
@@ -495,6 +596,15 @@ st.markdown("""
         box-shadow: 0 2px 6px rgba(8, 55, 49, 0.05) !important;
         transition: all 0.2s ease-in-out !important;
     }
+    button[kind="secondary"] p,
+    button[kind="secondary"] span,
+    [data-testid="baseButton-secondary"] p,
+    [data-testid="baseButton-secondary"] span,
+    .stButton > button:not([kind="primary"]) p,
+    .stDownloadButton > button p {
+        color: #083731 !important;
+        font-weight: 600 !important;
+    }
     button[kind="secondary"]:hover,
     [data-testid="baseButton-secondary"]:hover,
     .stButton > button:not([kind="primary"]):hover,
@@ -504,6 +614,13 @@ st.markdown("""
         color: #FFFFFF !important;
         box-shadow: 0 4px 14px rgba(8, 55, 49, 0.2) !important;
         transform: translateY(-1px) !important;
+    }
+    button[kind="secondary"]:hover p,
+    button[kind="secondary"]:hover span,
+    [data-testid="baseButton-secondary"]:hover p,
+    .stButton > button:not([kind="primary"]):hover p,
+    .stDownloadButton > button:hover p {
+        color: #FFFFFF !important;
     }
 
     /* Form Containers & Expanders (60% Crisp White) */
@@ -532,10 +649,14 @@ st.markdown("""
         font-size: 0.95rem !important;
     }
 
-    /* Inputs, Textareas, and Dropdowns */
+    /* Inputs, Textareas, and Dropdowns (Sellomize High-Precision SaaS Styling) */
     div[data-baseweb="input"],
     div[data-baseweb="textarea"],
-    div[data-baseweb="select"] > div {
+    div[data-baseweb="select"] > div,
+    div[data-testid="stTextInputRootElement"],
+    div[data-testid="stTextAreaRootElement"],
+    div[data-testid="stSelectbox"] > div,
+    div[data-testid="stNumberInputContainer"] {
         background-color: #FFFFFF !important;
         border: 1.5px solid #CBD5E1 !important;
         border-radius: 8px !important;
@@ -545,19 +666,29 @@ st.markdown("""
     }
     div[data-baseweb="input"]:focus-within,
     div[data-baseweb="textarea"]:focus-within,
-    div[data-baseweb="select"]:focus-within > div {
+    div[data-baseweb="select"]:focus-within > div,
+    div[data-testid="stTextInputRootElement"]:focus-within,
+    div[data-testid="stTextAreaRootElement"]:focus-within,
+    div[data-testid="stSelectbox"]:focus-within > div,
+    div[data-testid="stNumberInputContainer"]:focus-within {
         border-color: #FD4D1B !important;
         box-shadow: 0 0 0 3px rgba(253, 77, 27, 0.18), inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
         background-color: #FFFFFF !important;
     }
     div[data-baseweb="input"] input,
-    div[data-baseweb="textarea"] textarea {
+    div[data-baseweb="textarea"] textarea,
+    input[data-testid="stTextInputField"],
+    textarea[data-testid="stTextAreaField"],
+    .stTextInput input,
+    .stTextArea textarea {
         color: #0F172A !important;
         background-color: transparent !important;
         font-size: 0.92rem !important;
     }
     div[data-baseweb="input"] input::placeholder,
-    div[data-baseweb="textarea"] textarea::placeholder {
+    div[data-baseweb="textarea"] textarea::placeholder,
+    input[data-testid="stTextInputField"]::placeholder,
+    textarea[data-testid="stTextAreaField"]::placeholder {
         color: #94A3B8 !important;
     }
 
