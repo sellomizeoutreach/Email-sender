@@ -697,6 +697,26 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(8, 55, 49, 0.04) !important;
         background: #FFFFFF !important;
     }
+
+    /* Sidebar Styling (Sellomize 30% Pine Green & 60% Crisp White) */
+    section[data-testid="stSidebar"] {
+        background-color: #F8FAF9 !important;
+        border-right: 1px solid rgba(8, 55, 49, 0.14) !important;
+        box-shadow: 2px 0 16px rgba(8, 55, 49, 0.04) !important;
+    }
+    section[data-testid="stSidebar"] .stMarkdown h1,
+    section[data-testid="stSidebar"] .stMarkdown h2,
+    section[data-testid="stSidebar"] .stMarkdown h3,
+    section[data-testid="stSidebar"] .stMarkdown h4 {
+        color: #083731 !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stExpander"] {
+        background: #FFFFFF !important;
+        border: 1px solid rgba(8, 55, 49, 0.14) !important;
+        border-radius: 10px !important;
+        margin-bottom: 10px !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -808,24 +828,388 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.divider()
 
-# Primary App Navigation Tabs
-tab_crm, tab_templates, tab_campaign, tab_review, tab_analytics, tab_settings = st.tabs([
-    "👥 Contact Manager",
-    "📝 Template Builder",
-    "🚀 Campaign Generator",
-    "📥 Review Queue & Flags",
-    "📈 Outreach Analytics & Bounces",
-    "⚙️ Configuration & Outbox"
+
+# ==============================================================================
+# ⚙️ PERSISTENT SIDEBAR: INFRASTRUCTURE & SETTINGS
+# ==============================================================================
+with st.sidebar:
+    st.markdown("""
+    <div style="display:flex; align-items:center; gap:12px; padding:10px 4px 14px; border-bottom:1.5px solid rgba(8,55,49,0.15); margin-bottom:16px;">
+        <span style="font-size:1.75rem;">⚙️</span>
+        <div>
+            <div style="font-weight:900; font-size:1.15rem; color:#083731; letter-spacing:0.6px; line-height:1.1;">INFRASTRUCTURE</div>
+            <div style="font-size:0.75rem; color:#64748B; font-weight:700; letter-spacing:0.4px;">SELLOMIZE REACH AGENCY HUB</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    current_configs = get_all_configs()
+
+    # SECTION 1: OUTBOUND DISPATCH ENGINE & WINDOW
+    with st.expander("⚡ Outbound Engine & Sending Window", expanded=False):
+        current_engine = current_configs.get("dispatch_method", "hostinger_smtp")
+        dispatch_engine_choice = st.radio(
+            "Primary Outbound Engine",
+            ["⚡ Hostinger Direct SMTP (Multi-Account)", "📧 Desktop Microsoft Outlook"],
+            index=0 if current_engine == "hostinger_smtp" else 1,
+            help="Hostinger Direct SMTP sends autonomously in background. Outlook uses local Windows Outlook."
+        )
+
+        st.caption("Human Delay Throttling (Anti-Spam)")
+        col_sb_del1, col_sb_del2 = st.columns(2)
+        with col_sb_del1:
+            sb_min_delay = st.number_input(
+                "Min Delay (s)",
+                min_value=5,
+                max_value=300,
+                value=int(current_configs.get("min_delay_seconds", "20")),
+                key="sb_min_del"
+            )
+        with col_sb_del2:
+            sb_max_delay = st.number_input(
+                "Max Delay (s)",
+                min_value=10,
+                max_value=600,
+                value=int(current_configs.get("max_delay_seconds", "45")),
+                key="sb_max_del"
+            )
+
+        st.caption("Active Sending Window & Days")
+        raw_saved_days = current_configs.get("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday")
+        saved_days_list = [d.strip() for d in raw_saved_days.split(",") if d.strip()]
+        sb_sending_days = st.multiselect(
+            "Allowed Days",
+            WEEKDAY_NAMES,
+            default=[d for d in saved_days_list if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            key="sb_send_days"
+        )
+        col_sw1, col_sw2 = st.columns(2)
+        with col_sw1:
+            sb_start_time = st.text_input("Start (HH:MM)", value=current_configs.get("sending_start_time", "09:00"), key="sb_st_time")
+        with col_sw2:
+            sb_end_time = st.text_input("Cutoff (HH:MM)", value=current_configs.get("sending_end_time", "18:00"), key="sb_end_time")
+
+        sb_enforce_win = st.checkbox(
+            "Enforce Sending Window (Pause off-hours)",
+            value=(current_configs.get("enforce_sending_window", "true").lower() in ["true", "1", "yes"]),
+            key="sb_enf_win"
+        )
+        sb_enforce_mx = st.checkbox(
+            "Enforce Pre-Flight MX Sanity Check",
+            value=(current_configs.get("enforce_mx_check", "true").lower() in ["true", "1", "yes"]),
+            key="sb_enf_mx"
+        )
+
+        is_open, window_status_msg = is_within_sending_window()
+        status_badge = '<span style="background:rgba(16,185,129,0.15); color:#059669; border:1px solid #10B981; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.8rem;">🟢 WINDOW OPEN</span>' if is_open else '<span style="background:rgba(239,68,68,0.15); color:#DC2626; border:1px solid #EF4444; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.8rem;">🔴 WINDOW PAUSED</span>'
+        st.markdown(f"<div style='margin:6px 0 10px;'>{status_badge} <div style='color:#64748B; font-size:0.8rem; margin-top:3px;'>{window_status_msg}</div></div>", unsafe_allow_html=True)
+
+        if st.button("💾 Save Engine & Window Settings", type="primary", use_container_width=True, key="save_engine_btn"):
+            engine_key = "hostinger_smtp" if "Hostinger" in dispatch_engine_choice else "outlook"
+            set_config("dispatch_method", engine_key)
+            set_config("min_delay_seconds", str(sb_min_delay))
+            set_config("max_delay_seconds", str(sb_max_delay))
+            set_config("sending_days", ", ".join(sb_sending_days))
+            set_config("sending_start_time", sb_start_time.strip())
+            set_config("sending_end_time", sb_end_time.strip())
+            set_config("enforce_sending_window", "true" if sb_enforce_win else "false")
+            set_config("enforce_mx_check", "true" if sb_enforce_mx else "false")
+            st.success("✅ Engine & window settings saved!")
+            st.rerun()
+
+    # SECTION 2: HOSTINGER MAILBOX FLEET & WARMUP RAMP-UP
+    with st.expander("📬 Hostinger Mailbox Fleet & Warmup", expanded=False):
+        smtp_accounts = get_smtp_accounts(active_only=False)
+        active_accounts = [acc for acc in smtp_accounts if acc.get("is_active")]
+        total_capacity = sum(get_effective_daily_limit(acc) for acc in active_accounts)
+        total_sent_today = sum(acc.get("sent_today", 0) for acc in active_accounts)
+
+        col_f1, col_f2 = st.columns(2)
+        col_f1.metric("Mailboxes", f"{len(active_accounts)} / {len(smtp_accounts)} Active")
+        col_f2.metric("Today's Capacity", f"{total_sent_today} / {total_capacity}")
+
+        with st.expander("➕ Connect New Hostinger Mailbox", expanded=len(smtp_accounts) == 0):
+            with st.form("sb_add_smtp_form", clear_on_submit=True):
+                new_acc_name = st.text_input("Display Name *", placeholder="e.g. Alex Morgan | Sellomize")
+                new_acc_email = st.text_input("Email Address *", placeholder="alex@sellomize.com")
+                new_acc_pass = st.text_input("Password *", type="password")
+                col_nb1, col_nb2 = st.columns(2)
+                with col_nb1:
+                    new_acc_host = st.text_input("SMTP Host", value="smtp.hostinger.com")
+                    new_acc_limit = st.number_input("Target Daily Limit", min_value=1, max_value=500, value=80)
+                with col_nb2:
+                    new_acc_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=465, step=1)
+                    new_warmup_enabled = st.checkbox("Enable Automated Warmup", value=True)
+
+                if new_warmup_enabled:
+                    col_nw1, col_nw2 = st.columns(2)
+                    with col_nw1:
+                        new_warmup_start = st.number_input("Starting Cap", min_value=1, max_value=100, value=10)
+                    with col_nw2:
+                        new_warmup_inc = st.number_input("Daily Increment", min_value=1, max_value=50, value=5)
+                else:
+                    new_warmup_start = 10
+                    new_warmup_inc = 5
+
+                add_acc_submit = st.form_submit_button("Verify & Connect Mailbox", type="primary", use_container_width=True)
+                if add_acc_submit:
+                    if not new_acc_name.strip() or not new_acc_email.strip() or not new_acc_pass.strip():
+                        st.error("Display Name, Email, and Password are required.")
+                    else:
+                        with st.spinner(f"Testing SMTP {new_acc_host}:{new_acc_port}..."):
+                            ok, test_msg = test_smtp_connection(new_acc_host.strip(), int(new_acc_port), new_acc_email.strip(), new_acc_pass.strip())
+                        if ok:
+                            add_smtp_account(
+                                sender_name=new_acc_name.strip(),
+                                email=new_acc_email.strip(),
+                                password=new_acc_pass.strip(),
+                                smtp_host=new_acc_host.strip(),
+                                smtp_port=int(new_acc_port),
+                                daily_limit=int(new_acc_limit),
+                                warmup_enabled=new_warmup_enabled,
+                                warmup_starting_limit=int(new_warmup_start),
+                                warmup_daily_increment=int(new_warmup_inc),
+                                warmup_target_limit=int(new_acc_limit)
+                            )
+                            st.success(f"✅ Connected '{new_acc_email}'!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Connection Failed: {test_msg}")
+
+        if smtp_accounts:
+            st.markdown("##### Mailbox Fleet")
+            for acc in smtp_accounts:
+                acc_id = acc["id"]
+                sent_today = acc.get("sent_today", 0)
+                eff_limit = get_effective_daily_limit(acc)
+                target_limit = acc.get("warmup_target_limit") or acc.get("daily_limit", 80)
+                is_warmup = bool(acc.get("warmup_enabled"))
+                pct = min(1.0, float(sent_today) / max(1.0, float(eff_limit)))
+
+                if is_warmup:
+                    try:
+                        start_d = datetime.strptime((acc.get("warmup_start_date") or "").split()[0], "%Y-%m-%d").date()
+                        day_num = max(1, (datetime.now().astimezone().date() - start_d).days + 1)
+                    except Exception:
+                        day_num = 1
+                    warmup_badge = f'<span style="background:rgba(253,77,27,0.12); color:#FD4D1B; border:1px solid #FD4D1B; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:12px;">🔥 DAY {day_num}</span>'
+                else:
+                    warmup_badge = '<span style="background:rgba(8,55,49,0.1); color:#083731; border:1px solid #083731; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:12px;">⚡ STD</span>'
+
+                st.markdown(f"""
+                <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:10px; padding:10px 14px; margin:8px 0; box-shadow:0 2px 8px rgba(8,55,49,0.04);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <strong style="color:#083731; font-size:0.95rem;">{acc['email']}</strong><br>
+                            <span style="font-size:0.78rem; color:#64748B;">{acc['sender_name']}</span>
+                        </div>
+                        <div>{warmup_badge}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                st.progress(pct, text=f"{sent_today}/{eff_limit} sent today (Target: {target_limit}/day)")
+
+                col_b1, col_b2, col_b3 = st.columns(3)
+                with col_b1:
+                    if st.button("🧪 Test", key=f"sb_test_{acc_id}", use_container_width=True):
+                        ok, msg = test_smtp_connection(acc["smtp_host"], acc["smtp_port"], acc["email"], acc["password"])
+                        if ok:
+                            st.success("Verified!")
+                        else:
+                            st.error("Failed!")
+                with col_b2:
+                    if acc["is_active"]:
+                        if st.button("⏸️ Pause", key=f"sb_p_{acc_id}", use_container_width=True):
+                            update_smtp_account(acc_id, is_active=False)
+                            st.rerun()
+                    else:
+                        if st.button("▶️ Active", key=f"sb_a_{acc_id}", use_container_width=True):
+                            update_smtp_account(acc_id, is_active=True)
+                            st.rerun()
+                with col_b3:
+                    if st.button("🗑️ Del", key=f"sb_d_{acc_id}", use_container_width=True):
+                        delete_smtp_account(acc_id)
+                        st.rerun()
+
+                with st.expander(f"Edit {acc['email']}", expanded=False):
+                    with st.form(f"sb_edit_acc_{acc_id}"):
+                        e_name = st.text_input("Display Name", value=acc["sender_name"])
+                        e_daily_limit = st.number_input("Daily Limit", min_value=1, max_value=500, value=int(acc.get("daily_limit", 80)))
+                        e_warmup_on = st.checkbox("Warmup Enabled", value=bool(acc.get("warmup_enabled")), key=f"sb_wo_{acc_id}")
+                        e_w_start = st.number_input("Starting Cap", min_value=1, max_value=100, value=int(acc.get("warmup_starting_limit") or 10), key=f"sb_ws_{acc_id}")
+                        e_w_inc = st.number_input("Daily Increment", min_value=1, max_value=50, value=int(acc.get("warmup_daily_increment") or 5), key=f"sb_wi_{acc_id}")
+                        e_w_target = st.number_input("Target Cap", min_value=5, max_value=300, value=int(acc.get("warmup_target_limit") or 50), key=f"sb_wt_{acc_id}")
+                        if st.form_submit_button("Update Mailbox", type="primary", use_container_width=True):
+                            update_smtp_account(
+                                acc_id,
+                                sender_name=e_name.strip(),
+                                daily_limit=int(e_daily_limit),
+                                warmup_enabled=e_warmup_on,
+                                warmup_starting_limit=int(e_w_start),
+                                warmup_daily_increment=int(e_w_inc),
+                                warmup_target_limit=int(e_w_target)
+                            )
+                            st.success("Updated!")
+                            st.rerun()
+
+    # SECTION 3: SYSTEM DIAGNOSTICS & TELEMETRY
+    with st.expander("📡 Live System Diagnostics", expanded=False):
+        trk_online = is_port_in_use(8502)
+        if trk_online:
+            st.markdown("<span style='color:#059669; font-weight:700;'>🟢 Tracking Micro-Server Active (:8502)</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("<span style='color:#DC2626; font-weight:700;'>🔴 Tracking Server Offline</span>", unsafe_allow_html=True)
+            if st.button("Start Tracking Server", key="sb_start_trk", use_container_width=True):
+                start_tracking_server(port=8502)
+                st.rerun()
+
+        sb_curr_base = get_tracking_base_url()
+        sb_new_base = st.text_input("Tracking Public Base URL", value=sb_curr_base, key="sb_trk_url")
+        if sb_new_base.strip() and sb_new_base.strip() != sb_curr_base:
+            if st.button("Update Base URL", key="sb_btn_trk_url", use_container_width=True):
+                set_config("tracking_base_url", sb_new_base.strip())
+                st.success("Base URL updated!")
+                st.rerun()
+
+        if st.button("🧹 Clear In-Memory MX Cache", key="sb_clr_mx", use_container_width=True):
+            clear_mx_cache()
+            st.success("MX Cache cleared!")
+
+    # SECTION 4: AI PROVIDERS & MODELS
+    with st.expander("🤖 AI Providers & Models", expanded=False):
+        secrets_dict = {}
+        try:
+            if hasattr(st, "secrets"):
+                for k in ["gemini_api_key", "gcp_project_id", "openai_api_key", "anthropic_api_key"]:
+                    val = st.secrets.get(k)
+                    if val:
+                        secrets_dict[k] = val
+        except Exception:
+            pass
+
+        sb_gemini_key = st.text_input(
+            "Gemini API Key",
+            value=current_configs.get("gemini_api_key") or secrets_dict.get("gemini_api_key", "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"),
+            type="password",
+            key="sb_gemini_k"
+        )
+        sb_gcp_project = st.text_input(
+            "GCP Project ID",
+            value=current_configs.get("gcp_project_id") or secrets_dict.get("gcp_project_id", "606768026327"),
+            key="sb_gcp_p"
+        )
+        sb_openai_key = st.text_input(
+            "OpenAI API Key",
+            value=current_configs.get("openai_api_key") or secrets_dict.get("openai_api_key", ""),
+            type="password",
+            key="sb_openai_k"
+        )
+        sb_anthropic_key = st.text_input(
+            "Anthropic API Key",
+            value=current_configs.get("anthropic_api_key") or secrets_dict.get("anthropic_api_key", ""),
+            type="password",
+            key="sb_anthropic_k"
+        )
+        sb_primary_model = st.text_input(
+            "Primary Model",
+            value=current_configs.get("primary_model", "gemini/gemini-1.5-flash"),
+            key="sb_prim_mod"
+        )
+        sb_fallback_model = st.text_input(
+            "Fallback Model",
+            value=current_configs.get("fallback_model", "gpt-4o-mini"),
+            key="sb_fall_mod"
+        )
+        if st.button("💾 Save AI Credentials", type="primary", use_container_width=True, key="sb_save_ai_btn"):
+            set_config("gemini_api_key", sb_gemini_key.strip())
+            set_config("gcp_project_id", sb_gcp_project.strip())
+            set_config("openai_api_key", sb_openai_key.strip())
+            set_config("anthropic_api_key", sb_anthropic_key.strip())
+            set_config("primary_model", sb_primary_model.strip())
+            set_config("fallback_model", sb_fallback_model.strip())
+            st.success("✅ AI settings saved!")
+            st.rerun()
+
+    # SECTION 5: CORPORATE HTML SIGNATURE STUDIO
+    with st.expander("✒️ Corporate HTML Signature", expanded=False):
+        sb_sig_key = "sig_shared_content"
+        if sb_sig_key not in st.session_state:
+            st.session_state[sb_sig_key] = current_configs.get("signature_html", "")
+
+        if st.button("📋 Load Sellomize Template", key="sb_load_sig_btn", use_container_width=True):
+            sample_sig = """<div>
+<table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif; max-width:650px; color:#083731;">
+  <tbody>
+    <tr>
+      <td style="padding-right:20px; vertical-align:top;">
+        <img src="https://sellomize.com/wp-content/uploads/2026/05/cropped-amazon-aligators.png" width="110" style="display:block;" alt="Sellomize Logo">
+        <br>
+      </td>
+      <td style="padding:0 20px; border-left:2px solid #FD4D1B; vertical-align:top;">
+        <div style="font-size:20px; font-weight:bold; color:#083731;">Jack Connor</div>
+        <div style="font-size:14px; color:#FD4D1B; margin:4px 0 8px;">Business Development Officer</div>
+        <div style="font-size:14px; line-height:1.7;">
+          <div><b>Sellomize</b></div>
+          <div>Amazon Brand Management</div>
+        </div>
+        <div style="margin-top:10px; font-size:14px; line-height:1.7;">
+          <div>✉️ <a href="mailto:info@sellomize.com" style="color:#083731; text-decoration:none;">info@sellomize.com</a></div>
+          <div>📞 +1 646-351-0812</div>
+          <div>🌐 <a href="https://sellomize.com" target="_blank" style="color:#083731; text-decoration:none;">sellomize.com</a></div>
+        </div>
+      </td>
+    </tr>
+  </tbody>
+</table>
+</div>"""
+            st.session_state[sb_sig_key] = sample_sig
+            set_config("signature_html", sample_sig)
+            st.success("Loaded!")
+            st.rerun()
+
+        sb_sig_txt = st.text_area("HTML Signature Code", value=st.session_state[sb_sig_key], height=180, key="sb_sig_textarea")
+        st.session_state[sb_sig_key] = sb_sig_txt
+        if st.button("💾 Save Signature", type="primary", use_container_width=True, key="sb_save_sig_btn"):
+            set_config("signature_html", sb_sig_txt)
+            st.success("Signature saved!")
+            st.rerun()
+
+    # SECTION 6: GLOBAL NEGATIVE KEYWORDS
+    with st.expander("🛡️ Negative Keyword Shield", expanded=False):
+        sb_neg_words = st.text_area(
+            "Negative Keywords (comma separated)",
+            value=current_configs.get("negative_keywords", "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash"),
+            height=80,
+            key="sb_neg_words_txt"
+        )
+        sb_spam_words = st.text_area(
+            "Spam Words Blocklist",
+            value=current_configs.get("spam_blocklist", "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast"),
+            height=80,
+            key="sb_spam_words_txt"
+        )
+        if st.button("💾 Save Keywords", type="primary", use_container_width=True, key="sb_save_kw_btn"):
+            set_config("negative_keywords", sb_neg_words.strip())
+            set_config("spam_blocklist", sb_spam_words.strip())
+            st.success("Keywords updated!")
+            st.rerun()
+
+
+# ==============================================================================
+# 5-SECTION PRIMARY APP NAVIGATION
+# ==============================================================================
+tab_leads, tab_studio, tab_campaigns, tab_review, tab_analytics = st.tabs([
+    "👥 Leads & Contacts",
+    "✍️ Studio & Templates",
+    "⚡ Sequences & Campaigns",
+    "🛡️ Review Queue & Triage",
+    "📊 Analytics & Intelligence"
 ])
 
-# ==============================================================================
-# TAB 1: CONTACT MANAGER (INTERNAL CRM)
-# ==============================================================================
-with tab_crm:
-    st.subheader("👥 Contact Manager (Internal CRM)")
-    st.caption("Manage your outreach leads directly in SQLite without relying on external CSV or Excel files.")
+with tab_leads:
+    st.subheader("👥 Leads & Contacts")
+    st.caption("High-density contact command center: 14-column spreadsheet grid, custom variables dossier, and pre-flight domain validation.")
 
     with st.expander("➕ Add New Contact", expanded=len(all_contacts) == 0):
         with st.form("add_contact_form", clear_on_submit=True):
@@ -1517,7 +1901,8 @@ with tab_crm:
 # ==============================================================================
 # TAB 2: TEMPLATE BUILDER (SPINTAX & VARIABLES)
 # ==============================================================================
-with tab_templates:
+
+with tab_studio:
     st.subheader("📝 Template Builder")
     st.caption("Create reusable cold outreach templates with dynamic variable insertion and Spintax variation.")
 
@@ -1752,7 +2137,8 @@ with tab_templates:
 # ==============================================================================
 # TAB 3: CAMPAIGN GENERATOR (REPLACES OLD GENERATOR)
 # ==============================================================================
-with tab_campaign:
+
+with tab_campaigns:
     st.subheader("🚀 Campaign Generator")
     st.caption("Select leads from your CRM, choose a template, and generate contextual personalized emails with automated negative keyword scanning.")
 
@@ -2017,28 +2403,49 @@ with tab_campaign:
 # ==============================================================================
 # TAB 4: REVIEW QUEUE & FLAG HANDLING
 # ==============================================================================
-with tab_review:
-    st.subheader("📥 Review Queue & Flag Handling")
-    st.caption("Review drafts, resolve flagged negative keywords via Auto-Rewrite, edit copy in Visual/HTML modes, and schedule for automated dispatch.")
 
-    review_filter = st.radio(
-        "Queue Filter",
-        ["All Actionable", "Flagged Only (Action Required)", "Pending Only"],
-        horizontal=True
-    )
+
+# ==============================================================================
+# TAB 4: REVIEW QUEUE & TRIAGE (DUAL-PANE SPLIT PREVIEW)
+# ==============================================================================
+with tab_review:
+    st.subheader("🛡️ Review Queue & Triage Desk")
+    st.caption("Compliance gate: inspect rendered HTML previews, audit domain MX health, and 1-click auto-rewrite flagged drafts.")
+
+    col_q_filt, col_q_batch = st.columns([2.5, 1.5])
+    with col_q_filt:
+        review_filter = st.radio(
+            "Queue Triage Rail",
+            ["All Actionable", "Flagged Only (Action Required)", "Pending Only"],
+            horizontal=True,
+            key="review_queue_triage_rail"
+        )
+    with col_q_batch:
+        st.write("")
+        all_actionable_list = [e for e in get_emails() if e["status"] in ["Pending", "Flagged"]]
+        clean_pending_list = [e for e in all_actionable_list if e["status"] == "Pending"]
+        if clean_pending_list:
+            if st.button(f"⚡ Approve All ({len(clean_pending_list)}) Clean Drafts", type="primary", use_container_width=True, key="btn_app_all_clean"):
+                for cp in clean_pending_list:
+                    rec = (cp.get("recipient") or "").strip()
+                    if rec:
+                        is_val, _, _ = verify_email_domain_mx(rec)
+                        if is_val:
+                            approve_email(cp["id"], recipient=rec, email_html=cp["email_html"], subject=cp["subject"])
+                st.success(f"Approved {len(clean_pending_list)} drafts!")
+                st.rerun()
 
     if review_filter == "Flagged Only (Action Required)":
         drafts_to_show = get_emails(status="Flagged")
     elif review_filter == "Pending Only":
         drafts_to_show = get_emails(status="Pending")
     else:
-        # All Actionable = Pending + Flagged
         drafts_to_show = [e for e in get_emails() if e["status"] in ["Pending", "Flagged"]]
 
     if not drafts_to_show:
-        st.info("No actionable emails in the review queue. Generate a campaign in the 'Campaign Generator' tab.")
+        st.info("No actionable emails in the review queue. Generate a campaign in the '⚡ Sequences & Campaigns' tab.")
     else:
-        st.write(f"Displaying **{len(drafts_to_show)}** email(s):")
+        st.write(f"Displaying **{len(drafts_to_show)}** email(s) requiring human triage:")
 
         for draft in drafts_to_show:
             draft_id = draft["id"]
@@ -2055,83 +2462,29 @@ with tab_review:
             if shared_body_key not in st.session_state:
                 st.session_state[shared_body_key] = draft["email_html"]
 
-            # Visual styling wrapper for Flagged vs Pending with Deliverability Score
             draft_audit = audit_email_deliverability(draft["email_html"], subject=draft.get("subject", ""))
             container_title = f"{'🚨 FLAGGED' if is_flagged else '📄 Draft'} #{draft_id} (🛡️ {draft_audit['score']}/100) - {draft['subject']} -> {draft.get('recipient')}"
 
             with st.expander(container_title, expanded=is_flagged):
-                # PROMINENT RED WARNING BOX FOR FLAGGED EMAILS
-                if is_flagged:
-                    st.markdown(f"""
-                    <div class="flagged-card">
-                        <div class="flagged-banner">⚠️ FLAGGED NEGATIVE KEYWORD DETECTED</div><br>
-                        <strong>Reason:</strong> {draft.get('revision_notes') or 'Trigger word found'}.<br>
-                        This email cannot be approved until the restricted word is removed. Use <strong>Auto-Rewrite</strong> below to automatically remove it with AI.
-                    </div>
-                    """, unsafe_allow_html=True)
+                # DUAL-PANE SPLIT PREVIEW WORKSPACE
+                col_editor, col_preview = st.columns([1, 1], gap="medium")
 
-                    # Dedicated Auto-Rewrite Button
-                    ar_col1, ar_col2 = st.columns([1.5, 3])
-                    with ar_col1:
-                        auto_rw_btn = st.button("⚡ Auto-Rewrite with AI", key=f"autorw_{draft_id}", type="primary")
-
-                    if auto_rw_btn:
-                        # Extract trigger word from revision notes
-                        rev_notes = draft.get("revision_notes") or ""
-                        match = re.search(r"'(.*?)'", rev_notes)
-                        trigger_word = match.group(1) if match else "banned term"
-
-                        with st.spinner(f"Calling LiteLLM to rewrite and remove '{trigger_word}'..."):
-                            try:
-                                rw_result = auto_rewrite_negative_keyword(
-                                    email_html=st.session_state[shared_body_key],
-                                    trigger_word=trigger_word
-                                )
-
-                                # Re-scan rewritten content
-                                neg_list = get_config("negative_keywords", "")
-                                test_text = f"{rw_result['subject']} {rw_result['body_html']}"
-                                still_flagged = scan_negative_keywords(test_text, neg_list)
-
-                                if still_flagged:
-                                    update_email(
-                                        email_id=draft_id,
-                                        email_html=rw_result["body_html"],
-                                        subject=rw_result["subject"],
-                                        status="Flagged",
-                                        revision_notes=f"Flagged for negative keyword: '{still_flagged}'"
-                                    )
-                                    st.session_state[shared_body_key] = rw_result["body_html"]
-                                    st.warning(f"Rewritten, but detected another negative word: '{still_flagged}'.")
-                                else:
-                                    update_email(
-                                        email_id=draft_id,
-                                        email_html=rw_result["body_html"],
-                                        subject=rw_result["subject"],
-                                        status="Pending",
-                                        revision_notes="Cleaned via Auto-Rewrite"
-                                    )
-                                    st.session_state[shared_body_key] = rw_result["body_html"]
-                                    st.success(f"🎉 Successfully cleaned! Draft #{draft_id} updated to 'Pending'.")
-
-                                st.rerun()
-                            except Exception as ar_err:
-                                st.error(f"Auto-rewrite failed: {ar_err}")
-
-                # Metadata row: Subject, Recipient, Local Schedule Time
-                col_meta1, col_meta2, col_meta3 = st.columns([2, 1, 1])
-                with col_meta1:
+                with col_editor:
+                    st.markdown("##### ✏️ Draft Copy & Recipient")
                     updated_subject = st.text_input("Subject Line", value=draft["subject"], key=subject_key)
-                with col_meta2:
-                    updated_recipient = st.text_input("Target Recipient Email", value=draft.get("recipient") or "", placeholder="client@target.com", key=recipient_key)
-                    if updated_recipient.strip():
-                        is_rec_valid, rec_reason, _ = verify_email_domain_mx(updated_recipient.strip())
-                        if is_rec_valid:
-                            st.markdown("<span style='color:#10B981; font-size:0.8rem; font-weight:600;'>🟢 Domain MX Active</span>", unsafe_allow_html=True)
-                        else:
-                            st.markdown(f"<span style='color:#EF4444; font-size:0.8rem; font-weight:700;'>🔴 Dead Domain: {rec_reason}</span>", unsafe_allow_html=True)
-                with col_meta3:
-                    # Scheduled Time strictly in Local System Time
+
+                    col_r1, col_r2 = st.columns([1.8, 1.2])
+                    with col_r1:
+                        updated_recipient = st.text_input("Target Recipient Email", value=draft.get("recipient") or "", placeholder="client@target.com", key=recipient_key)
+                    with col_r2:
+                        st.write("")
+                        if updated_recipient.strip():
+                            is_rec_valid, rec_reason, _ = verify_email_domain_mx(updated_recipient.strip())
+                            if is_rec_valid:
+                                st.markdown("<div style='margin-top:10px;'><span style='color:#059669; font-size:0.8rem; font-weight:700;'>🟢 Domain MX Active</span></div>", unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"<div style='margin-top:10px;'><span style='color:#DC2626; font-size:0.8rem; font-weight:700;'>🔴 Dead Domain: {rec_reason}</span></div>", unsafe_allow_html=True)
+
                     local_now = datetime.now().astimezone()
                     default_date = local_now.date()
                     default_time = (local_now + timedelta(minutes=5)).time()
@@ -2152,137 +2505,245 @@ with tab_review:
 
                     scheduled_datetime_str = f"{sched_date.strftime('%Y-%m-%d')} {sched_time.strftime('%H:%M:%S')}"
 
-                st.markdown("---")
-
-                # Dual-Mode Editor tied to single shared state key
-                st.markdown("##### 📝 Email Body (Dual-Mode Editor)")
-                editor_mode = st.radio(
-                    "View Mode",
-                    ["Visual", "HTML Source"],
-                    horizontal=True,
-                    key=editor_mode_key
-                )
-
-                if editor_mode == "Visual":
-                    if QUILL_AVAILABLE:
-                        st.caption("Visual WYSIWYG Editor: Format text directly. Tied to single shared state.")
-                        quill_content = st_quill(
-                            value=st.session_state[shared_body_key],
-                            html=True,
-                            key=f"quill_email_{draft_id}"
-                        )
-                        if quill_content is not None:
-                            st.session_state[shared_body_key] = quill_content
-                    else:
-                        st.caption("Visual Preview & Editor")
-                        edited_txt = st.text_area(
-                            "Visual / Plain Text Content",
-                            value=st.session_state[shared_body_key],
-                            height=200,
-                            key=f"text_email_{draft_id}"
-                        )
-                        st.session_state[shared_body_key] = edited_txt
-                else:
-                    st.caption("HTML Source Mode: Directly edit HTML tags, attributes, and inline styling.")
-                    source_content = st.text_area(
-                        "Raw HTML Code",
-                        value=st.session_state[shared_body_key],
-                        height=200,
-                        key=f"source_email_{draft_id}"
+                    editor_mode = st.radio(
+                        "View Mode",
+                        ["Visual", "HTML Source"],
+                        horizontal=True,
+                        key=editor_mode_key
                     )
-                    st.session_state[shared_body_key] = source_content
 
-                # Live Email Preview Box with Signature
-                saved_sig = get_config("signature_html", "")
-                st.markdown("**Combined Email Preview (with Signature):**")
-                preview_html = f"{st.session_state[shared_body_key]}<br><br>{saved_sig}"
-                st.markdown(f'<div class="email-preview-box">{preview_html}</div>', unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                # Action Controls
-                act_col1, act_col2, act_col3 = st.columns([1.5, 2, 1])
-
-                with act_col1:
-                    # Disable Approve if flagged
-                    approve_btn = st.button(
-                        "✅ Approve & Schedule",
-                        key=f"approve_{draft_id}",
-                        type="primary",
-                        disabled=is_flagged,
-                        help="Flagged emails must have negative keywords removed before approval." if is_flagged else "Approve and schedule for automated dispatch."
-                    )
-                    if approve_btn:
-                        if not updated_recipient.strip():
-                            st.error("Please enter a Target Recipient Email before approving.")
+                    if editor_mode == "Visual":
+                        if QUILL_AVAILABLE:
+                            st.caption("Visual WYSIWYG Editor")
+                            quill_content = st_quill(
+                                value=st.session_state[shared_body_key],
+                                html=True,
+                                key=f"quill_email_{draft_id}"
+                            )
+                            if quill_content is not None:
+                                st.session_state[shared_body_key] = quill_content
                         else:
-                            is_valid_app, app_reason, _ = verify_email_domain_mx(updated_recipient.strip())
-                            if not is_valid_app:
-                                st.error(f"🚫 Cannot approve: Recipient domain failed pre-flight MX check: {app_reason}. Please verify or fix the recipient email address.")
+                            st.caption("Visual Preview & Editor")
+                            edited_txt = st.text_area(
+                                "Visual / Plain Text Content",
+                                value=st.session_state[shared_body_key],
+                                height=220,
+                                key=f"text_email_{draft_id}"
+                            )
+                            st.session_state[shared_body_key] = edited_txt
+                    else:
+                        st.caption("HTML Source Mode")
+                        source_content = st.text_area(
+                            "Raw HTML Code",
+                            value=st.session_state[shared_body_key],
+                            height=220,
+                            key=f"source_email_{draft_id}"
+                        )
+                        st.session_state[shared_body_key] = source_content
+
+                with col_preview:
+                    st.markdown("##### 👁️ Live Render & Compliance Gate")
+                    if is_flagged:
+                        st.markdown(f"""
+                        <div class="flagged-card">
+                            <div class="flagged-banner">⚠️ FLAGGED KEYWORD DETECTED</div><br>
+                            <strong>Reason:</strong> {draft.get('revision_notes') or 'Trigger word found'}.<br>
+                            Cannot dispatch until resolved. Click below to clean with AI:
+                        </div>
+                        """, unsafe_allow_html=True)
+                        auto_rw_btn = st.button("⚡ 1-Click Auto-Rewrite with AI", key=f"autorw_{draft_id}", type="primary", use_container_width=True)
+                        if auto_rw_btn:
+                            rev_notes = draft.get("revision_notes") or ""
+                            match = re.search(r"'(.*?)'", rev_notes)
+                            trigger_word = match.group(1) if match else "banned term"
+
+                            with st.spinner(f"Calling LiteLLM to rewrite and remove '{trigger_word}'..."):
+                                try:
+                                    rw_result = auto_rewrite_negative_keyword(
+                                        email_html=st.session_state[shared_body_key],
+                                        trigger_word=trigger_word
+                                    )
+                                    neg_list = get_config("negative_keywords", "")
+                                    test_text = f"{rw_result['subject']} {rw_result['body_html']}"
+                                    still_flagged = scan_negative_keywords(test_text, neg_list)
+
+                                    if still_flagged:
+                                        update_email(
+                                            email_id=draft_id,
+                                            email_html=rw_result["body_html"],
+                                            subject=rw_result["subject"],
+                                            status="Flagged",
+                                            revision_notes=f"Flagged for negative keyword: '{still_flagged}'"
+                                        )
+                                        st.session_state[shared_body_key] = rw_result["body_html"]
+                                        st.warning(f"Rewritten, but detected another negative word: '{still_flagged}'.")
+                                    else:
+                                        update_email(
+                                            email_id=draft_id,
+                                            email_html=rw_result["body_html"],
+                                            subject=rw_result["subject"],
+                                            status="Pending",
+                                            revision_notes="Cleaned via Auto-Rewrite"
+                                        )
+                                        st.session_state[shared_body_key] = rw_result["body_html"]
+                                        st.success(f"🎉 Successfully cleaned! Draft #{draft_id} updated to 'Pending'.")
+                                    st.rerun()
+                                except Exception as ar_err:
+                                    st.error(f"Auto-rewrite failed: {ar_err}")
+
+                    saved_sig = get_config("signature_html", "")
+                    preview_html = f"{st.session_state[shared_body_key]}<br><br>{saved_sig}"
+                    st.markdown(f'<div class="email-preview-box" style="min-height: 230px; max-height: 360px; overflow-y: auto;">{preview_html}</div>', unsafe_allow_html=True)
+                    word_cnt = len(re.findall(r"\w+", st.session_state[shared_body_key]))
+                    st.caption(f"🛡️ Deliverability Score: **{draft_audit['score']}/100** ({draft_audit['grade']}) • Word Count: ~{word_cnt} words")
+
+                    st.markdown("---")
+                    act_col1, act_col2, act_col3 = st.columns([1.4, 1.8, 1])
+
+                    with act_col1:
+                        approve_btn = st.button(
+                            "✅ Approve",
+                            key=f"approve_{draft_id}",
+                            type="primary",
+                            disabled=is_flagged,
+                            use_container_width=True,
+                            help="Flagged emails must have negative keywords removed before approval." if is_flagged else "Approve and schedule for automated dispatch."
+                        )
+                        if approve_btn:
+                            if not updated_recipient.strip():
+                                st.error("Please enter a Target Recipient Email before approving.")
                             else:
-                                approve_email(
-                                    email_id=draft_id,
-                                    recipient=updated_recipient.strip(),
-                                    scheduled_time=scheduled_datetime_str,
-                                    email_html=st.session_state[shared_body_key],
-                                    subject=updated_subject.strip()
-                                )
-                                st.success(f"Draft #{draft_id} marked as 'Approved' for dispatch at {scheduled_datetime_str} (Local Time)!")
-                                st.rerun()
+                                is_valid_app, app_reason, _ = verify_email_domain_mx(updated_recipient.strip())
+                                if not is_valid_app:
+                                    st.error(f"🚫 Cannot approve: Recipient domain failed pre-flight MX check: {app_reason}. Please verify or fix the recipient email address.")
+                                else:
+                                    approve_email(
+                                        email_id=draft_id,
+                                        recipient=updated_recipient.strip(),
+                                        scheduled_time=scheduled_datetime_str,
+                                        email_html=st.session_state[shared_body_key],
+                                        subject=updated_subject.strip()
+                                    )
+                                    st.success(f"Draft #{draft_id} marked as 'Approved' for dispatch at {scheduled_datetime_str} (Local Time)!")
+                                    st.rerun()
 
-                with act_col2:
-                    reject_toggle = st.checkbox("🔄 Custom Reject & Rewrite", key=reject_toggle_key)
+                    with act_col2:
+                        reject_toggle = st.checkbox("🔄 AI Rewrite Instructions", key=reject_toggle_key)
 
-                with act_col3:
-                    del_btn = st.button("🗑️ Delete Draft", key=f"del_{draft_id}", use_container_width=True)
-                    if del_btn:
-                        delete_email(draft_id)
-                        st.warning(f"Draft #{draft_id} deleted.")
+                    with act_col3:
+                        del_btn = st.button("🗑️ Delete", key=f"del_{draft_id}", use_container_width=True)
+                        if del_btn:
+                            delete_email(draft_id)
+                            st.warning(f"Draft #{draft_id} deleted.")
+                            st.rerun()
+
+                    if reject_toggle:
+                        st.markdown("##### 🤖 Custom AI Revision")
+                        rev_instructions = st.text_input(
+                            "Revision Instructions",
+                            placeholder="e.g. Make the opening hook punchier...",
+                            key=revision_inst_key
+                        )
+                        submit_rev_btn = st.button("🚀 Submit Revision", key=f"submit_rev_{draft_id}", type="primary")
+
+                        if submit_rev_btn:
+                            if not rev_instructions.strip():
+                                st.error("Please provide revision instructions for the AI.")
+                            else:
+                                with st.spinner("Calling LiteLLM to revise email..."):
+                                    try:
+                                        revised = rewrite_email(
+                                            rejected_draft_html=st.session_state[shared_body_key],
+                                            revision_instructions=rev_instructions.strip()
+                                        )
+                                        neg_list = get_config("negative_keywords", "")
+                                        detected = scan_negative_keywords(f"{revised['subject']} {revised['body_html']}", neg_list)
+
+                                        new_status = "Flagged" if detected else "Pending"
+                                        new_notes = f"Flagged for negative keyword: '{detected}'" if detected else rev_instructions.strip()
+
+                                        update_email(
+                                            email_id=draft_id,
+                                            email_html=revised["body_html"],
+                                            subject=revised["subject"],
+                                            status=new_status,
+                                            revision_notes=new_notes
+                                        )
+                                        st.session_state[shared_body_key] = revised["body_html"]
+                                        st.success(f"Draft #{draft_id} has been revised and refreshed as {new_status}!")
+                                        st.rerun()
+                                    except Exception as rev_err:
+                                        st.error(f"Revision failed: {rev_err}")
+
+
+    # ==============================================================================
+    # HISTORICAL OUTBOX & DISPATCH AUDIT LOG
+    # ==============================================================================
+    st.markdown("---")
+    col_outbox_hdr, col_dry_run = st.columns([3, 1])
+    with col_outbox_hdr:
+        st.markdown("### 📬 Dispatched & Scheduled Outbox History")
+        st.caption("Inspect outgoing queue, review historical dispatches, and manually reset failed drafts.")
+    with col_dry_run:
+        dry_run_btn = st.button("🧪 Dry Run (Check Due)", key="dry_run_outbox", help="Check approved emails due for dispatch without sending.")
+        if dry_run_btn:
+            curr_local_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            due = get_approved_due_emails(curr_local_time)
+            if due:
+                st.info(f"🔎 Dry Run: Found {len(due)} approved email(s) currently due for dispatch at {curr_local_time} (Local Time).")
+            else:
+                st.info(f"🔎 Dry Run: 0 approved emails currently due for dispatch at {curr_local_time} (Local Time).")
+
+    outbox_filter = st.selectbox(
+        "Filter Outbox by Status",
+        ["All", "Approved", "Sent", "Flagged", "Account Mismatch", "Error", "Pending"],
+        index=0,
+        key="outbox_history_filter"
+    )
+
+    if outbox_filter == "All":
+        filtered_outbox = get_emails()
+    else:
+        filtered_outbox = get_emails(status=outbox_filter)
+
+    if not filtered_outbox:
+        st.info("No emails match the selected outbox filter.")
+    else:
+        for item in filtered_outbox:
+            st_class = "badge-pending"
+            if item["status"] == "Approved":
+                st_class = "badge-approved"
+            elif item["status"] == "Sent":
+                st_class = "badge-sent"
+            elif item["status"] == "Flagged":
+                st_class = "badge-flagged"
+            elif item["status"] in ["Account Mismatch", "Error"]:
+                st_class = "badge-flagged"
+
+            with st.expander(f"#{item['id']} | [{item['status'].upper()}] {item['subject']} -> {item.get('recipient') or 'No Recipient'}"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown(f"**Status:** <span class='{st_class}'>{item['status']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**Recipient:** `{item.get('recipient')}`")
+                    if item.get("sent_via"):
+                        st.markdown(f"**Dispatched Via:** `{item['sent_via']}`")
+                    st.markdown(f"**Scheduled Send Time:** `{item.get('scheduled_time')}`")
+                    st.markdown(f"**Created:** `{item.get('created_at')}`")
+                with c2:
+                    if item.get("revision_notes"):
+                        st.info(f"**Notes / Trigger:** {item['revision_notes']}")
+                    if item.get("error_message"):
+                        st.error(f"**Error Details:** {item['error_message']}")
+
+                st.markdown("**Email Content Preview:**")
+                st.markdown(f'<div class="email-preview-box">{item["email_html"]}</div>', unsafe_allow_html=True)
+
+                if item["status"] in ["Account Mismatch", "Error", "Approved", "Flagged"]:
+                    if st.button(f"↩️ Reset #{item['id']} to Pending", key=f"reset_{item['id']}"):
+                        update_email(email_id=item["id"], status="Pending", error_message=None)
+                        st.success(f"Email #{item['id']} reset to Pending.")
                         st.rerun()
 
-                # Custom Revision Instructions Panel
-                if reject_toggle:
-                    st.markdown("#### 🤖 Custom Revision Instructions")
-                    rev_instructions = st.text_input(
-                        "Revision Instructions (What should the AI fix?)",
-                        placeholder="e.g. Make the opening hook punchier, shorten the second paragraph...",
-                        key=revision_inst_key
-                    )
-                    submit_rev_btn = st.button("🚀 Submit Revision", key=f"submit_rev_{draft_id}")
-
-                    if submit_rev_btn:
-                        if not rev_instructions.strip():
-                            st.error("Please provide revision instructions for the AI.")
-                        else:
-                            with st.spinner("Calling LiteLLM to revise email..."):
-                                try:
-                                    revised = rewrite_email(
-                                        rejected_draft_html=st.session_state[shared_body_key],
-                                        revision_instructions=rev_instructions.strip()
-                                    )
-                                    # Scan again for negative keywords
-                                    neg_list = get_config("negative_keywords", "")
-                                    detected = scan_negative_keywords(f"{revised['subject']} {revised['body_html']}", neg_list)
-
-                                    new_status = "Flagged" if detected else "Pending"
-                                    new_notes = f"Flagged for negative keyword: '{detected}'" if detected else rev_instructions.strip()
-
-                                    update_email(
-                                        email_id=draft_id,
-                                        email_html=revised["body_html"],
-                                        subject=revised["subject"],
-                                        status=new_status,
-                                        revision_notes=new_notes
-                                    )
-                                    st.session_state[shared_body_key] = revised["body_html"]
-                                    st.success(f"Draft #{draft_id} has been revised and refreshed as {new_status}!")
-                                    st.rerun()
-                                except Exception as rev_err:
-                                    st.error(f"Revision failed: {rev_err}")
-
-# ==============================================================================
-# TAB 5: OUTREACH ANALYTICS, OPEN TRACKING & BOUNCES
-# ==============================================================================
 with tab_analytics:
     st.subheader("📈 Outreach Analytics, Open Tracking & Bounce Report")
     st.caption("Real-time email performance telemetry, 1x1 transparent pixel open tracking, and Hostinger IMAP bounce detection.")
@@ -2444,527 +2905,3 @@ with tab_analytics:
 # ==============================================================================
 # TAB 6: CONFIGURATION & OUTBOX
 # ==============================================================================
-with tab_settings:
-    st.subheader("⚙️ System Configuration & Outbox")
-    st.caption("Manage Hostinger SMTP mailboxes, AI provider credentials, negative keywords, Outlook sender bindings, and monitor dispatch history.")
-
-    current_configs = get_all_configs()
-
-    # ==============================================================================
-    # HOSTINGER DIRECT SMTP MAILBOXES (MULTI-ACCOUNT ROTATION)
-    # ==============================================================================
-    st.markdown("### ⚡ Hostinger Mailbox Accounts (Multi-Account Rotation)")
-    st.caption("Connect and scale multiple Hostinger agency email accounts. The outbound engine automatically load-balances and rotates mailboxes to prevent daily quota exhaustion and bypass spam filters.")
-
-    smtp_accounts = get_smtp_accounts(active_only=False)
-    active_accounts = [acc for acc in smtp_accounts if acc.get("is_active")]
-    total_capacity = sum(get_effective_daily_limit(acc) for acc in active_accounts)
-    total_sent_today = sum(acc.get("sent_today", 0) for acc in active_accounts)
-
-    col_h1, col_h2, col_h3, col_h4 = st.columns(4)
-    col_h1.metric("Connected Mailboxes", len(smtp_accounts))
-    col_h2.metric("Active in Rotation", len(active_accounts))
-    col_h3.metric("Daily Sending Quota", f"{total_capacity} emails/day")
-    col_h4.metric("Sent Today", f"{total_sent_today} / {total_capacity}")
-
-    with st.expander("➕ Connect New Hostinger Mailbox", expanded=len(smtp_accounts) == 0):
-        with st.form("add_smtp_account_form", clear_on_submit=True):
-            st.markdown("##### Mailbox Credentials & Limits")
-            hc1, hc2 = st.columns(2)
-            with hc1:
-                new_acc_name = st.text_input("Sender Display Name *", placeholder="e.g. Alex Morgan | Sellomize")
-                new_acc_email = st.text_input("Hostinger Email Address *", placeholder="alex@sellomize.com")
-                new_acc_pass = st.text_input("Hostinger Webmail / App Password *", type="password", help="The email password configured in Hostinger hPanel.")
-            with hc2:
-                new_acc_host = st.text_input("SMTP Host", value="smtp.hostinger.com", help="Default: smtp.hostinger.com")
-                new_acc_port = st.number_input("SMTP Port (SSL: 465 / STARTTLS: 587)", min_value=1, max_value=65535, value=465, step=1)
-                new_acc_limit = st.number_input("Daily Send Limit (per mailbox)", min_value=1, max_value=500, value=80, help="Hostinger allows ~100/hr or up to 500/day. Recommended cold outreach limit: 50-80 per mailbox/day.")
-
-            st.markdown("##### 🔥 Automated Mailbox Warmup & Daily Ramp-Up")
-            st.caption("Gradually ramp up send volume for new mailboxes to establish domain trust with Google & Outlook.")
-            col_wm1, col_wm2, col_wm3, col_wm4 = st.columns(4)
-            with col_wm1:
-                new_warmup_enabled = st.checkbox("Enable Automated Warmup", value=False, help="Gradually increases daily sending limit each day.")
-            with col_wm2:
-                new_warmup_start = st.number_input("Starting Cap (Day 1)", min_value=1, max_value=100, value=10, help="Initial volume on Day 1.")
-            with col_wm3:
-                new_warmup_inc = st.number_input("Daily Increment (+/day)", min_value=1, max_value=50, value=5, help="Extra emails permitted each day.")
-            with col_wm4:
-                new_warmup_target = st.number_input("Target Cap (Max/day)", min_value=5, max_value=300, value=int(new_acc_limit), help="Cap where warmup stops ramping.")
-
-            st.caption("🔒 Credentials are stored locally in your SQLite database.")
-            add_acc_submit = st.form_submit_button("Verify & Connect Hostinger Mailbox", type="primary")
-
-            if add_acc_submit:
-                if not new_acc_name.strip() or not new_acc_email.strip() or not new_acc_pass.strip():
-                    st.error("Display Name, Email Address, and Password are all required.")
-                else:
-                    with st.spinner(f"Verifying SMTP connection to {new_acc_host}:{new_acc_port}..."):
-                        success, test_msg = test_smtp_connection(
-                            smtp_host=new_acc_host.strip(),
-                            smtp_port=int(new_acc_port),
-                            email=new_acc_email.strip(),
-                            password=new_acc_pass.strip()
-                        )
-                    if success:
-                        try:
-                            acc_id = add_smtp_account(
-                                sender_name=new_acc_name.strip(),
-                                email=new_acc_email.strip(),
-                                password=new_acc_pass.strip(),
-                                smtp_host=new_acc_host.strip(),
-                                smtp_port=int(new_acc_port),
-                                daily_limit=int(new_acc_limit),
-                                warmup_enabled=new_warmup_enabled,
-                                warmup_starting_limit=int(new_warmup_start),
-                                warmup_daily_increment=int(new_warmup_inc),
-                                warmup_target_limit=int(new_warmup_target)
-                            )
-                            st.success(f"✅ Connection verified! Mailbox '{new_acc_email}' successfully connected (ID #{acc_id})!")
-                            st.rerun()
-                        except Exception as add_err:
-                            st.error(f"Failed to save mailbox: {add_err}")
-                    else:
-                        st.error(f"❌ SMTP Connection Failed: {test_msg}. Please check your Hostinger credentials or port settings.")
-
-    if smtp_accounts:
-        st.markdown("##### Configured Mailbox Fleet")
-        for acc in smtp_accounts:
-            acc_id = acc["id"]
-            status_color = "#10B981" if acc["is_active"] else "#6B7280"
-            status_text = "ACTIVE" if acc["is_active"] else "INACTIVE"
-            sent_today = acc.get("sent_today", 0)
-            eff_limit = get_effective_daily_limit(acc)
-            target_limit = acc.get("warmup_target_limit") or acc.get("daily_limit", 80)
-            is_warmup = bool(acc.get("warmup_enabled"))
-            pct = min(1.0, float(sent_today) / max(1.0, float(eff_limit)))
-
-            if is_warmup:
-                try:
-                    start_d = datetime.strptime((acc.get("warmup_start_date") or "").split()[0], "%Y-%m-%d").date()
-                    day_num = max(1, (datetime.now().astimezone().date() - start_d).days + 1)
-                except Exception:
-                    day_num = 1
-                warmup_badge = f'<span style="background: rgba(253,77,27,0.12); color: #FD4D1B; border: 1px solid #FD4D1B; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">🔥 WARMUP (DAY {day_num})</span>'
-                progress_text = f"Today's Warmup Cap: {sent_today} / {eff_limit} sent ({eff_limit - sent_today} remaining) | Target: {target_limit}/day (+{acc.get('warmup_daily_increment', 5)}/day)"
-            else:
-                warmup_badge = '<span style="background: rgba(8,55,49,0.1); color: #083731; border: 1px solid #083731; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">⚡ STANDARD</span>'
-                progress_text = f"Today: {sent_today} / {eff_limit} sent ({eff_limit - sent_today} remaining)"
-
-            with st.container():
-                st.markdown(f"""
-                <div style="background: #FFFFFF; border: 1px solid rgba(8, 55, 49, 0.16); border-radius: 12px; padding: 14px 20px; margin-bottom: 10px; margin-top: 6px; box-shadow: 0 4px 14px rgba(8, 55, 49, 0.05);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span style="background: {'rgba(16, 185, 129, 0.12)' if acc['is_active'] else 'rgba(107, 114, 128, 0.12)'}; color: {status_color}; border: 1px solid {status_color}; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">● {status_text}</span>
-                            {warmup_badge}
-                            <strong style="color: #083731; font-size: 1.05rem; letter-spacing: 0.3px;">{acc['email']}</strong>
-                            <span style="color: #64748B; font-size: 0.88rem;">({acc['sender_name']})</span>
-                        </div>
-                        <div style="color: #475569; font-size: 0.85rem; background: #F0F5F4; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(8,55,49,0.12);">
-                            Host: <code style="color: #FD4D1B; font-weight: 600;">{acc['smtp_host']}:{acc['smtp_port']}</code>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                col_bar, col_act1, col_act2, col_act3 = st.columns([3.5, 1.2, 1.2, 1.2])
-                with col_bar:
-                    st.progress(pct, text=progress_text)
-                with col_act1:
-                    if st.button("🧪 Test", key=f"test_acc_{acc_id}", help="Verify connection with current credentials"):
-                        with st.spinner(f"Testing {acc['email']}..."):
-                            ok, msg = test_smtp_connection(acc["smtp_host"], acc["smtp_port"], acc["email"], acc["password"])
-                        if ok:
-                            st.success(f"Verified: {msg}")
-                        else:
-                            st.error(f"Failed: {msg}")
-                with col_act2:
-                    if acc["is_active"]:
-                        if st.button("⏸️ Pause", key=f"pause_acc_{acc_id}", help="Temporarily exclude from rotation"):
-                            update_smtp_account(acc_id, is_active=False)
-                            st.rerun()
-                    else:
-                        if st.button("▶️ Activate", key=f"act_acc_{acc_id}", help="Include in rotation"):
-                            update_smtp_account(acc_id, is_active=True)
-                            st.rerun()
-                with col_act3:
-                    if st.button("🗑️ Delete", key=f"del_acc_{acc_id}", help="Remove mailbox from system"):
-                        delete_smtp_account(acc_id)
-                        st.success(f"Deleted mailbox #{acc_id}")
-                        st.rerun()
-
-                with st.expander(f"⚙️ Mailbox Settings & Warmup Ramp-Up: {acc['email']}", expanded=False):
-                    with st.form(f"edit_acc_{acc_id}_form"):
-                        e_col1, e_col2 = st.columns(2)
-                        with e_col1:
-                            e_name = st.text_input("Sender Display Name", value=acc["sender_name"])
-                            e_daily_limit = st.number_input("Standard Daily Limit", min_value=1, max_value=500, value=int(acc.get("daily_limit", 80)))
-                        with e_col2:
-                            e_warmup_on = st.checkbox("Enable Automated Warmup", value=bool(acc.get("warmup_enabled")), key=f"w_on_{acc_id}")
-                            e_w_start = st.number_input("Warmup Starting Cap", min_value=1, max_value=100, value=int(acc.get("warmup_starting_limit") or 10), key=f"w_st_{acc_id}")
-                            e_w_inc = st.number_input("Daily Increment (+/day)", min_value=1, max_value=50, value=int(acc.get("warmup_daily_increment") or 5), key=f"w_inc_{acc_id}")
-                            e_w_target = st.number_input("Target Cap", min_value=5, max_value=300, value=int(acc.get("warmup_target_limit") or 50), key=f"w_tgt_{acc_id}")
-                        if st.form_submit_button("Update Mailbox Settings", type="primary"):
-                            update_smtp_account(
-                                acc_id,
-                                sender_name=e_name.strip(),
-                                daily_limit=int(e_daily_limit),
-                                warmup_enabled=e_warmup_on,
-                                warmup_starting_limit=int(e_w_start),
-                                warmup_daily_increment=int(e_w_inc),
-                                warmup_target_limit=int(e_w_target)
-                            )
-                            st.success("Mailbox settings updated!")
-                            st.rerun()
-
-    st.markdown("---")
-
-    # ==============================================================================
-    # SYSTEM CONFIGURATION FORM (AI, DISPATCH ENGINE, DELAYS, SIGNATURE)
-    # ==============================================================================
-    st.markdown("### ⚙️ System Settings & AI Providers")
-    with st.form("config_form"):
-        col_api1, col_api2 = st.columns(2)
-
-        with col_api1:
-            st.markdown("#### 🤖 AI Engine & Provider Keys")
-            secrets_dict = {}
-            try:
-                if hasattr(st, "secrets"):
-                    for k in ["gemini_api_key", "gcp_project_id", "openai_api_key", "anthropic_api_key"]:
-                        try:
-                            val = st.secrets.get(k)
-                            if val:
-                                secrets_dict[k] = val
-                        except Exception:
-                            pass
-            except Exception:
-                secrets_dict = {}
-
-            gemini_key = st.text_input(
-                "Google Gemini API Key",
-                value=current_configs.get("gemini_api_key") or secrets_dict.get("gemini_api_key", "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"),
-                type="password",
-                help="Gemini / Vertex API key for gemini models."
-            )
-            gcp_project = st.text_input(
-                "Google Cloud / Vertex Project ID",
-                value=current_configs.get("gcp_project_id") or secrets_dict.get("gcp_project_id", "606768026327"),
-                help="GCP project ID (projects/606768026327)."
-            )
-            openai_key = st.text_input(
-                "OpenAI API Key",
-                value=current_configs.get("openai_api_key") or secrets_dict.get("openai_api_key", ""),
-                type="password",
-                help="OpenAI API key for gpt-4o, gpt-4o-mini."
-            )
-            anthropic_key = st.text_input(
-                "Anthropic API Key",
-                value=current_configs.get("anthropic_api_key") or secrets_dict.get("anthropic_api_key", ""),
-                type="password",
-                help="Anthropic API key for claude-3-haiku, claude-3-5-sonnet."
-            )
-
-            primary_model = st.text_input(
-                "Primary Model String",
-                value=current_configs.get("primary_model", "gemini/gemini-1.5-flash"),
-                help="Format: gemini/gemini-1.5-flash, gpt-4o, claude-3-haiku-20240307, etc."
-            )
-            fallback_model = st.text_input(
-                "Fallback Model String",
-                value=current_configs.get("fallback_model", "gpt-4o-mini"),
-                help="Fallback model if primary model encounters rate limits or errors."
-            )
-
-        with col_api2:
-            st.markdown("#### 🚀 Outbound Dispatch Engine")
-            current_engine = current_configs.get("dispatch_method", "hostinger_smtp")
-            dispatch_engine_choice = st.radio(
-                "Primary Outbound Dispatch Engine",
-                ["⚡ Hostinger Direct SMTP (Multi-Account Rotation)", "📧 Desktop Microsoft Outlook"],
-                index=0 if current_engine == "hostinger_smtp" else 1,
-                help="Hostinger Direct SMTP sends without needing Outlook running. Outlook uses local Windows Outlook app."
-            )
-
-            st.markdown("#### ⏱️ Anti-Spam Human Delay Throttling")
-            st.caption("Randomized delay between consecutive emails to mimic human sending and prevent domain flagging.")
-            col_del1, col_del2 = st.columns(2)
-            with col_del1:
-                min_delay_val = st.number_input(
-                    "Min Delay (Seconds)",
-                    min_value=5,
-                    max_value=300,
-                    value=int(current_configs.get("min_delay_seconds", "20")),
-                    help="Minimum seconds to wait between dispatches."
-                )
-            with col_del2:
-                max_delay_val = st.number_input(
-                    "Max Delay (Seconds)",
-                    min_value=10,
-                    max_value=600,
-                    value=int(current_configs.get("max_delay_seconds", "45")),
-                    help="Maximum seconds to wait between dispatches."
-                )
-
-            st.markdown("#### 📧 Outlook Fallback Settings")
-            sender_email = st.text_input(
-                "Designated Outlook Sender Email",
-                value=current_configs.get("sender_email", ""),
-                placeholder="sales@yourdomain.com",
-                help="Only used if dispatch engine is set to Desktop Microsoft Outlook."
-            )
-            bcc_email = st.text_input(
-                "Verification BCC Address",
-                value=current_configs.get("bcc_email", ""),
-                placeholder="archive@yourdomain.com",
-                help="Pre-configured BCC address attached to every outgoing email for verification."
-            )
-
-            st.markdown("#### 🛡️ Negative Keywords & Spam Lists")
-            negative_keywords_val = st.text_area(
-                "Restricted Negative Keywords (comma separated)",
-                value=current_configs.get("negative_keywords", "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash"),
-                height=65,
-                help="Drafts containing any of these words will be automatically tagged as 'Flagged' and require Auto-Rewrite."
-            )
-            spam_blocklist_val = st.text_area(
-                "Restricted Spam Words (comma separated)",
-                value=current_configs.get("spam_blocklist", "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast"),
-                height=65,
-                help="LiteLLM will inject a strict forbidding instruction during prompt execution."
-            )
-
-            st.markdown("#### 🕒 Business Hours & Active Sending Days")
-            st.caption("Define which days and times outbound emails are permitted to dispatch. Off-hours and weekends will be automatically held until the next business window.")
-
-            raw_saved_days = current_configs.get("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday")
-            saved_days_list = [d.strip() for d in raw_saved_days.split(",") if d.strip()]
-            cfg_sending_days = st.multiselect(
-                "Global Allowed Sending Days",
-                WEEKDAY_NAMES,
-                default=[d for d in saved_days_list if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-                help="Emails will only dispatch on these days of the week."
-            )
-
-            col_win1, col_win2 = st.columns(2)
-            with col_win1:
-                cfg_start_time = st.text_input(
-                    "Daily Sending Start Time",
-                    value=current_configs.get("sending_start_time", "09:00"),
-                    help="Format: HH:MM (24-hour clock, e.g. 09:00)"
-                )
-            with col_win2:
-                cfg_end_time = st.text_input(
-                    "Daily Sending Cutoff Time",
-                    value=current_configs.get("sending_end_time", "18:00"),
-                    help="Format: HH:MM (24-hour clock, e.g. 18:00)"
-                )
-
-            cfg_enforce = st.checkbox(
-                "Enforce Sending Window (Pause outbound sending on weekends and after-hours)",
-                value=(current_configs.get("enforce_sending_window", "true").lower() in ["true", "1", "yes"]),
-                help="When enabled, the scheduler loop sleeps during off-hours and resumes automatically when the window opens."
-            )
-            cfg_enforce_mx = st.checkbox(
-                "Enforce Pre-Flight MX & Domain Sanity Check (Shield Sender Reputation)",
-                value=(current_configs.get("enforce_mx_check", "true").lower() in ["true", "1", "yes"]),
-                help="Validates recipient domain mail exchangers (MX) prior to dispatch. Intercepts dead domains locally to preserve sender IP reputation."
-            )
-
-            is_open, window_status_msg = is_within_sending_window()
-            status_badge = '<span style="background:rgba(16,185,129,0.15); color:#34D399; border:1px solid #10B981; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.82rem;">🟢 WINDOW OPEN</span>' if is_open else '<span style="background:rgba(239,68,68,0.15); color:#F87171; border:1px solid #EF4444; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.82rem;">🔴 WINDOW PAUSED</span>'
-            st.markdown(f"<div style='margin-top:4px;'>{status_badge} <span style='color:#94A3B8; font-size:0.82rem; margin-left:6px;'>{window_status_msg}</span></div>", unsafe_allow_html=True)
-
-        submit_config = st.form_submit_button("💾 Save System & AI Settings", type="primary", use_container_width=True)
-
-        if submit_config:
-            engine_key = "hostinger_smtp" if "Hostinger" in dispatch_engine_choice else "outlook"
-            new_configs = {
-                "gemini_api_key": gemini_key,
-                "gcp_project_id": gcp_project,
-                "openai_api_key": openai_key,
-                "anthropic_api_key": anthropic_key,
-                "primary_model": primary_model,
-                "fallback_model": fallback_model,
-                "dispatch_method": engine_key,
-                "min_delay_seconds": str(min_delay_val),
-                "max_delay_seconds": str(max_delay_val),
-                "sender_email": sender_email,
-                "bcc_email": bcc_email,
-                "negative_keywords": negative_keywords_val,
-                "spam_blocklist": spam_blocklist_val,
-                "sending_days": ", ".join(cfg_sending_days),
-                "sending_start_time": cfg_start_time.strip(),
-                "sending_end_time": cfg_end_time.strip(),
-                "enforce_sending_window": "true" if cfg_enforce else "false",
-                "enforce_mx_check": "true" if cfg_enforce_mx else "false"
-            }
-            save_all_configs(new_configs)
-            st.success("✅ System settings successfully saved!")
-            st.rerun()
-
-    # DEDICATED SIGNATURE MANAGEMENT SECTION (Fully interactive outside st.form)
-    # ==============================================================================
-    st.markdown("---")
-    st.markdown("### ✍️ Professional HTML Email Signature")
-    st.caption("Paste or customize your HTML email signature. Supports table layouts, inline CSS, hosted logo images, and clickable contact links.")
-
-    shared_sig_key = "sig_shared_content"
-    if shared_sig_key not in st.session_state:
-        st.session_state[shared_sig_key] = current_configs.get("signature_html", "")
-
-    col_sig_mode, col_sig_template = st.columns([2.2, 1.2])
-    with col_sig_mode:
-        sig_mode = st.radio(
-            "Signature Editor Mode",
-            ["HTML Source Code (Recommended for Tables, Logos & Links)", "Visual WYSIWYG Editor"],
-            index=0,
-            horizontal=True,
-            key="sig_editor_mode_selector"
-        )
-    with col_sig_template:
-        st.write("") # vertical spacing
-        if st.button("📋 Load Sellomize Signature Template", help="Insert the branded Sellomize signature with logo, orange accent bar, and contact details"):
-            sample_sig = """<div>
-<table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif; max-width:650px; color:#073d35;">
-  <tbody>
-    <tr>
-      <td style="padding-right:20px; vertical-align:top;">
-        <img src="https://sellomize.com/wp-content/uploads/2026/05/cropped-amazon-aligators.png" width="110" style="display:block;" alt="Sellomize Logo">
-        <br>
-      </td>
-      <td style="padding:0 20px; border-left:2px solid #ff5a1f; vertical-align:top;">
-        <div style="font-size:20px; font-weight:bold; color:#073d35;">Jack Connor</div>
-        <div style="font-size:14px; color:#ff5a1f; margin:4px 0 8px;">Business Development Officer</div>
-        <div style="font-size:14px; line-height:1.7;">
-          <div><b>Sellomize</b></div>
-          <div>Amazon Brand Management</div>
-        </div>
-        <div style="margin-top:10px; font-size:14px; line-height:1.7;">
-          <div>✉️ <a href="mailto:info@sellomize.com" style="color:#073d35; text-decoration:none;">info@sellomize.com</a></div>
-          <div>📞 +1 646-351-0812</div>
-          <div>🌐 <a href="https://sellomize.com" target="_blank" style="color:#073d35; text-decoration:none;">sellomize.com</a></div>
-        </div>
-      </td>
-    </tr>
-  </tbody>
-</table>
-</div>"""
-            st.session_state[shared_sig_key] = sample_sig
-            set_config("signature_html", sample_sig)
-            st.success("Loaded Sellomize signature template!")
-            st.rerun()
-
-    if sig_mode.startswith("HTML Source Code"):
-        st.caption("💻 **Monospace HTML Source Mode**: Paste your raw `<table>`, `<tr>`, `<td>`, `<img src='...'>`, CSS, and links directly below.")
-        new_sig = st.text_area(
-            "HTML Signature Code",
-            value=st.session_state[shared_sig_key],
-            height=280,
-            help="Paste complete raw HTML table layout, inline styles, images, and links here.",
-            key="sig_editor_source"
-        )
-        st.session_state[shared_sig_key] = new_sig
-    else:
-        st.caption("✍️ **Visual WYSIWYG Mode**: Format standard rich text.")
-        if QUILL_AVAILABLE:
-            quill_res = st_quill(
-                value=st.session_state[shared_sig_key],
-                html=True,
-                key="sig_editor_quill"
-            )
-            if quill_res is not None:
-                st.session_state[shared_sig_key] = quill_res
-        else:
-            new_sig = st.text_area(
-                "Visual Rich Text",
-                value=st.session_state[shared_sig_key],
-                height=220,
-                key="sig_editor_fallback"
-            )
-            st.session_state[shared_sig_key] = new_sig
-
-    col_sig_save, _ = st.columns([1.5, 3.5])
-    with col_sig_save:
-        if st.button("💾 Save Signature", type="primary", use_container_width=True, key="save_signature_btn"):
-            set_config("signature_html", st.session_state[shared_sig_key])
-            st.success("✅ Signature successfully saved!")
-            st.rerun()
-
-    st.markdown("##### 👁️ Live Rendered Signature Preview")
-    st.caption("This is exactly how your signature will appear to prospective clients at the bottom of outgoing emails:")
-
-    current_sig = st.session_state.get(shared_sig_key, "").strip()
-    if current_sig:
-        st.markdown(
-            f"""<div style="background:#FFFFFF; color:#1E293B; padding:22px; border-radius:12px; border:1px solid rgba(255,255,255,0.2); box-shadow:0 6px 24px rgba(0,0,0,0.35); overflow-x:auto;">
-                {current_sig}
-            </div>""",
-            unsafe_allow_html=True
-        )
-    else:
-        st.info("No signature configured yet. Paste your HTML code above or click 'Load Sellomize Signature Template'.")
-
-    st.markdown("---")
-    col_outbox_hdr, col_dry_run = st.columns([3, 1])
-    with col_outbox_hdr:
-        st.markdown("### 📊 Outbox & Dispatch History")
-    with col_dry_run:
-        dry_run_btn = st.button("🧪 Dry Run (Check Due)", key="dry_run_outbox", help="Check approved emails due for dispatch without sending.")
-        if dry_run_btn:
-            curr_local_time = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            due = get_approved_due_emails(curr_local_time)
-            if due:
-                st.info(f"🔎 Dry Run: Found {len(due)} approved email(s) currently due for dispatch at {curr_local_time} (Local Time).")
-            else:
-                st.info(f"🔎 Dry Run: 0 approved emails currently due for dispatch at {curr_local_time} (Local Time).")
-
-    outbox_filter = st.selectbox(
-        "Filter Outbox by Status",
-        ["All", "Approved", "Sent", "Flagged", "Account Mismatch", "Error", "Pending"],
-        index=0
-    )
-
-    if outbox_filter == "All":
-        filtered_outbox = get_emails()
-    else:
-        filtered_outbox = get_emails(status=outbox_filter)
-
-    if not filtered_outbox:
-        st.info("No emails match the selected outbox filter.")
-    else:
-        for item in filtered_outbox:
-            st_class = "badge-pending"
-            if item["status"] == "Approved":
-                st_class = "badge-approved"
-            elif item["status"] == "Sent":
-                st_class = "badge-sent"
-            elif item["status"] == "Flagged":
-                st_class = "badge-flagged"
-            elif item["status"] in ["Account Mismatch", "Error"]:
-                st_class = "badge-flagged"
-
-            with st.expander(f"#{item['id']} | [{item['status'].upper()}] {item['subject']} -> {item.get('recipient') or 'No Recipient'}"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown(f"**Status:** <span class='{st_class}'>{item['status']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Recipient:** `{item.get('recipient')}`")
-                    if item.get("sent_via"):
-                        st.markdown(f"**Dispatched Via:** `{item['sent_via']}`")
-                    st.markdown(f"**Scheduled Send Time:** `{item.get('scheduled_time')}`")
-                    st.markdown(f"**Created:** `{item.get('created_at')}`")
-                with c2:
-                    if item.get("revision_notes"):
-                        st.info(f"**Notes / Trigger:** {item['revision_notes']}")
-                    if item.get("error_message"):
-                        st.error(f"**Error Details:** {item['error_message']}")
-
-                st.markdown("**Email Content Preview:**")
-                st.markdown(f'<div class="email-preview-box">{item["email_html"]}</div>', unsafe_allow_html=True)
-
-                if item["status"] in ["Account Mismatch", "Error", "Approved", "Flagged"]:
-                    if st.button(f"↩️ Reset #{item['id']} to Pending", key=f"reset_{item['id']}"):
-                        update_email(email_id=item["id"], status="Pending", error_message=None)
-                        st.success(f"Email #{item['id']} reset to Pending.")
-                        st.rerun()
