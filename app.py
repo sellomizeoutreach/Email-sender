@@ -157,6 +157,26 @@ def get_logo_base64() -> str:
             return ""
     return ""
 
+def render_html_preview(html_content: str, height: int = None):
+    """
+    Renders rich HTML email and signature previews safely without Markdown parser corruption.
+    Uses st.html with high-contrast email canvas styling.
+    """
+    if not html_content or not str(html_content).strip():
+        st.caption("No preview content available.")
+        return
+    content = str(html_content).strip()
+    has_html_tags = any(tag in content.lower() for tag in ["<p", "<div", "<table", "<br", "<h1", "<h2", "<h3", "<h4", "<ul", "<ol", "<span"])
+    if not has_html_tags:
+        content = "".join(f"<p style='margin: 0 0 1em 0;'>{p.strip()}</p>" for p in content.split("\n\n") if p.strip())
+    style = f"min-height: 120px; max-height: {height or 360}px; overflow-y: auto;" if height else "min-height: 120px;"
+    card_html = f'<div class="email-preview-box" style="{style}">{content}</div>'
+    if hasattr(st, "html"):
+        st.html(card_html)
+    else:
+        st.markdown(card_html, unsafe_allow_html=True)
+
+
 st.set_page_config(
     page_title="Sellomize Reach | Agency Email Automation",
     page_icon="🚀",
@@ -703,7 +723,7 @@ st.markdown("""
         border: 1px solid rgba(8, 55, 49, 0.1) !important;
     }
 
-    /* Email Preview Box */
+    /* Email Preview Box (Rich High-Contrast Email Canvas) */
     .email-preview-box {
         background: #FFFFFF !important;
         border: 1px solid rgba(8, 55, 49, 0.16) !important;
@@ -712,13 +732,21 @@ st.markdown("""
         padding: 1.25rem 1.5rem !important;
         margin-top: 0.6rem !important;
         margin-bottom: 0.8rem !important;
-        color: #1E293B !important;
+        color: #1E293B;
         box-shadow: 0 4px 16px rgba(8, 55, 49, 0.05) !important;
+        line-height: 1.6 !important;
     }
-    .email-preview-box p,
-    .email-preview-box div,
-    .email-preview-box span {
-        color: #1E293B !important;
+    .email-preview-box table {
+        border-collapse: collapse !important;
+        max-width: 100% !important;
+    }
+    .email-preview-box img {
+        max-width: 100% !important;
+        height: auto !important;
+    }
+    .email-preview-box a {
+        color: #083731 !important;
+        text-decoration: underline !important;
     }
 
     /* Flagged Draft Card */
@@ -1268,8 +1296,10 @@ with st.sidebar:
         if sb_sig_key not in st.session_state:
             st.session_state[sb_sig_key] = current_configs.get("signature_html", "")
 
-        if st.button("📋 Load Sellomize Template", key="sb_load_sig_btn", use_container_width=True):
-            sample_sig = """<div>
+        col_sig1, col_sig2 = st.columns([1.6, 1])
+        with col_sig1:
+            if st.button("📋 Load Sellomize Template", key="sb_load_sig_btn", use_container_width=True):
+                sample_sig = """<div>
 <table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif; max-width:650px; color:#083731;">
   <tbody>
     <tr>
@@ -1294,17 +1324,32 @@ with st.sidebar:
   </tbody>
 </table>
 </div>"""
-            st.session_state[sb_sig_key] = sample_sig
-            set_config("signature_html", sample_sig)
-            st.success("Loaded!")
-            st.rerun()
+                st.session_state[sb_sig_key] = sample_sig
+                set_config("signature_html", sample_sig)
+                st.success("Loaded & Saved!")
+                st.rerun()
+        with col_sig2:
+            if st.button("🗑️ Clear", key="sb_clear_sig_btn", use_container_width=True):
+                st.session_state[sb_sig_key] = ""
+                set_config("signature_html", "")
+                st.info("Cleared!")
+                st.rerun()
 
-        sb_sig_txt = st.text_area("HTML Signature Code", value=st.session_state[sb_sig_key], height=180, key="sb_sig_textarea")
+        sb_sig_txt = st.text_area("HTML Signature Code", value=st.session_state[sb_sig_key], height=160, key="sb_sig_textarea")
         st.session_state[sb_sig_key] = sb_sig_txt
         if st.button("💾 Save Signature", type="primary", use_container_width=True, key="sb_save_sig_btn"):
             set_config("signature_html", sb_sig_txt)
-            st.success("Signature saved!")
+            st.success("✅ Signature saved!")
             st.rerun()
+
+        # LIVE VISUAL PREVIEW OF HTML SIGNATURE
+        st.markdown("<hr style='margin: 0.8rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
+        st.markdown("##### 👁️ Live Visual Signature Preview")
+        active_sig = st.session_state[sb_sig_key].strip() or get_config("signature_html", "").strip()
+        if active_sig:
+            render_html_preview(active_sig, height=200)
+        else:
+            st.caption("No signature saved yet. Load the template above or paste custom HTML.")
 
     # SECTION 6: GLOBAL NEGATIVE KEYWORDS
     with st.expander("🛡️ Negative Keyword Shield", expanded=False):
@@ -2101,7 +2146,7 @@ with tab_studio:
         st.markdown("##### 👁️ Live Formatted Template Preview")
         preview_body = st.session_state.get(new_tpl_body_key, "").strip()
         if preview_body:
-            st.markdown(f'<div class="email-preview-box">{preview_body}</div>', unsafe_allow_html=True)
+            render_html_preview(preview_body, height=220)
         else:
             st.caption("Enter template text above to see live preview.")
 
@@ -2215,7 +2260,7 @@ with tab_studio:
                         st.session_state[edit_tpl_key] = st.text_area("HTML / Spintax Source", value=st.session_state[edit_tpl_key], height=220, key=f"src_edit_tpl_{tpl_id}")
 
                     st.markdown("##### 👁️ Live Formatted Preview")
-                    st.markdown(f'<div class="email-preview-box">{st.session_state[edit_tpl_key]}</div>', unsafe_allow_html=True)
+                    render_html_preview(st.session_state[edit_tpl_key], height=220)
 
                     col_save_e, col_canc_e = st.columns([1.5, 4])
                     with col_save_e:
@@ -2235,7 +2280,7 @@ with tab_studio:
                     st.markdown("<hr style='margin: 1rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
 
                 st.markdown("**Rendered Preview:**")
-                st.markdown(f'<div class="email-preview-box">{tpl["body_content"]}</div>', unsafe_allow_html=True)
+                render_html_preview(tpl["body_content"], height=200)
 
                 col_tp1, col_tp2, col_tp3 = st.columns([1.5, 1.5, 1])
                 with col_tp1:
@@ -2263,7 +2308,7 @@ with tab_studio:
                     resolved = parse_spintax(injected)
 
                     st.markdown(f"**Randomized Resolution with contact '{sample_contact['name']}' at '{sample_contact['company']}':**")
-                    st.markdown(f'<div class="email-preview-box">{resolved}</div>', unsafe_allow_html=True)
+                    render_html_preview(resolved, height=200)
 
 # ==============================================================================
 # TAB 3: CAMPAIGN GENERATOR (REPLACES OLD GENERATOR)
@@ -2722,9 +2767,16 @@ with tab_review:
                                 except Exception as ar_err:
                                     st.error(f"Auto-rewrite failed: {ar_err}")
 
-                    saved_sig = get_config("signature_html", "")
-                    preview_html = f"{st.session_state[shared_body_key]}<br><br>{saved_sig}"
-                    st.markdown(f'<div class="email-preview-box" style="min-height: 230px; max-height: 360px; overflow-y: auto;">{preview_html}</div>', unsafe_allow_html=True)
+                    saved_sig = get_config("signature_html", "").strip()
+                    raw_body = st.session_state[shared_body_key].strip()
+                    has_block_tags = any(t in raw_body.lower() for t in ["<p", "<div", "<table", "<br"])
+                    if not has_block_tags:
+                        body_formatted = "".join(f"<p style='margin: 0 0 1em 0;'>{p.strip()}</p>" for p in raw_body.split("\n\n") if p.strip())
+                    else:
+                        body_formatted = raw_body
+
+                    preview_html = f"{body_formatted}<br><br>{saved_sig}" if saved_sig else body_formatted
+                    render_html_preview(preview_html, height=340)
                     word_cnt = len(re.findall(r"\w+", st.session_state[shared_body_key]))
                     st.caption(f"🛡️ Deliverability Score: **{draft_audit['score']}/100** ({draft_audit['grade']}) • Word Count: ~{word_cnt} words")
 
@@ -2867,7 +2919,7 @@ with tab_review:
                         st.error(f"**Error Details:** {item['error_message']}")
 
                 st.markdown("**Email Content Preview:**")
-                st.markdown(f'<div class="email-preview-box">{item["email_html"]}</div>', unsafe_allow_html=True)
+                render_html_preview(item["email_html"], height=240)
 
                 if item["status"] in ["Account Mismatch", "Error", "Approved", "Flagged"]:
                     if st.button(f"↩️ Reset #{item['id']} to Pending", key=f"reset_{item['id']}"):
