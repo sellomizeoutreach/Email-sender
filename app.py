@@ -167,14 +167,13 @@ st.set_page_config(
 # Custom Styling (Sellomize Reach Ultra-Modern Dark SaaS Theme)
 st.markdown("""
 <style>
-    /* Global Canvas & Ambient Lighting */
+    /* Global Canvas & Ambient Lighting (60% Crisp White Canvas) */
     .stApp {
-        background: radial-gradient(1200px 600px at 50% -120px, rgba(238, 83, 36, 0.14) 0%, transparent 70%),
-                    radial-gradient(900px 500px at 100% 5%, rgba(16, 185, 129, 0.09) 0%, transparent 60%),
-                    radial-gradient(800px 600px at 0% 90%, rgba(238, 83, 36, 0.08) 0%, transparent 65%),
-                    #061512 !important;
+        background: radial-gradient(1200px 600px at 50% -120px, rgba(8, 55, 49, 0.04) 0%, transparent 70%),
+                    radial-gradient(900px 500px at 100% 5%, rgba(253, 77, 27, 0.03) 0%, transparent 60%),
+                    #FFFFFF !important;
         background-attachment: fixed !important;
-        color: #F8FAFC !important;
+        color: #1E293B !important;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
     }
 
@@ -184,45 +183,43 @@ st.markdown("""
         height: 8px;
     }
     ::-webkit-scrollbar-track {
-        background: #061512;
+        background: #F8FAF9;
     }
     ::-webkit-scrollbar-thumb {
-        background: rgba(238, 83, 36, 0.35);
+        background: rgba(8, 55, 49, 0.25);
         border-radius: 8px;
     }
     ::-webkit-scrollbar-thumb:hover {
-        background: #EE5324;
+        background: #083731;
     }
 
-    /* Global Typography */
+    /* Global Typography (30% Sellomize Signature Deep Pine Green #083731) */
     h1, h2, h3, h4, h5, h6 {
-        color: #FFFFFF !important;
+        color: #083731 !important;
         letter-spacing: -0.4px !important;
         font-weight: 700 !important;
     }
     p, span, label {
-        color: #E2E8F0;
+        color: #334155;
     }
     hr {
         border: none !important;
         height: 1px !important;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent) !important;
-        margin: 1.75rem 0 !important;
+        background: linear-gradient(90deg, transparent, rgba(8, 55, 49, 0.15), transparent) !important;
+        margin: 1.5rem 0 !important;
     }
 
-    /* Branded Floating Glass Header */
+    /* Branded Floating Header (30% Sellomize Deep Pine Green #083731 + 10% Orange Accent) */
     .sellomize-header-container {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: linear-gradient(135deg, rgba(14, 46, 39, 0.8) 0%, rgba(8, 28, 24, 0.92) 100%);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: linear-gradient(135deg, #083731 0%, #0d4a42 100%);
+        border: 1px solid rgba(8, 55, 49, 0.3);
         border-radius: 16px;
         padding: 1.15rem 1.8rem;
-        margin-bottom: 1.6rem;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        margin-bottom: 1.5rem;
+        box-shadow: 0 10px 25px -5px rgba(8, 55, 49, 0.2), 0 4px 10px rgba(0, 0, 0, 0.04);
         position: relative;
         overflow: hidden;
     }
@@ -232,8 +229,8 @@ st.markdown("""
         top: 0;
         left: 0;
         right: 0;
-        height: 2px;
-        background: linear-gradient(90deg, transparent, #EE5324 30%, #10B981 70%, transparent);
+        height: 3px;
+        background: linear-gradient(90deg, transparent, #FD4D1B 40%, #10B981 80%, transparent);
     }
     .sellomize-header-left {
         display: flex;
@@ -245,16 +242,16 @@ st.markdown("""
         width: 56px;
         object-fit: cover;
         border-radius: 12px;
-        border: 1.5px solid rgba(238, 83, 36, 0.8);
-        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.35);
+        border: 2px solid #FD4D1B;
+        box-shadow: 0 4px 16px rgba(253, 77, 27, 0.35);
     }
     .sellomize-logo-fallback {
         font-size: 2.2rem;
-        background: #0B2621;
+        background: #083731;
         border-radius: 12px;
         padding: 6px 12px;
-        border: 1.5px solid #EE5324;
-        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.35);
+        border: 2px solid #FD4D1B;
+        box-shadow: 0 4px 16px rgba(253, 77, 27, 0.35);
     }
     .sellomize-brand-title {
         font-size: 1.95rem;
@@ -266,15 +263,13 @@ st.markdown("""
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     .sellomize-highlight {
-        background: linear-gradient(135deg, #FF7B4D 0%, #EE5324 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        filter: drop-shadow(0 0 12px rgba(238, 83, 36, 0.4));
+        color: #FD4D1B;
+        text-shadow: 0 0 16px rgba(253, 77, 27, 0.4);
     }
     .sellomize-brand-subtitle {
         font-size: 0.88rem;
         font-weight: 500;
-        color: #94A3B8;
+        color: #CCFBF1;
         margin-top: 4px;
         letter-spacing: 0.4px;
     }
@@ -287,9 +282,9 @@ st.markdown("""
         display: flex;
         align-items: center;
         gap: 8px;
-        background: rgba(16, 185, 129, 0.12);
-        border: 1px solid rgba(16, 185, 129, 0.35);
-        color: #34D399;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        color: #FFFFFF;
         padding: 6px 14px;
         border-radius: 20px;
         font-size: 0.75rem;
@@ -300,9 +295,9 @@ st.markdown("""
     .status-indicator-dot {
         width: 8px;
         height: 8px;
-        background-color: #10B981;
+        background-color: #34D399;
         border-radius: 50%;
-        box-shadow: 0 0 10px #10B981;
+        box-shadow: 0 0 10px #34D399;
         animation: pulse-dot 2s infinite ease-in-out;
     }
     @keyframes pulse-dot {
@@ -310,23 +305,24 @@ st.markdown("""
         50% { opacity: 0.35; transform: scale(0.8); }
     }
     .sellomize-header-badge {
-        background: rgba(238, 83, 36, 0.12);
-        color: #FF7B4D;
-        border: 1px solid rgba(238, 83, 36, 0.35);
+        background: #FD4D1B;
+        color: #FFFFFF;
+        border: 1px solid #E93806;
         padding: 6px 14px;
         border-radius: 20px;
         font-size: 0.75rem;
         font-weight: 700;
         letter-spacing: 0.8px;
         text-transform: uppercase;
+        box-shadow: 0 2px 10px rgba(253, 77, 27, 0.35);
     }
 
-    /* Executive Glass KPI Stat Cards */
+    /* Executive Stat Cards (60% Crisp White Canvas with 30% Green / 10% Orange Accents) */
     .stats-grid {
         display: grid;
         grid-template-columns: repeat(7, 1fr);
         gap: 0.9rem;
-        margin-bottom: 1.75rem;
+        margin-bottom: 1.5rem;
     }
     @media (max-width: 1280px) {
         .stats-grid {
@@ -339,66 +335,66 @@ st.markdown("""
         }
     }
     .stat-card {
-        background: linear-gradient(145deg, rgba(14, 46, 39, 0.65) 0%, rgba(8, 28, 24, 0.8) 100%);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #FFFFFF;
+        border: 1px solid rgba(8, 55, 49, 0.14);
         border-radius: 14px;
         padding: 1.15rem 1.35rem;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        box-shadow: 0 2px 12px rgba(8, 55, 49, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);
         transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         position: relative;
         overflow: hidden;
     }
     .stat-card:hover {
-        transform: translateY(-3px);
-        border-color: rgba(238, 83, 36, 0.35);
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 0 18px rgba(238, 83, 36, 0.15);
+        transform: translateY(-2px);
+        border-color: #083731;
+        box-shadow: 0 8px 24px rgba(8, 55, 49, 0.1);
     }
     .stat-card-highlight {
-        border-color: rgba(238, 83, 36, 0.35);
-        background: linear-gradient(145deg, rgba(238, 83, 36, 0.12) 0%, rgba(8, 28, 24, 0.85) 100%);
+        border-color: rgba(253, 77, 27, 0.4);
+        background: linear-gradient(145deg, #FFFFFF 0%, rgba(253, 77, 27, 0.04) 100%);
+    }
+    .stat-card-highlight:hover {
+        border-color: #FD4D1B;
+        box-shadow: 0 8px 24px rgba(253, 77, 27, 0.15);
     }
     .stat-card-alert {
-        border-color: rgba(239, 68, 68, 0.45);
-        background: linear-gradient(145deg, rgba(239, 68, 68, 0.15) 0%, rgba(8, 28, 24, 0.85) 100%);
+        border-color: rgba(239, 68, 68, 0.35);
+        background: linear-gradient(145deg, #FFFFFF 0%, rgba(239, 68, 68, 0.04) 100%);
     }
     .stat-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 0.6rem;
+        margin-bottom: 0.5rem;
     }
     .stat-label {
-        font-size: 0.82rem;
-        font-weight: 600;
-        color: #94A3B8;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: #475569;
         text-transform: uppercase;
         letter-spacing: 0.75px;
     }
     .stat-icon-badge {
-        font-size: 1.15rem;
-        background: rgba(255, 255, 255, 0.06);
+        font-size: 1.1rem;
+        background: #F0F5F4;
         padding: 3px 8px;
         border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(8, 55, 49, 0.12);
     }
     .stat-value {
-        font-size: 2.15rem;
+        font-size: 2.1rem;
         font-weight: 800;
-        color: #FFFFFF;
+        color: #083731;
         line-height: 1.1;
         letter-spacing: -0.5px;
-        margin-bottom: 0.35rem;
+        margin-bottom: 0.3rem;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     .stat-val-glow {
-        color: #FF7B4D;
-        text-shadow: 0 0 16px rgba(238, 83, 36, 0.4);
+        color: #FD4D1B;
     }
     .stat-val-alert {
-        color: #F87171;
-        text-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
+        color: #EF4444;
     }
     .stat-sub {
         font-size: 0.78rem;
@@ -406,30 +402,28 @@ st.markdown("""
         font-weight: 500;
     }
     .stat-sub-alert {
-        color: #F87171;
+        color: #EF4444;
         font-weight: 600;
     }
     .stat-sub-clean {
-        color: #34D399;
+        color: #059669;
         font-weight: 600;
     }
 
-    /* Modern Segmented Floating Tabs */
+    /* Modern Segmented Navigation Tabs (30% Sellomize Green Solid Active Tab) */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px !important;
-        background: rgba(7, 24, 20, 0.75) !important;
-        backdrop-filter: blur(16px) !important;
-        -webkit-backdrop-filter: blur(16px) !important;
+        background: #F0F5F4 !important;
         padding: 6px !important;
         border-radius: 12px !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
-        margin-bottom: 1.75rem !important;
+        border: 1px solid rgba(8, 55, 49, 0.15) !important;
+        box-shadow: inset 0 1px 3px rgba(8, 55, 49, 0.05) !important;
+        margin-bottom: 1.6rem !important;
     }
     .stTabs [data-baseweb="tab"] {
         height: 44px !important;
         border-radius: 8px !important;
-        color: #94A3B8 !important;
+        color: #334155 !important;
         font-weight: 600 !important;
         font-size: 0.92rem !important;
         padding: 0 1.25rem !important;
@@ -438,16 +432,16 @@ st.markdown("""
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     .stTabs [data-baseweb="tab"]:hover {
-        color: #FFFFFF !important;
-        background: rgba(255, 255, 255, 0.05) !important;
-        border-color: rgba(255, 255, 255, 0.08) !important;
+        color: #083731 !important;
+        background: rgba(8, 55, 49, 0.07) !important;
+        border-color: rgba(8, 55, 49, 0.12) !important;
     }
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, rgba(238, 83, 36, 0.25) 0%, rgba(238, 83, 36, 0.08) 100%) !important;
-        border: 1px solid #EE5324 !important;
+        background: #083731 !important;
+        border: 1px solid #083731 !important;
         color: #FFFFFF !important;
         font-weight: 700 !important;
-        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.28) !important;
+        box-shadow: 0 4px 14px rgba(8, 55, 49, 0.25) !important;
         border-radius: 8px !important;
     }
     .stTabs [data-baseweb="tab-highlight"] {
@@ -457,19 +451,19 @@ st.markdown("""
         display: none !important;
     }
 
-    /* Primary High-Impact CTA Buttons */
+    /* Primary CTA Buttons (10% Sellomize Flame Orange #FD4D1B) */
     button[kind="primary"],
     [data-testid="baseButton-primary"],
     div.stButton > button[kind="primary"],
     div.stFormSubmitButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #FF6838 0%, #EE5324 55%, #D43E12 100%) !important;
+        background: linear-gradient(135deg, #FD4D1B 0%, #E93806 100%) !important;
         color: #FFFFFF !important;
         font-weight: 700 !important;
         font-size: 0.92rem !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid #D43407 !important;
         border-radius: 8px !important;
         padding: 0.55rem 1.4rem !important;
-        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+        box-shadow: 0 4px 14px rgba(253, 77, 27, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         letter-spacing: 0.3px !important;
     }
@@ -477,70 +471,64 @@ st.markdown("""
     [data-testid="baseButton-primary"]:hover,
     div.stButton > button[kind="primary"]:hover,
     div.stFormSubmitButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #FF7B4D 0%, #FF5A26 55%, #E04516 100%) !important;
-        box-shadow: 0 6px 24px rgba(238, 83, 36, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
-        transform: translateY(-2px) !important;
+        background: linear-gradient(135deg, #FF6236 0%, #FD4D1B 100%) !important;
+        box-shadow: 0 6px 20px rgba(253, 77, 27, 0.45) !important;
+        transform: translateY(-1px) !important;
     }
     button[kind="primary"]:active,
     [data-testid="baseButton-primary"]:active {
         transform: translateY(0px) !important;
     }
 
-    /* Secondary Glass Action Buttons */
+    /* Secondary Action Buttons (30% Pine Green Accent on 60% White) */
     button[kind="secondary"],
     [data-testid="baseButton-secondary"],
     .stButton > button:not([kind="primary"]),
     .stDownloadButton > button {
-        background: rgba(14, 44, 38, 0.65) !important;
-        backdrop-filter: blur(10px) !important;
-        -webkit-backdrop-filter: blur(10px) !important;
-        color: #E2E8F0 !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        background: #FFFFFF !important;
+        color: #083731 !important;
+        border: 1.5px solid #083731 !important;
         border-radius: 8px !important;
         font-weight: 600 !important;
         font-size: 0.88rem !important;
         padding: 0.5rem 1.2rem !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+        box-shadow: 0 2px 6px rgba(8, 55, 49, 0.05) !important;
         transition: all 0.2s ease-in-out !important;
     }
     button[kind="secondary"]:hover,
     [data-testid="baseButton-secondary"]:hover,
     .stButton > button:not([kind="primary"]):hover,
     .stDownloadButton > button:hover {
-        background: rgba(20, 60, 52, 0.85) !important;
-        border-color: #EE5324 !important;
+        background: #083731 !important;
+        border-color: #083731 !important;
         color: #FFFFFF !important;
-        box-shadow: 0 4px 16px rgba(238, 83, 36, 0.25) !important;
+        box-shadow: 0 4px 14px rgba(8, 55, 49, 0.2) !important;
         transform: translateY(-1px) !important;
     }
 
-    /* Glass Form Containers & Expanders */
+    /* Form Containers & Expanders (60% Crisp White) */
     div[data-testid="stForm"] {
-        background: linear-gradient(180deg, rgba(13, 42, 36, 0.65) 0%, rgba(7, 24, 20, 0.8) 100%) !important;
-        backdrop-filter: blur(16px) !important;
-        -webkit-backdrop-filter: blur(16px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        background: #FFFFFF !important;
+        border: 1px solid rgba(8, 55, 49, 0.16) !important;
         border-radius: 14px !important;
         padding: 1.5rem 1.75rem !important;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+        box-shadow: 0 6px 24px rgba(8, 55, 49, 0.05) !important;
     }
     div[data-testid="stExpander"] {
-        background: linear-gradient(180deg, rgba(12, 38, 33, 0.5) 0%, rgba(7, 23, 20, 0.65) 100%) !important;
-        backdrop-filter: blur(12px) !important;
-        -webkit-backdrop-filter: blur(12px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        background: #FFFFFF !important;
+        border: 1px solid rgba(8, 55, 49, 0.15) !important;
         border-radius: 12px !important;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+        box-shadow: 0 2px 10px rgba(8, 55, 49, 0.04) !important;
         overflow: hidden !important;
         margin-bottom: 12px !important;
         transition: all 0.2s ease !important;
     }
     div[data-testid="stExpander"]:hover {
-        border-color: rgba(238, 83, 36, 0.3) !important;
+        border-color: #083731 !important;
     }
     div[data-testid="stExpander"] summary {
-        font-weight: 600 !important;
-        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        color: #083731 !important;
         font-size: 0.95rem !important;
     }
 
@@ -548,69 +536,69 @@ st.markdown("""
     div[data-baseweb="input"],
     div[data-baseweb="textarea"],
     div[data-baseweb="select"] > div {
-        background-color: rgba(5, 17, 14, 0.75) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        background-color: #FFFFFF !important;
+        border: 1.5px solid #CBD5E1 !important;
         border-radius: 8px !important;
-        color: #FFFFFF !important;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+        color: #0F172A !important;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
         transition: all 0.2s ease !important;
     }
     div[data-baseweb="input"]:focus-within,
     div[data-baseweb="textarea"]:focus-within,
     div[data-baseweb="select"]:focus-within > div {
-        border-color: #EE5324 !important;
-        box-shadow: 0 0 0 3px rgba(238, 83, 36, 0.22), inset 0 2px 4px rgba(0, 0, 0, 0.3) !important;
-        background-color: rgba(6, 21, 18, 0.95) !important;
+        border-color: #FD4D1B !important;
+        box-shadow: 0 0 0 3px rgba(253, 77, 27, 0.18), inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+        background-color: #FFFFFF !important;
     }
     div[data-baseweb="input"] input,
     div[data-baseweb="textarea"] textarea {
-        color: #FFFFFF !important;
+        color: #0F172A !important;
         background-color: transparent !important;
         font-size: 0.92rem !important;
     }
     div[data-baseweb="input"] input::placeholder,
     div[data-baseweb="textarea"] textarea::placeholder {
-        color: #64748B !important;
+        color: #94A3B8 !important;
     }
 
     /* Progress Bars */
     div[data-testid="stProgress"] > div > div > div > div {
-        background: linear-gradient(90deg, #EE5324, #10B981) !important;
+        background: linear-gradient(90deg, #FD4D1B, #083731) !important;
         border-radius: 10px !important;
     }
     div[data-testid="stProgress"] > div > div {
-        background-color: rgba(4, 16, 13, 0.75) !important;
+        background-color: #E2E8F0 !important;
         border-radius: 10px !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(8, 55, 49, 0.1) !important;
     }
 
     /* Email Preview Box */
     .email-preview-box {
-        background: rgba(6, 20, 16, 0.8) !important;
-        border: 1px solid rgba(255, 255, 255, 0.09) !important;
-        border-left: 3.5px solid #EE5324 !important;
+        background: #FFFFFF !important;
+        border: 1px solid rgba(8, 55, 49, 0.16) !important;
+        border-left: 4px solid #FD4D1B !important;
         border-radius: 10px !important;
         padding: 1.25rem 1.5rem !important;
         margin-top: 0.6rem !important;
         margin-bottom: 0.8rem !important;
-        color: #E2E8F0 !important;
-        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.35) !important;
+        color: #1E293B !important;
+        box-shadow: 0 4px 16px rgba(8, 55, 49, 0.05) !important;
     }
     .email-preview-box p,
     .email-preview-box div,
     .email-preview-box span {
-        color: #E2E8F0 !important;
+        color: #1E293B !important;
     }
 
     /* Flagged Draft Card */
     .flagged-card {
-        background: linear-gradient(135deg, rgba(38, 14, 16, 0.75) 0%, rgba(22, 7, 9, 0.9) 100%) !important;
-        border: 1.5px solid rgba(239, 68, 68, 0.5) !important;
+        background: #FEF2F2 !important;
+        border: 1.5px solid #F87171 !important;
         border-radius: 12px !important;
         padding: 1.35rem !important;
         margin-bottom: 1.2rem !important;
-        color: #FFFFFF !important;
-        box-shadow: 0 8px 28px rgba(239, 68, 68, 0.18) !important;
+        color: #991B1B !important;
+        box-shadow: 0 4px 16px rgba(239, 68, 68, 0.1) !important;
     }
     .flagged-banner {
         background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%) !important;
@@ -623,14 +611,14 @@ st.markdown("""
         align-items: center !important;
         gap: 6px !important;
         letter-spacing: 0.5px !important;
-        box-shadow: 0 2px 10px rgba(239, 68, 68, 0.35) !important;
+        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25) !important;
     }
 
     /* Micro Status Badges */
     .badge-flagged {
-        background: rgba(239, 68, 68, 0.14) !important;
-        color: #F87171 !important;
-        border: 1px solid rgba(239, 68, 68, 0.35) !important;
+        background: rgba(239, 68, 68, 0.12) !important;
+        color: #DC2626 !important;
+        border: 1px solid rgba(239, 68, 68, 0.3) !important;
         padding: 3px 10px !important;
         border-radius: 6px !important;
         font-weight: 700 !important;
@@ -641,9 +629,9 @@ st.markdown("""
         gap: 5px !important;
     }
     .badge-pending {
-        background: rgba(245, 158, 11, 0.14) !important;
-        color: #FBBF24 !important;
-        border: 1px solid rgba(245, 158, 11, 0.35) !important;
+        background: rgba(245, 158, 11, 0.12) !important;
+        color: #D97706 !important;
+        border: 1px solid rgba(245, 158, 11, 0.3) !important;
         padding: 3px 10px !important;
         border-radius: 6px !important;
         font-weight: 700 !important;
@@ -654,9 +642,9 @@ st.markdown("""
         gap: 5px !important;
     }
     .badge-approved {
-        background: rgba(59, 130, 246, 0.14) !important;
-        color: #60A5FA !important;
-        border: 1px solid rgba(59, 130, 246, 0.35) !important;
+        background: rgba(8, 55, 49, 0.1) !important;
+        color: #083731 !important;
+        border: 1px solid rgba(8, 55, 49, 0.25) !important;
         padding: 3px 10px !important;
         border-radius: 6px !important;
         font-weight: 700 !important;
@@ -667,9 +655,9 @@ st.markdown("""
         gap: 5px !important;
     }
     .badge-sent {
-        background: rgba(16, 185, 129, 0.14) !important;
-        color: #34D399 !important;
-        border: 1px solid rgba(16, 185, 129, 0.35) !important;
+        background: rgba(16, 185, 129, 0.12) !important;
+        color: #059669 !important;
+        border: 1px solid rgba(16, 185, 129, 0.3) !important;
         padding: 3px 10px !important;
         border-radius: 6px !important;
         font-weight: 700 !important;
@@ -682,22 +670,32 @@ st.markdown("""
 
     /* Syntax Guide Box */
     .syntax-help {
-        background: linear-gradient(135deg, rgba(14, 46, 39, 0.6) 0%, rgba(9, 29, 25, 0.75) 100%) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        border-left: 3.5px solid #EE5324 !important;
+        background: #F0F5F4 !important;
+        border: 1px solid rgba(8, 55, 49, 0.15) !important;
+        border-left: 4px solid #083731 !important;
         padding: 1rem 1.25rem !important;
         border-radius: 10px !important;
         margin-bottom: 1rem !important;
-        color: #E2E8F0 !important;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        color: #1E293B !important;
+        box-shadow: 0 2px 8px rgba(8, 55, 49, 0.04) !important;
     }
     .syntax-help code {
-        background: rgba(4, 16, 13, 0.8) !important;
-        color: #FF7B4D !important;
+        background: #FFFFFF !important;
+        color: #E93806 !important;
         padding: 2px 7px !important;
         border-radius: 5px !important;
-        border: 1px solid rgba(238, 83, 36, 0.2) !important;
+        border: 1px solid rgba(253, 77, 27, 0.25) !important;
         font-weight: 600 !important;
+    }
+
+    /* Table & Data Editor Polish */
+    [data-testid="stDataFrame"],
+    [data-testid="stDataEditor"] {
+        border: 1px solid rgba(8, 55, 49, 0.16) !important;
+        border-radius: 10px !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 10px rgba(8, 55, 49, 0.04) !important;
+        background: #FFFFFF !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1013,7 +1011,7 @@ with tab_crm:
                 st.rerun()
         with col_sel3:
             if s_count > 0:
-                st.markdown(f"<div style='padding:7px 12px; background:rgba(238,83,36,0.18); border:1px solid #EE5324; border-radius:8px; color:#FF7B4D; font-weight:700; text-align:center;'>📌 {s_count} lead(s) selected</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='padding:7px 12px; background:rgba(253,77,27,0.1); border:1.5px solid #FD4D1B; border-radius:8px; color:#083731; font-weight:700; text-align:center;'>📌 {s_count} lead(s) selected</div>", unsafe_allow_html=True)
             else:
                 st.caption(f"Showing **{len(filtered_contacts)}** contact(s).")
         with col_sel4:
@@ -1040,10 +1038,10 @@ with tab_crm:
     if s_count > 0:
         with st.container():
             st.markdown(f"""
-            <div style="background: linear-gradient(135deg, rgba(14, 46, 39, 0.9) 0%, rgba(8, 28, 24, 0.98) 100%); border: 1.5px solid #EE5324; border-radius: 14px; padding: 16px 20px; margin: 12px 0 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.45);">
+            <div style="background: #FFFFFF; border: 2px solid #083731; border-radius: 14px; padding: 16px 20px; margin: 12px 0 20px; box-shadow: 0 4px 18px rgba(8, 55, 49, 0.08);">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size:1.1rem; font-weight:800; color:#FFFFFF; letter-spacing:0.5px;">⚡ BULK ACTIONS <span style="color:#FF7B4D;">({s_count} Leads Selected)</span></div>
-                    <div style="font-size:0.82rem; color:#94A3B8;">Apply tag changes, update details, or delete selected contacts in 1 click</div>
+                    <div style="font-size:1.1rem; font-weight:800; color:#083731; letter-spacing:0.5px;">⚡ BULK ACTIONS <span style="color:#FD4D1B;">({s_count} Leads Selected)</span></div>
+                    <div style="font-size:0.85rem; color:#64748B;">Apply tag changes, update details, or delete selected contacts in 1 click</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -2547,24 +2545,24 @@ with tab_settings:
                     day_num = max(1, (datetime.now().astimezone().date() - start_d).days + 1)
                 except Exception:
                     day_num = 1
-                warmup_badge = f'<span style="background: rgba(238,83,36,0.18); color: #FF7B4D; border: 1px solid #EE5324; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">🔥 WARMUP (DAY {day_num})</span>'
+                warmup_badge = f'<span style="background: rgba(253,77,27,0.12); color: #FD4D1B; border: 1px solid #FD4D1B; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">🔥 WARMUP (DAY {day_num})</span>'
                 progress_text = f"Today's Warmup Cap: {sent_today} / {eff_limit} sent ({eff_limit - sent_today} remaining) | Target: {target_limit}/day (+{acc.get('warmup_daily_increment', 5)}/day)"
             else:
-                warmup_badge = '<span style="background: rgba(59,130,246,0.15); color: #60A5FA; border: 1px solid #3B82F6; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">⚡ STANDARD</span>'
+                warmup_badge = '<span style="background: rgba(8,55,49,0.1); color: #083731; border: 1px solid #083731; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">⚡ STANDARD</span>'
                 progress_text = f"Today: {sent_today} / {eff_limit} sent ({eff_limit - sent_today} remaining)"
 
             with st.container():
                 st.markdown(f"""
-                <div style="background: linear-gradient(135deg, rgba(14, 46, 39, 0.65) 0%, rgba(8, 28, 24, 0.8) 100%); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 12px; padding: 14px 20px; margin-bottom: 10px; margin-top: 6px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);">
+                <div style="background: #FFFFFF; border: 1px solid rgba(8, 55, 49, 0.16); border-radius: 12px; padding: 14px 20px; margin-bottom: 10px; margin-top: 6px; box-shadow: 0 4px 14px rgba(8, 55, 49, 0.05);">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <span style="background: {'rgba(16, 185, 129, 0.15)' if acc['is_active'] else 'rgba(107, 114, 128, 0.15)'}; color: {status_color}; border: 1px solid {status_color}; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">● {status_text}</span>
+                            <span style="background: {'rgba(16, 185, 129, 0.12)' if acc['is_active'] else 'rgba(107, 114, 128, 0.12)'}; color: {status_color}; border: 1px solid {status_color}; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;">● {status_text}</span>
                             {warmup_badge}
-                            <strong style="color: #FFFFFF; font-size: 1.05rem; letter-spacing: 0.3px;">{acc['email']}</strong>
-                            <span style="color: #94A3B8; font-size: 0.88rem;">({acc['sender_name']})</span>
+                            <strong style="color: #083731; font-size: 1.05rem; letter-spacing: 0.3px;">{acc['email']}</strong>
+                            <span style="color: #64748B; font-size: 0.88rem;">({acc['sender_name']})</span>
                         </div>
-                        <div style="color: #94A3B8; font-size: 0.85rem; background: rgba(0,0,0,0.25); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
-                            Host: <code style="color: #FF7B4D;">{acc['smtp_host']}:{acc['smtp_port']}</code>
+                        <div style="color: #475569; font-size: 0.85rem; background: #F0F5F4; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(8,55,49,0.12);">
+                            Host: <code style="color: #FD4D1B; font-weight: 600;">{acc['smtp_host']}:{acc['smtp_port']}</code>
                         </div>
                     </div>
                 </div>

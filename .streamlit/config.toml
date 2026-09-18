@@ -1,8 +1,8 @@
 [theme]
-primaryColor = "#EE5324"          # Vibrant Sellomize Sunset Orange
-backgroundColor = "#061512"       # Deep Obsidian Emerald for dark canvas
-secondaryBackgroundColor = "#0B2621" # Rich Pine Glass for secondary containers
-textColor = "#F8FAFC"             # Crisp modern slate white
+primaryColor = "#FD4D1B"          # 10% Sellomize Flame Orange from sellomize.com
+backgroundColor = "#FFFFFF"       # 60% Crisp White Canvas from sellomize.com
+secondaryBackgroundColor = "#F0F5F4" # Soft Pine-tinted White for cards/sidebars
+textColor = "#083731"             # 30% Sellomize Signature Deep Pine Green
 font = "sans serif"
 
 [server]
