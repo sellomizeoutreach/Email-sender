@@ -5,7 +5,7 @@ Dedicated tab for designing, editing, previewing, and saving rich HTML email sig
 
 import streamlit as st
 from database import get_config, set_config
-from ui.components import render_html_preview
+from ui.components import render_html_preview, render_tab_header
 
 DEFAULT_SIGNATURE_TEMPLATE = """<div>
 <table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif; max-width:650px; color:#083731;">
@@ -36,8 +36,7 @@ DEFAULT_SIGNATURE_TEMPLATE = """<div>
 
 def render_signature_tab():
     """Render dedicated Corporate HTML Signature workspace."""
-    st.subheader("Corporate HTML Signature")
-    st.caption("Manage your team's HTML email signature appended automatically to outgoing campaign emails.")
+    render_tab_header("✒️ Corporate HTML Signature Studio", "Manage your team's HTML email signature appended automatically to outgoing campaign emails.")
 
     sig_key = "sig_shared_content"
     if sig_key not in st.session_state:

@@ -15,16 +15,17 @@ from database import (
     get_config
 )
 from template_engine import audit_email_deliverability, resolve_template, scan_negative_keywords, scan_all_negative_keywords
-from ui.components import render_html_preview
+from ui.components import render_html_preview, render_tab_header
 
 
-def render_studio_tab(all_templates=None, contacts_list=None):
-    """Render Tab 2: Template Builder (Studio & Templates)."""
+def render_studio_tab(templates=None, contacts_list=None):
+    """Render Tab 2: Studio & Templates."""
+    if templates is None:
+        templates = get_templates()
     if contacts_list is None:
         contacts_list = get_contacts()
 
-    st.subheader("Template Builder")
-    st.caption("Create reusable cold outreach templates with dynamic variable insertion and Spintax variation.")
+    render_tab_header("✍️ Studio & Outreach Templates", "Create reusable cold outreach templates with dynamic variable insertion and Spintax variation.")
 
     # Dynamic Variable Badges from CRM
     detected_var_keys = get_all_distinct_custom_variable_keys(include_predefined=True)

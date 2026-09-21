@@ -29,6 +29,7 @@ from contacts_handler import (
     import_contacts_from_csv
 )
 from mx_checker import batch_verify_contacts_mx
+from ui.components import render_tab_header
 
 
 @st.dialog("✏️ Edit & Manage Lead")
@@ -178,8 +179,7 @@ def render_crm_tab(all_contacts=None):
     if all_contacts is None:
         all_contacts = get_contacts()
 
-    st.subheader("👥 Leads & Contacts")
-    st.caption("Contact command center: 15-column spreadsheet grid, custom variables dossier, CSV data center, and unified lead editing.")
+    render_tab_header("👥 Leads & Contacts", "Contact command center: 15-column spreadsheet grid, custom variables dossier, CSV data center, and unified lead editing.")
 
     # Initialize CRM selection and editing session state
     if "crm_selected_ids" not in st.session_state:

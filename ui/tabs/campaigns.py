@@ -30,6 +30,7 @@ from template_engine import (
     scan_negative_keywords,
     scan_all_negative_keywords
 )
+from ui.components import render_tab_header
 
 
 def sync_sending_window_to_db(preset: str, days: list, start: str, end: str, db_path: str = DB_FILE):
@@ -63,8 +64,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
     if templates_list is None:
         templates_list = get_templates()
 
-    st.subheader("Campaign Generator")
-    st.caption("Select leads from your CRM, choose a template, and generate contextual personalized emails with automated negative keyword scanning.")
+    render_tab_header("⚡ Sequences & Campaigns", "Configure sending windows, cadence strategy, and generate personalized outreach batches.")
 
     if not contacts_list:
         st.warning("You have no contacts saved. Please add contacts in the Contacts tab first.")

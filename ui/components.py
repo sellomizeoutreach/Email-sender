@@ -96,6 +96,28 @@ def render_header():
 """, unsafe_allow_html=True)
 
 
+def render_tab_header(title: str, subtitle: str = ""):
+    """Render a clean branded tab title bar with the Sellomize logo icon."""
+    logo_b64 = get_logo_base64()
+    if logo_b64:
+        logo_tag = f'<img src="data:image/jpeg;base64,{logo_b64}" style="height:32px; width:32px; object-fit:cover; border-radius:8px; border:1.5px solid #FD4D1B; box-shadow:0 2px 8px rgba(253,77,27,0.25); flex-shrink:0;" alt="Sellomize" />'
+    else:
+        logo_tag = '<span style="font-size:1.4rem;">🚀</span>'
+
+    subtitle_html = f"<div style='font-size:0.83rem; color:#64748B; font-weight:500; margin-top:2px;'>{subtitle}</div>" if subtitle else ""
+
+    st.markdown(f"""
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px; margin-top:2px;">
+        {logo_tag}
+        <div>
+            <div style="font-size:1.32rem; font-weight:800; color:#083731; letter-spacing:-0.3px; line-height:1.2;">{title}</div>
+            {subtitle_html}
+        </div>
+    </div>
+    <div style="height:1px; background:linear-gradient(90deg, rgba(8,55,49,0.12), transparent); margin:8px 0 16px;"></div>
+    """, unsafe_allow_html=True)
+
+
 def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, flagged_count: int):
     """Render live statistics banner and outreach metrics grid with small-sample discipline."""
     flagged_card_class = "stat-card-alert" if flagged_count > 0 else ""

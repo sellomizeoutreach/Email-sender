@@ -23,13 +23,12 @@ from database import (
 )
 from mx_checker import verify_email_domain_mx, get_cached_domain_mx
 from template_engine import audit_email_deliverability, scan_all_negative_keywords
-from ui.components import render_html_preview
+from ui.components import render_html_preview, render_tab_header
 
 
 def render_review_tab():
     """Render Tab 4: Review Queue & Triage Desk."""
-    st.subheader("Review Queue & Triage Desk")
-    st.caption("Compliance gate: inspect rendered HTML previews, audit domain MX health, and triage flagged drafts before automated dispatch.")
+    render_tab_header("🛡️ Review Queue & Pre-Flight Triage", "Compliance gate: inspect rendered HTML previews, audit domain MX health, and triage flagged drafts before automated dispatch.")
 
     col_q_filt, col_q_batch = st.columns([2.2, 1.8])
     with col_q_filt:

@@ -17,7 +17,7 @@ from database import (
 )
 from smtp_dispatcher import scan_all_hostinger_inbox
 from tracker import is_port_in_use, start_tracking_server, get_tracking_base_url
-from ui.components import render_stat_banner
+from ui.components import render_stat_banner, render_tab_header
 
 
 def render_analytics_tab(all_contacts=None, all_emails=None):
@@ -27,8 +27,7 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
     if all_emails is None:
         all_emails = get_emails()
 
-    st.subheader("Outreach Analytics, Open Tracking & Bounce Report")
-    st.caption("Real-time email performance telemetry, 1x1 transparent pixel open tracking, and Hostinger IMAP bounce detection.")
+    render_tab_header("📊 Outreach Analytics & Performance", "Real-time email performance telemetry, 1x1 transparent pixel open tracking, and Hostinger IMAP bounce detection.")
 
     analytics_live = get_outreach_analytics()
     bounced_leads = get_bounced_contacts()
