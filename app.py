@@ -22,15 +22,15 @@ from database import (
     init_db,
     get_emails,
     get_contacts,
-    get_templates,
-    get_outreach_analytics,
+    get_templates
 )
 from tracker import start_tracking_server
 from ui.theme import apply_theme
-from ui.components import render_header, render_stat_banner
+from ui.components import render_header
 from ui.sidebar import render_sidebar
 from ui.tabs.crm import render_crm_tab
 from ui.tabs.studio import render_studio_tab
+from ui.tabs.signature import render_signature_tab
 from ui.tabs.campaigns import render_campaigns_tab
 from ui.tabs.review import render_review_tab
 from ui.tabs.analytics import render_analytics_tab
@@ -55,17 +55,11 @@ apply_theme()
 # Branded Sellomize Reach Top Header Bar
 render_header()
 
-# Live Statistics Banner & Outreach Analytics
+# Data Collections
 all_emails = get_emails()
 all_contacts = get_contacts()
 contacts_list = all_contacts
 all_templates = get_templates()
-analytics = get_outreach_analytics()
-
-pending_count = sum(1 for e in all_emails if e["status"] == "Pending")
-flagged_count = sum(1 for e in all_emails if e["status"] == "Flagged")
-
-render_stat_banner(analytics, all_contacts, pending_count, flagged_count)
 
 # ==============================================================================
 # ⚙️ PERSISTENT SIDEBAR: INFRASTRUCTURE & SETTINGS
@@ -73,11 +67,12 @@ render_stat_banner(analytics, all_contacts, pending_count, flagged_count)
 render_sidebar()
 
 # ==============================================================================
-# 5-SECTION PRIMARY APP NAVIGATION
+# 6-SECTION PRIMARY APP NAVIGATION
 # ==============================================================================
-tab_leads, tab_studio, tab_campaigns, tab_review, tab_analytics = st.tabs([
+tab_leads, tab_studio, tab_sig, tab_campaigns, tab_review, tab_analytics = st.tabs([
     "👥 Leads & Contacts",
     "✍️ Studio & Templates",
+    "✒️ Corporate Signature",
     "⚡ Sequences & Campaigns",
     "🛡️ Review Queue & Triage",
     "📊 Analytics & Intelligence"
@@ -89,6 +84,9 @@ with tab_leads:
 with tab_studio:
     render_studio_tab(all_templates, contacts_list)
 
+with tab_sig:
+    render_signature_tab()
+
 with tab_campaigns:
     render_campaigns_tab(contacts_list, all_templates)
 
@@ -97,4 +95,5 @@ with tab_review:
 
 with tab_analytics:
     render_analytics_tab(all_contacts, all_emails)
+
 

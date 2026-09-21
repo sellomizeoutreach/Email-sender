@@ -73,11 +73,15 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
     # Include custom variables
     custom_vars = contact_data.get("custom_variables_dict") or {}
     if not custom_vars and "custom_variables" in contact_data:
-        try:
-            custom_vars = json.loads(contact_data["custom_variables"] or "{}")
-        except (json.JSONDecodeError, TypeError, ValueError) as json_err:
-            logger.warning(f"Error parsing custom_variables in inject_variables: {json_err}")
-            custom_vars = {}
+        cv_val = contact_data["custom_variables"]
+        if isinstance(cv_val, dict):
+            custom_vars = cv_val
+        elif isinstance(cv_val, str):
+            try:
+                custom_vars = json.loads(cv_val or "{}")
+            except (json.JSONDecodeError, TypeError, ValueError) as json_err:
+                logger.warning(f"Error parsing custom_variables in inject_variables: {json_err}")
+                custom_vars = {}
 
 
     for k, v in custom_vars.items():

@@ -67,6 +67,7 @@ hiddenimports = [
     'ui.tabs',
     'ui.tabs.crm',
     'ui.tabs.studio',
+    'ui.tabs.signature',
     'ui.tabs.campaigns',
     'ui.tabs.review',
     'ui.tabs.analytics',

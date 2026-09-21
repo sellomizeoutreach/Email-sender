@@ -97,22 +97,59 @@ def render_header():
 
 
 def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, flagged_count: int):
-    """Render live statistics banner and outreach metrics grid."""
+    """Render live statistics banner and outreach metrics grid with small-sample discipline."""
     flagged_card_class = "stat-card-alert" if flagged_count > 0 else ""
     flagged_val_class = "stat-val-alert" if flagged_count > 0 else ""
     flagged_sub_class = "stat-sub-alert" if flagged_count > 0 else "stat-sub-clean"
-    flagged_sub_text = f"🚨 {flagged_count} Action Required" if flagged_count > 0 else "✓ All Drafts Clean"
-    flagged_icon = "🚨" if flagged_count > 0 else "🛡️"
+    flagged_sub_text = f"{flagged_count} Action Required" if flagged_count > 0 else "All Drafts Clean"
 
-    bounced_card_class = "stat-card-alert" if analytics.get("total_bounced", 0) > 0 else ""
-    bounced_val_class = "stat-val-alert" if analytics.get("total_bounced", 0) > 0 else ""
+    total_sent = int(analytics.get("total_sent", 0))
+    total_bounced = int(analytics.get("total_bounced", 0))
+    total_opened = int(analytics.get("total_opened", 0))
+    total_replied = int(analytics.get("total_replied", 0))
+    open_rate = float(analytics.get("open_rate", 0.0))
+    reply_rate = float(analytics.get("reply_rate", 0.0))
+    bounce_rate = float(analytics.get("bounce_rate", 0.0))
+
+    # Small-sample statistical discipline (< 20 sends is too small for meaningful percentages)
+    if total_sent < 20:
+        open_val = f"{total_opened} / {total_sent}" if total_sent > 0 else "0"
+        open_sub = "Need 20+ sends for rate" if total_sent > 0 else "No sends yet"
+        open_style = "color: #64748B;"
+
+        reply_val = f"{total_replied}"
+        reply_sub = f"{total_replied} / {total_sent} sent" if total_sent > 0 else "0 sent"
+        reply_style = "color: #083731;"
+
+        bounced_card_class = ""
+        bounced_val_class = ""
+        bounced_val = f"{total_bounced}"
+        bounced_sub = f"{total_bounced} / {total_sent} sent" if total_sent > 0 else "0 sent"
+    else:
+        open_val = f"{open_rate:.1f}%"
+        open_sub = f"{total_opened} Opened Pixel"
+        if open_rate == 0.0:
+            open_style = "color: #64748B;"
+        elif open_rate >= 15.0:
+            open_style = "color: #059669;"
+        else:
+            open_style = "color: #083731;"
+
+        reply_val = f"{total_replied}"
+        reply_sub = f"{reply_rate:.1f}% Reply Rate"
+        reply_style = "color: #083731;"
+
+        is_bounce_crisis = (bounce_rate >= 5.0 and total_bounced >= 2)
+        bounced_card_class = "stat-card-alert" if is_bounce_crisis else ""
+        bounced_val_class = "stat-val-alert" if is_bounce_crisis else ""
+        bounced_val = f"{total_bounced}"
+        bounced_sub = f"{bounce_rate:.1f}% Bounce Rate"
 
     st.markdown(f"""
 <div class="stats-grid">
     <div class="stat-card">
         <div class="stat-header">
             <span class="stat-label">Saved Leads</span>
-            <span class="stat-icon-badge">👥</span>
         </div>
         <div class="stat-value">{len(all_contacts)}</div>
         <div class="stat-sub">{analytics.get("contacted_count", 0)} Contacted</div>
@@ -120,7 +157,6 @@ def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, 
     <div class="stat-card">
         <div class="stat-header">
             <span class="stat-label">Pending Review</span>
-            <span class="stat-icon-badge">⏳</span>
         </div>
         <div class="stat-value">{pending_count}</div>
         <div class="stat-sub">Awaiting Approval</div>
@@ -128,7 +164,6 @@ def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, 
     <div class="stat-card {flagged_card_class}">
         <div class="stat-header">
             <span class="stat-label">Flagged Drafts</span>
-            <span class="stat-icon-badge">{flagged_icon}</span>
         </div>
         <div class="stat-value {flagged_val_class}">{flagged_count}</div>
         <div class="stat-sub {flagged_sub_class}">{flagged_sub_text}</div>
@@ -136,34 +171,31 @@ def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, 
     <div class="stat-card stat-card-highlight">
         <div class="stat-header">
             <span class="stat-label">Total Sent</span>
-            <span class="stat-icon-badge">🚀</span>
         </div>
-        <div class="stat-value stat-val-glow">{analytics.get("total_sent", 0)}</div>
+        <div class="stat-value stat-val-glow">{total_sent}</div>
         <div class="stat-sub">Hostinger & Outlook</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <span class="stat-label">Open Rate</span>
-            <span class="stat-icon-badge">👁️</span>
         </div>
-        <div class="stat-value" style="color: #34D399;">{analytics.get("open_rate", 0.0)}%</div>
-        <div class="stat-sub">{analytics.get("total_opened", 0)} Opened Pixel</div>
+        <div class="stat-value" style="{open_style}">{open_val}</div>
+        <div class="stat-sub">{open_sub}</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <span class="stat-label">Replies</span>
-            <span class="stat-icon-badge">💬</span>
         </div>
-        <div class="stat-value" style="color: #A78BFA;">{analytics.get("total_replied", 0)}</div>
-        <div class="stat-sub">{analytics.get("reply_rate", 0.0)}% Reply Rate</div>
+        <div class="stat-value" style="{reply_style}">{reply_val}</div>
+        <div class="stat-sub">{reply_sub}</div>
     </div>
     <div class="stat-card {bounced_card_class}">
         <div class="stat-header">
             <span class="stat-label">Bounces</span>
-            <span class="stat-icon-badge">⚠️</span>
         </div>
-        <div class="stat-value {bounced_val_class}">{analytics.get("total_bounced", 0)}</div>
-        <div class="stat-sub">{analytics.get("bounce_rate", 0.0)}% Bounce Rate</div>
+        <div class="stat-value {bounced_val_class}">{bounced_val}</div>
+        <div class="stat-sub">{bounced_sub}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
+

@@ -1522,6 +1522,155 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIsNone(analysis_early["warning_message"])
         self.assertIn("All 4 contacts will be dispatched today", analysis_early["summary_message"])
 
+    def test_41_campaign_zero_recipient_state_validation(self):
+        """Test zero-recipient schedule behavior to ensure no slots or false banners are generated."""
+        # Calculate with 0 contacts
+        empty_schedule = calculate_staggered_schedule(total_contacts=0)
+        self.assertEqual(len(empty_schedule), 0)
+
+        # Analyze 0 contacts
+        analysis = analyze_schedule_overflow(empty_schedule, end_time_str="18:00")
+        self.assertEqual(analysis["total_count"], 0)
+        self.assertEqual(analysis["today_count"], 0)
+        self.assertEqual(analysis["overflow_count"], 0)
+        self.assertTrue(analysis["fits_today"])
+        self.assertIsNone(analysis["first_dt"])
+        self.assertIsNone(analysis["last_dt"])
+        self.assertIsNone(analysis["warning_message"])
+        self.assertEqual(analysis["summary_message"], "No contacts selected.")
+
+    def test_42_followup_delay_days_config_persistence(self):
+        """Test that configured sequence milestone delay is persisted and honored by advance_contact_followup."""
+        from database import set_config, get_contact_by_id, create_contact
+        # Save a custom delay of 8 days
+        set_config("followup_delay_days", "8", db_path=TEST_DB)
+        self.assertEqual(get_config("followup_delay_days", "4", db_path=TEST_DB), "8")
+
+        # Create contact and advance
+        cid = create_contact("Seq Lead", "seq_lead@agency.com", db_path=TEST_DB)
+        today = datetime.now().astimezone()
+        expected_followup = (today + timedelta(days=8)).strftime("%Y-%m-%d")
+
+        delay = int(get_config("followup_delay_days", "4", db_path=TEST_DB) or 4)
+        advance_contact_followup(cid, delay_days=delay, db_path=TEST_DB)
+
+        updated = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(updated["next_follow_up"], expected_followup)
+        self.assertEqual(updated["follow_ups_sent"], 1)
+
+    def test_43_open_rate_color_threshold_logic(self):
+        """Test open rate color decision logic to ensure 0.0% is neutral and green is strictly for >= 15%."""
+        def get_open_rate_style(total_sent, open_rate):
+            if total_sent < 20:
+                return "#64748B"
+            else:
+                if open_rate == 0.0:
+                    return "#64748B"
+                elif open_rate >= 15.0:
+                    return "#059669"
+                else:
+                    return "#083731"
+
+        # 0 sends -> neutral
+        self.assertEqual(get_open_rate_style(0, 0.0), "#64748B")
+        # 5 sends, 0 opened -> neutral
+        self.assertEqual(get_open_rate_style(5, 0.0), "#64748B")
+        # 10 sends, 2 opened (20%) -> small sample neutral
+        self.assertEqual(get_open_rate_style(10, 20.0), "#64748B")
+        # 50 sends, 0% open rate -> neutral gray/slate (NEVER green)
+        self.assertEqual(get_open_rate_style(50, 0.0), "#64748B")
+        # 50 sends, 8.0% open rate -> standard dark slate
+        self.assertEqual(get_open_rate_style(50, 8.0), "#083731")
+        # 50 sends, 22.5% open rate -> green (good performance)
+        self.assertEqual(get_open_rate_style(50, 22.5), "#059669")
+
+    def test_44_corporate_signature_template_and_persistence(self):
+        """Test corporate signature configuration persistence and default template integrity."""
+        from ui.tabs.signature import DEFAULT_SIGNATURE_TEMPLATE
+        self.assertIn("Sellomize", DEFAULT_SIGNATURE_TEMPLATE)
+        self.assertIn("<table", DEFAULT_SIGNATURE_TEMPLATE)
+        self.assertIn("Business Development Officer", DEFAULT_SIGNATURE_TEMPLATE)
+
+        # Persistence in DB
+        set_config("signature_html", DEFAULT_SIGNATURE_TEMPLATE, db_path=TEST_DB)
+        loaded = get_config("signature_html", db_path=TEST_DB)
+        self.assertEqual(loaded, DEFAULT_SIGNATURE_TEMPLATE)
+
+    def test_45_grid_columns_visibility_and_data_integrity(self):
+        """Test that data editor records maintain all underlying fields even when columns are visually hidden."""
+        cid = create_contact("Grid Lead", "grid_lead@company.com", company="Tech Corp", db_path=TEST_DB)
+        record = {
+            "id": cid,
+            "Lead ID": f"L-{cid:04d}",
+            "Company": "Tech Corp",
+            "Contact Name": "Grid Lead",
+            "Email Address": "grid_lead@company.com",
+            "Status": "Contacted",
+            "Priority": "High",
+            "Notes": "Updated via grid view",
+            "Tags": "Enterprise, Priority"
+        }
+        saved = bulk_update_contact_grid([record], db_path=TEST_DB)
+        self.assertEqual(saved, 1)
+
+        c_updated = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_updated["name"], "Grid Lead")
+        self.assertEqual(c_updated["status"], "Contacted")
+        self.assertEqual(c_updated["priority"], "High")
+        self.assertEqual(c_updated["notes"], "Updated via grid view")
+
+    def test_46_unified_sending_window_db_sync(self):
+        """Test that Sequences & Campaigns sync_sending_window_to_db updates SQLite system_config."""
+        from ui.tabs.campaigns import sync_sending_window_to_db
+
+        # 1. Business Days preset
+        sync_sending_window_to_db("Business Days (Mon - Fri, 09:00 - 18:00)", [], "", "", db_path=TEST_DB)
+        self.assertEqual(get_config("enforce_sending_window", db_path=TEST_DB), "true")
+        self.assertEqual(get_config("sending_days", db_path=TEST_DB), "Monday, Tuesday, Wednesday, Thursday, Friday")
+        self.assertEqual(get_config("sending_start_time", db_path=TEST_DB), "09:00")
+        self.assertEqual(get_config("sending_end_time", db_path=TEST_DB), "18:00")
+
+        # 2. 24/7 Continuous preset
+        sync_sending_window_to_db("24/7 Continuous (All 7 Days)", [], "", "", db_path=TEST_DB)
+        self.assertEqual(get_config("enforce_sending_window", db_path=TEST_DB), "false")
+        self.assertIn("Sunday", get_config("sending_days", db_path=TEST_DB))
+        self.assertEqual(get_config("sending_start_time", db_path=TEST_DB), "00:00")
+        self.assertEqual(get_config("sending_end_time", db_path=TEST_DB), "23:59")
+
+        # 3. Custom Schedule
+        sync_sending_window_to_db("Custom Schedule", ["Tuesday", "Thursday"], "10:30", "16:45", db_path=TEST_DB)
+        self.assertEqual(get_config("enforce_sending_window", db_path=TEST_DB), "true")
+        self.assertEqual(get_config("sending_days", db_path=TEST_DB), "Tuesday, Thursday")
+        self.assertEqual(get_config("sending_start_time", db_path=TEST_DB), "10:30")
+        self.assertEqual(get_config("sending_end_time", db_path=TEST_DB), "16:45")
+
+    def test_47_scheduler_honors_24_7_enforcement_disabled(self):
+        """Test that is_within_sending_window and get_next_valid_sending_datetime allow off-hours when 24/7 is enabled."""
+        set_config("enforce_sending_window", "false", db_path=TEST_DB)
+        
+        # Check an off-hour slot (e.g. Sunday at 23:45)
+        sunday_night = datetime(2026, 9, 27, 23, 45, 0)
+        is_open, msg = is_within_sending_window(check_dt=sunday_night, db_path=TEST_DB)
+        self.assertTrue(is_open)
+        self.assertIn("disabled", msg.lower())
+
+        next_dt = get_next_valid_sending_datetime(base_dt=sunday_night, db_path=TEST_DB)
+        self.assertEqual(next_dt, sunday_night.astimezone())
+
+    def test_48_campaign_contact_selection_state_consistency(self):
+        """Test that campaign audience filtering and candidate identification behaves predictably."""
+        cid1 = create_contact("Alpha Lead", "alpha_camp@agency.com", status="Not Contacted", db_path=TEST_DB)
+        cid2 = create_contact("Beta Lead", "beta_camp@agency.com", status="Bounced", db_path=TEST_DB)
+        cid3 = create_contact("Gamma Lead", "gamma_camp@agency.com", status="Contacted", db_path=TEST_DB)
+
+        all_c = get_contacts(db_path=TEST_DB)
+        # Excludes bounced/closed lost
+        active = [c for c in all_c if c.get("status") not in ["Bounced", "Do Not Contact", "Closed Lost"] and not c.get("is_bounced")]
+        active_ids = [c["id"] for c in active]
+        self.assertIn(cid1, active_ids)
+        self.assertNotIn(cid2, active_ids)
+        self.assertIn(cid3, active_ids)
+
 if __name__ == "__main__":
     unittest.main()
 

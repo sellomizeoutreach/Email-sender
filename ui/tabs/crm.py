@@ -382,46 +382,87 @@ def render_crm_tab(all_contacts=None):
 
         df_grid = pd.DataFrame(grid_rows)
 
+        # Column Visibility Controls & Preset Selector
+        all_grid_cols = [
+            "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
+            "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
+            "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags"
+        ]
+        default_outreach_cols = [
+            "Lead ID", "Company", "Contact Name", "Email Address",
+            "Priority", "Status", "Follow-Ups Sent", "Next Follow-Up"
+        ]
+
+        col_v1, col_v2 = st.columns([1.6, 2.4])
+        with col_v1:
+            col_preset = st.radio(
+                "Grid Column View",
+                ["Focused Outreach View (8 cols)", "All Columns (15 cols)", "Custom Columns"],
+                horizontal=True,
+                key="crm_col_preset"
+            )
+        with col_v2:
+            if col_preset.startswith("Custom"):
+                visible_cols = st.multiselect(
+                    "Visible Columns",
+                    options=all_grid_cols,
+                    default=default_outreach_cols,
+                    key="crm_custom_cols"
+                )
+            elif col_preset.startswith("Focused"):
+                visible_cols = default_outreach_cols
+                st.caption("Showing 8 essential outreach columns. Select 'All Columns' or 'Custom' to expand.")
+            else:
+                visible_cols = all_grid_cols
+                st.caption("Showing all 15 lead columns. Scroll horizontally to browse fields on the right.")
+
+        st.markdown(f"""
+        <div class="crm-scroll-caption">
+            <span>↔️ Scroll horizontally to browse columns</span>
+            <span>Displaying <b>{len(visible_cols)}</b> of 15 columns</span>
+        </div>
+        """, unsafe_allow_html=True)
+
         column_config = {
             "id": None,  # Hide raw integer ID column
             "Lead ID": st.column_config.TextColumn(
                 "Lead ID",
                 disabled=True,
                 width="small"
-            ),
+            ) if "Lead ID" in visible_cols else None,
             "Company": st.column_config.TextColumn(
                 "Company",
                 width="medium"
-            ),
+            ) if "Company" in visible_cols else None,
             "Contact Name": st.column_config.TextColumn(
                 "Contact Name",
                 width="medium",
                 required=True
-            ),
+            ) if "Contact Name" in visible_cols else None,
             "Email Address": st.column_config.TextColumn(
                 "Email Address",
                 width="medium",
                 required=True
-            ),
+            ) if "Email Address" in visible_cols else None,
             "Lead Source": st.column_config.SelectboxColumn(
                 "Lead Source",
                 options=["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
                 width="medium"
-            ),
+            ) if "Lead Source" in visible_cols else None,
             "Priority": st.column_config.SelectboxColumn(
                 "Priority",
                 options=["High", "Medium", "Low"],
                 width="small"
-            ),
+            ) if "Priority" in visible_cols else None,
             "Contacted?": st.column_config.SelectboxColumn(
                 "Contacted?",
                 options=["No", "Yes"],
                 width="small"
-            ),
+            ) if "Contacted?" in visible_cols else None,
             "Date First Emailed": st.column_config.TextColumn(
                 "Date First Emailed",
                 width="small"
-            ),
+            ) if "Date First Emailed" in visible_cols else None,
             "Status": st.column_config.SelectboxColumn(
                 "Status",
                 options=[
@@ -437,34 +478,34 @@ def render_crm_tab(all_contacts=None):
                     "Do Not Contact"
                 ],
                 width="medium"
-            ),
+            ) if "Status" in visible_cols else None,
             "Follow-Ups Sent": st.column_config.NumberColumn(
                 "Follow-Ups Sent",
                 min_value=0,
                 max_value=100,
                 step=1,
                 width="small"
-            ),
+            ) if "Follow-Ups Sent" in visible_cols else None,
             "Last Contact Date": st.column_config.TextColumn(
                 "Last Contact Date",
                 width="small"
-            ),
+            ) if "Last Contact Date" in visible_cols else None,
             "Next Follow-Up": st.column_config.TextColumn(
                 "Next Follow-Up",
                 width="small"
-            ),
+            ) if "Next Follow-Up" in visible_cols else None,
             "Owner": st.column_config.TextColumn(
                 "Owner",
                 width="small"
-            ),
+            ) if "Owner" in visible_cols else None,
             "Notes": st.column_config.TextColumn(
                 "Notes",
                 width="large"
-            ),
+            ) if "Notes" in visible_cols else None,
             "Tags": st.column_config.TextColumn(
                 "Tags",
                 width="medium"
-            )
+            ) if "Tags" in visible_cols else None
         }
 
         edited_grid = st.data_editor(

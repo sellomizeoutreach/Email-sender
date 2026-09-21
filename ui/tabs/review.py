@@ -28,7 +28,7 @@ from ui.components import render_html_preview
 
 def render_review_tab():
     """Render Tab 4: Review Queue & Triage Desk."""
-    st.subheader("🛡️ Review Queue & Triage Desk")
+    st.subheader("Review Queue & Triage Desk")
     st.caption("Compliance gate: inspect rendered HTML previews, audit domain MX health, and triage flagged drafts before automated dispatch.")
 
     col_q_filt, col_q_batch = st.columns([2.2, 1.8])
@@ -123,9 +123,9 @@ def render_review_tab():
 
     if not drafts_to_show:
         st.markdown("""
-        <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:12px; padding:24px; text-align:center; margin:16px 0;">
-            <div style="font-size:1.1rem; font-weight:700; color:#083731; margin-bottom:6px;">Review Queue is Clear</div>
-            <div style="font-size:0.88rem; color:#64748B;">No actionable drafts match the current view. Generate a new outreach batch from the Sequences & Campaigns tab.</div>
+        <div style="background:rgba(8,55,49,0.05); border:1px solid rgba(8,55,49,0.14); border-radius:8px; padding:9px 14px; margin:6px 0 12px; display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:0.88rem; color:#083731; font-weight:600;">Review queue is clear — no pending drafts awaiting approval.</span>
+            <span style="font-size:0.8rem; color:#64748B;">Generate new batches from Sequences & Campaigns</span>
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -365,7 +365,7 @@ def render_review_tab():
     st.markdown("---")
     col_outbox_hdr, col_dry_run = st.columns([3, 1])
     with col_outbox_hdr:
-        st.markdown("### 📬 Dispatched & Scheduled Outbox History")
+        st.markdown("### Dispatched & Scheduled Outbox History")
         st.caption("Inspect outgoing queue, review historical dispatches, and manually reset failed drafts.")
     with col_dry_run:
         dry_run_btn = st.button("🧪 Dry Run (Check Due)", key="dry_run_outbox", help="Check approved emails due for dispatch without sending.")

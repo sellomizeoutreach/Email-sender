@@ -141,6 +141,11 @@ def get_next_valid_sending_datetime(
     if delay_minutes > 0:
         dt = dt + timedelta(minutes=delay_minutes)
 
+    enforce_str = get_config("enforce_sending_window", "true", db_path=db_path) or "true"
+    enforce = enforce_str.strip().lower() in ["true", "1", "yes", "on"]
+    if not enforce and sending_days is None and start_time_str is None and end_time_str is None:
+        return dt
+
     if sending_days is not None and len(sending_days) > 0:
         allowed_days = [d.strip().capitalize() for d in sending_days if d.strip()]
     else:
@@ -507,10 +512,12 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
     combined_body = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
     final_payload = inject_tracking_and_links(combined_body, email_id)
 
+    followup_delay = int(get_config("followup_delay_days", "4", db_path=db_path) or 4)
+
     if dry_run:
         logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
         mark_email_sent(email_id, db_path=db_path)
-        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
         return
 
     success, msg = send_smtp_email(
@@ -531,7 +538,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
             db_path=db_path
         )
         # Advance contact outreach status, date, and next follow-up
-        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
     else:
         mark_email_error(email_id, status="Error", error_message=msg, db_path=db_path)
@@ -571,10 +578,12 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
     bcc_address = sanitize_header(get_config("bcc_email", db_path=db_path) or "")
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
 
+    followup_delay = int(get_config("followup_delay_days", "4", db_path=db_path) or 4)
+
     if dry_run:
         logger.info(f"[DRY RUN Outlook] Would send Email ID #{email_id} to '{recipient}' from '{designated_sender}' with BCC '{bcc_address}'")
         mark_email_sent(email_id, db_path=db_path)
-        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
         return
 
     # 1. Connect to Outlook with explicit COM initialization
@@ -623,7 +632,7 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
         mail.Send()
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}'.")
         mark_email_sent(email_id, db_path=db_path)
-        advance_contact_followup(recipient, delay_days=4, db_path=db_path)
+        advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
 
     except Exception as dispatch_err:
         logger.error(f"Error dispatching Email ID #{email_id}: {dispatch_err}")

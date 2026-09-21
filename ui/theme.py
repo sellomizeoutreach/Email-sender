@@ -379,19 +379,19 @@ SELLOMIZE_THEME_CSS = """<style>
         border: none !important;
     }
 
-    /* Primary CTA Buttons (10% Sellomize Flame Orange #FD4D1B) */
+    /* Primary Action Buttons (Action Blue #2563EB - Clean, High-Converting SaaS CTAs) */
     button[kind="primary"],
     [data-testid="baseButton-primary"],
     div.stButton > button[kind="primary"],
     div.stFormSubmitButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #FD4D1B 0%, #E93806 100%) !important;
+        background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important;
         color: #FFFFFF !important;
         font-weight: 700 !important;
         font-size: 0.92rem !important;
-        border: 1px solid #D43407 !important;
+        border: 1px solid #1D4ED8 !important;
         border-radius: 8px !important;
         padding: 0.55rem 1.4rem !important;
-        box-shadow: 0 4px 14px rgba(253, 77, 27, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         letter-spacing: 0.3px !important;
     }
@@ -408,8 +408,8 @@ SELLOMIZE_THEME_CSS = """<style>
     [data-testid="baseButton-primary"]:hover,
     div.stButton > button[kind="primary"]:hover,
     div.stFormSubmitButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #FF6236 0%, #FD4D1B 100%) !important;
-        box-shadow: 0 6px 20px rgba(253, 77, 27, 0.45) !important;
+        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%) !important;
+        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
         transform: translateY(-1px) !important;
     }
     button[kind="primary"]:active,
@@ -663,14 +663,29 @@ SELLOMIZE_THEME_CSS = """<style>
         font-weight: 600 !important;
     }
 
-    /* Table & Data Editor Polish */
+    /* Table & Data Editor Polish & Horizontal Scroll Indicators */
     [data-testid="stDataFrame"],
     [data-testid="stDataEditor"] {
         border: 1px solid rgba(8, 55, 49, 0.16) !important;
         border-radius: 10px !important;
-        overflow: hidden !important;
+        overflow-x: auto !important;
         box-shadow: 0 2px 10px rgba(8, 55, 49, 0.04) !important;
         background: #FFFFFF !important;
+    }
+    .crm-grid-wrapper {
+        position: relative;
+        border-radius: 10px;
+        overflow-x: auto;
+        box-shadow: inset -12px 0 12px -12px rgba(8, 55, 49, 0.18);
+    }
+    .crm-scroll-caption {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.8rem;
+        color: #64748B;
+        margin-top: 4px;
+        padding: 0 2px;
     }
 
     /* Sidebar Styling (Sellomize 30% Pine Green & 60% Crisp White) */

@@ -16,6 +16,7 @@ from database import (
 )
 from smtp_dispatcher import scan_all_hostinger_inbox
 from tracker import is_port_in_use, start_tracking_server, get_tracking_base_url
+from ui.components import render_stat_banner
 
 
 def render_analytics_tab(all_contacts=None, all_emails=None):
@@ -25,23 +26,17 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
     if all_emails is None:
         all_emails = get_emails()
 
-    st.subheader("📈 Outreach Analytics, Open Tracking & Bounce Report")
+    st.subheader("Outreach Analytics, Open Tracking & Bounce Report")
     st.caption("Real-time email performance telemetry, 1x1 transparent pixel open tracking, and Hostinger IMAP bounce detection.")
 
     analytics_live = get_outreach_analytics()
     bounced_leads = get_bounced_contacts()
     replied_leads = get_replied_contacts()
 
-    # Detailed KPI metric row (8 metrics)
-    col_m1, col_m2, col_m3, col_m4, col_m5, col_m6, col_m7, col_m8 = st.columns(8)
-    col_m1.metric("Total Leads", len(all_contacts))
-    col_m2.metric("Total Sent", analytics_live["total_sent"])
-    col_m3.metric("Opens", analytics_live["total_opened"])
-    col_m4.metric("Open Rate", f"{analytics_live['open_rate']}%")
-    col_m5.metric("Clicks", analytics_live.get("total_clicked", 0))
-    col_m6.metric("Click Rate", f"{analytics_live.get('click_rate', 0.0)}%")
-    col_m7.metric("Replies", analytics_live.get("total_replied", 0))
-    col_m8.metric("Bounces", analytics_live["total_bounced"])
+    # Consolidated live stat display on dedicated overview view
+    pending_count = sum(1 for e in all_emails if e.get("status") == "Pending")
+    flagged_count = sum(1 for e in all_emails if e.get("status") == "Flagged")
+    render_stat_banner(analytics_live, all_contacts, pending_count, flagged_count)
 
     st.markdown("---")
 

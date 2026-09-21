@@ -4,11 +4,6 @@ Provides template building with Spintax, variable chips, external AI prompt guid
 """
 
 import streamlit as st
-try:
-    from streamlit_quill import st_quill
-    QUILL_AVAILABLE = True
-except ImportError:
-    QUILL_AVAILABLE = False
 
 from database import (
     get_all_distinct_custom_variable_keys,
@@ -28,7 +23,7 @@ def render_studio_tab(all_templates=None, contacts_list=None):
     if contacts_list is None:
         contacts_list = get_contacts()
 
-    st.subheader("📝 Template Builder")
+    st.subheader("Template Builder")
     st.caption("Create reusable cold outreach templates with dynamic variable insertion and Spintax variation.")
 
     # Dynamic Variable Badges from CRM
@@ -46,7 +41,7 @@ def render_studio_tab(all_templates=None, contacts_list=None):
     </div>
     """, unsafe_allow_html=True)
 
-    with st.expander("💡 Turn a written email into a template (External AI Workflow)", expanded=False):
+    with st.expander("Turn a written email into a template (External AI Workflow)", expanded=False):
         st.markdown(
             "Convert any written email into a reusable template for Sellomize Reach using an external AI (ChatGPT, Claude, Gemini).\n\n"
             "**Workflow:**\n"
@@ -79,15 +74,8 @@ def render_studio_tab(all_templates=None, contacts_list=None):
         st.code(master_prompt_text, language="markdown")
         st.caption("Copy this prompt into your preferred AI model along with your real email draft.")
 
-    with st.expander("➕ Create New Template", expanded=False):
+    with st.expander("Create New Template", expanded=False):
         new_tpl_name = st.text_input("Template Name", placeholder="e.g. Q4 Amazon Optimization Hook")
-
-        tpl_editor_mode = st.radio(
-            "Editor Mode",
-            ["✍️ Visual Rich Text Editor", "💻 HTML & Spintax Source Code"],
-            horizontal=True,
-            key="new_tpl_editor_mode"
-        )
 
         new_tpl_body_key = "new_template_body_content"
         if new_tpl_body_key not in st.session_state:
@@ -98,48 +86,58 @@ def render_studio_tab(all_templates=None, contacts_list=None):
                 "<p>Best,<br>Jack</p>"
             )
 
-        if tpl_editor_mode.startswith("✍️ Visual"):
-            st.caption("✨ **Visual Toolbar Mode**: Highlight text to format styles, bolding, colors, and lists.")
-            if QUILL_AVAILABLE:
-                quill_content = st_quill(
-                    value=st.session_state[new_tpl_body_key],
-                    html=True,
-                    key="quill_new_template"
-                )
-                if quill_content is not None:
-                    st.session_state[new_tpl_body_key] = quill_content
+        col_new_edit, col_new_prev = st.columns([1.1, 1.1])
+        with col_new_edit:
+            st.markdown("##### HTML & Spintax Source")
+            st.caption("Edit HTML tags and Spintax directly. Insert dynamic placeholders like `[Name]` or `[Company]`.")
+            new_src_txt = st.text_area(
+                "HTML / Spintax Source",
+                value=st.session_state[new_tpl_body_key],
+                height=260,
+                key="src_new_template",
+                label_visibility="collapsed"
+            )
+            st.session_state[new_tpl_body_key] = new_src_txt
+
+            # Deliverability Audit Gate
+            new_body_to_audit = new_src_txt.strip()
+            neg_kw = get_config("negative_keywords", "")
+            detected_kws = scan_all_negative_keywords(new_body_to_audit, neg_kw)
+            if detected_kws:
+                kws_badges = ", ".join(f"`{k}`" for k in detected_kws)
+                st.warning(f"Contains restricted trigger keyword(s): {kws_badges}")
+
+            if st.button("Save Template", type="primary", use_container_width=True, key="btn_save_new_template"):
+                if not new_tpl_name.strip() or not new_body_to_audit:
+                    st.error("Please provide both a Template Name and Body content.")
+                else:
+                    create_template(
+                        template_name=new_tpl_name.strip(),
+                        body_content=new_body_to_audit
+                    )
+                    st.success(f"Template '{new_tpl_name}' saved successfully!")
+                    st.rerun()
+
+        with col_new_prev:
+            col_ph, col_prb = st.columns([2.5, 1.5])
+            with col_ph:
+                st.markdown("##### Live Formatted Preview")
+                st.caption("Resolved with sample lead data:")
+            with col_prb:
+                if st.button("Re-roll Spintax", key="btn_reroll_new_tpl", use_container_width=True):
+                    st.rerun()
+
+            if new_body_to_audit:
+                sample_lead = {
+                    "name": "Jack Connor",
+                    "company": "Summit Brands",
+                    "email": "jack@summitbrands.com",
+                    "custom_variables": {"Role": "Founder", "Website": "https://summitbrands.com"}
+                }
+                resolved_preview = resolve_template(new_body_to_audit, sample_lead)
+                render_html_preview(resolved_preview, height=260)
             else:
-                st.session_state[new_tpl_body_key] = st.text_area("Body", value=st.session_state[new_tpl_body_key], height=220, key="txt_new_template")
-        else:
-            st.caption("💻 **HTML / Spintax Source Mode**: Edit HTML tags and Spintax directly.")
-            st.session_state[new_tpl_body_key] = st.text_area("HTML / Spintax Source", value=st.session_state[new_tpl_body_key], height=220, key="src_new_template")
-
-        # Deliverability Audit Gate
-        new_body_to_audit = st.session_state.get(new_tpl_body_key, "").strip()
-        neg_kw = get_config("negative_keywords", "")
-        detected_kws = scan_all_negative_keywords(new_body_to_audit, neg_kw)
-        if detected_kws:
-            kws_badges = ", ".join(f"`{k}`" for k in detected_kws)
-            st.warning(f"⚠️ Pre-Flight Deliverability Warning: Contains restricted trigger keyword(s): {kws_badges}")
-
-        # Live Formatted Preview
-        st.markdown("##### 👁️ Live Formatted Template Preview")
-        preview_body = st.session_state.get(new_tpl_body_key, "").strip()
-        if preview_body:
-            render_html_preview(preview_body, height=220)
-        else:
-            st.caption("Enter template text above to see live preview.")
-
-        if st.button("Save Template", type="primary", use_container_width=True, key="btn_save_new_template"):
-            if not new_tpl_name.strip() or not preview_body:
-                st.error("Please provide both a Template Name and Body content.")
-            else:
-                create_template(
-                    template_name=new_tpl_name.strip(),
-                    body_content=preview_body
-                )
-                st.success(f"✅ Template '{new_tpl_name}' saved successfully!")
-                st.rerun()
+                st.caption("Enter template source on the left to see live preview.")
 
     st.markdown("---")
 
@@ -167,58 +165,66 @@ def render_studio_tab(all_templates=None, contacts_list=None):
 
                     edit_t_name = st.text_input("Template Name", value=tpl["template_name"], key=f"edit_tname_{tpl_id}")
 
-                    edit_mode = st.radio(
-                        "Editor Mode",
-                        ["✍️ Visual Rich Text Editor", "💻 HTML & Spintax Source Code"],
-                        horizontal=True,
-                        key=f"edit_mode_{tpl_id}"
-                    )
+                    col_edit_src, col_edit_prev = st.columns([1.1, 1.1])
+                    with col_edit_src:
+                        st.markdown("##### HTML & Spintax Source")
+                        st.caption("Edit HTML tags and Spintax directly. Insert dynamic placeholders like `[Name]` or `[Company]`.")
+                        edit_tpl_key = f"edit_tpl_content_{tpl_id}"
+                        if edit_tpl_key not in st.session_state:
+                            st.session_state[edit_tpl_key] = tpl["body_content"]
 
-                    edit_tpl_key = f"edit_tpl_content_{tpl_id}"
-                    if edit_tpl_key not in st.session_state:
-                        st.session_state[edit_tpl_key] = tpl["body_content"]
+                        edit_src_txt = st.text_area(
+                            "HTML / Spintax Source",
+                            value=st.session_state[edit_tpl_key],
+                            height=260,
+                            key=f"src_edit_tpl_{tpl_id}",
+                            label_visibility="collapsed"
+                        )
+                        st.session_state[edit_tpl_key] = edit_src_txt
 
-                    if edit_mode.startswith("✍️ Visual"):
-                        st.caption("✨ **Visual Toolbar Mode**: Highlight text to format styles, bolding, colors, and lists.")
-                        if QUILL_AVAILABLE:
-                            q_edit = st_quill(
-                                value=st.session_state[edit_tpl_key],
-                                html=True,
-                                key=f"quill_edit_tpl_{tpl_id}"
-                            )
-                            if q_edit is not None:
-                                st.session_state[edit_tpl_key] = q_edit
-                        else:
-                            st.session_state[edit_tpl_key] = st.text_area("Body", value=st.session_state[edit_tpl_key], height=220, key=f"txt_edit_tpl_{tpl_id}")
-                    else:
-                        st.caption("💻 **HTML / Spintax Source Mode**: Edit HTML tags and Spintax directly.")
-                        st.session_state[edit_tpl_key] = st.text_area("HTML / Spintax Source", value=st.session_state[edit_tpl_key], height=220, key=f"src_edit_tpl_{tpl_id}")
+                        # Deliverability Audit Gate
+                        edit_body_to_audit = edit_src_txt.strip()
+                        neg_kw = get_config("negative_keywords", "")
+                        edit_detected_kws = scan_all_negative_keywords(edit_body_to_audit, neg_kw)
+                        if edit_detected_kws:
+                            edit_kws_badges = ", ".join(f"`{k}`" for k in edit_detected_kws)
+                            st.warning(f"Contains restricted trigger keyword(s): {edit_kws_badges}")
 
-                    # Deliverability Audit Gate
-                    edit_body_to_audit = st.session_state.get(edit_tpl_key, "").strip()
-                    neg_kw = get_config("negative_keywords", "")
-                    edit_detected_kws = scan_all_negative_keywords(edit_body_to_audit, neg_kw)
-                    if edit_detected_kws:
-                        edit_kws_badges = ", ".join(f"`{k}`" for k in edit_detected_kws)
-                        st.warning(f"⚠️ Pre-Flight Deliverability Warning: Contains restricted trigger keyword(s): {edit_kws_badges}")
-
-                    st.markdown("##### 👁️ Live Formatted Preview")
-                    render_html_preview(st.session_state[edit_tpl_key], height=220)
-
-                    col_save_e, col_canc_e = st.columns([1.5, 4])
-                    with col_save_e:
-                        if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_tpl_btn_{tpl_id}"):
-                            if not edit_t_name.strip() or not st.session_state[edit_tpl_key].strip():
-                                st.error("Both Name and Body are required.")
-                            else:
-                                update_template(tpl_id, edit_t_name.strip(), st.session_state[edit_tpl_key].strip())
+                        col_save_e, col_canc_e = st.columns([1.5, 3])
+                        with col_save_e:
+                            if st.button("Save Changes", type="primary", use_container_width=True, key=f"save_edit_tpl_btn_{tpl_id}"):
+                                if not edit_t_name.strip() or not edit_body_to_audit:
+                                    st.error("Both Name and Body are required.")
+                                else:
+                                    update_template(tpl_id, edit_t_name.strip(), edit_body_to_audit)
+                                    st.session_state["editing_tpl_id"] = None
+                                    st.success(f"Template '{edit_t_name}' successfully updated!")
+                                    st.rerun()
+                        with col_canc_e:
+                            if st.button("Cancel", use_container_width=True, key=f"canc_edit_tpl_btn_{tpl_id}"):
                                 st.session_state["editing_tpl_id"] = None
-                                st.success(f"✅ Template '{edit_t_name}' successfully updated!")
                                 st.rerun()
-                    with col_canc_e:
-                        if st.button("Cancel", use_container_width=True, key=f"canc_edit_tpl_btn_{tpl_id}"):
-                            st.session_state["editing_tpl_id"] = None
-                            st.rerun()
+
+                    with col_edit_prev:
+                        col_eph, col_eprb = st.columns([2.5, 1.5])
+                        with col_eph:
+                            st.markdown("##### Live Formatted Preview")
+                            st.caption("Resolved with sample lead data:")
+                        with col_eprb:
+                            if st.button("Re-roll Spintax", key=f"btn_reroll_edit_tpl_{tpl_id}", use_container_width=True):
+                                st.rerun()
+
+                        if edit_body_to_audit:
+                            sample_lead = {
+                                "name": "Jack Connor",
+                                "company": "Summit Brands",
+                                "email": "jack@summitbrands.com",
+                                "custom_variables": {"Role": "Founder", "Website": "https://summitbrands.com"}
+                            }
+                            resolved_edit_preview = resolve_template(edit_body_to_audit, sample_lead)
+                            render_html_preview(resolved_edit_preview, height=260)
+                        else:
+                            st.caption("Enter template source on the left to see live preview.")
 
                     st.markdown("<hr style='margin: 1rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
 
