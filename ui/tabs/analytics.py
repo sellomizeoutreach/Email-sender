@@ -10,6 +10,7 @@ from database import (
     get_bounced_contacts,
     get_replied_contacts,
     update_contact,
+    get_config,
     set_config,
     get_contacts,
     get_emails
@@ -142,13 +143,19 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
         new_base_url = st.text_input(
             "Tracking Server Public / Base URL",
             value=curr_base_url,
-            help="For external recipients to report opens, enter your public domain, static IP, or ngrok tunnel URL (e.g. https://track.yourdomain.com or https://abc.ngrok.app)."
+            help="For external recipients to report opens and clicks, enter your public domain, static IP, or ngrok tunnel URL (e.g. https://track.sellomize.com or https://abc.ngrok.app)."
         )
-        if new_base_url.strip() and new_base_url.strip() != curr_base_url:
-            if st.button("💾 Update Tracking Base URL", key="btn_save_trk_url"):
-                set_config("tracking_base_url", new_base_url.strip())
-                st.success("Tracking base URL updated!")
-                st.rerun()
+        an_click_track = st.checkbox(
+            "Enable Link Click Tracking (Requires public tracking domain)",
+            value=(get_config("enable_click_tracking", "false") or "false").lower() in ["true", "1", "yes"],
+            help="When disabled or when using localhost, links in emails remain direct (e.g. https://sellomize.com) so prospects can always open them without connection errors.",
+            key="an_chk_click_track"
+        )
+        if st.button("💾 Save Tracking Settings", key="btn_save_trk_url"):
+            set_config("tracking_base_url", new_base_url.strip())
+            set_config("enable_click_tracking", "true" if an_click_track else "false")
+            st.success("Tracking settings saved!")
+            st.rerun()
 
     # Section 5: Sent Emails with Open Tracking Status
     st.markdown("#### 📬 Sent Messages Delivery & Read Receipts")

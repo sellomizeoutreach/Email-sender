@@ -261,12 +261,23 @@ def render_sidebar():
             with st.expander("Advanced Telemetry Settings", expanded=False):
                 st.caption("Telemetry daemon listens on local port 8502.")
                 sb_curr_base = get_tracking_base_url()
-                sb_new_base = st.text_input("Tracking Public Base URL", value=sb_curr_base, key="sb_trk_url")
-                if sb_new_base.strip() and sb_new_base.strip() != sb_curr_base:
-                    if st.button("Update Base URL", key="sb_btn_trk_url", use_container_width=True):
-                        set_config("tracking_base_url", sb_new_base.strip())
-                        st.success("Base URL updated!")
-                        st.rerun()
+                sb_new_base = st.text_input(
+                    "Tracking Public Base URL",
+                    value=sb_curr_base,
+                    key="sb_trk_url",
+                    help="Public domain or tunnel (e.g. https://track.sellomize.com) required for external recipients to report clicks and opens."
+                )
+                sb_click_track = st.checkbox(
+                    "Enable Link Click Tracking",
+                    value=(current_configs.get("enable_click_tracking", "false").lower() in ["true", "1", "yes"]),
+                    help="When disabled or when using localhost, links remain direct (e.g. https://sellomize.com) to guarantee prospects can always open your website without errors.",
+                    key="sb_chk_click_track"
+                )
+                if st.button("Update Telemetry Settings", key="sb_btn_trk_url", use_container_width=True):
+                    set_config("tracking_base_url", sb_new_base.strip())
+                    set_config("enable_click_tracking", "true" if sb_click_track else "false")
+                    st.success("Telemetry settings updated!")
+                    st.rerun()
 
         # SECTION 4: GLOBAL NEGATIVE KEYWORDS
         with st.expander("Negative Keyword Shield", expanded=False):

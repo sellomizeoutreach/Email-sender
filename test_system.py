@@ -1671,6 +1671,52 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertNotIn(cid2, active_ids)
         self.assertIn(cid3, active_ids)
 
+    def test_49_click_tracking_preserves_signature_and_direct_links_on_localhost(self):
+        """Test that links are preserved direct when click tracking is disabled or using localhost."""
+        from tracker import wrap_links_with_click_tracking, is_public_tracking_url
+        
+        self.assertFalse(is_public_tracking_url("http://localhost:8502"))
+        self.assertFalse(is_public_tracking_url("http://127.0.0.1:8502"))
+        self.assertTrue(is_public_tracking_url("https://track.sellomize.com"))
+
+        html_body = '<p>Visit our website: <a href="https://sellomize.com">Sellomize</a></p>'
+        
+        # When click tracking is disabled (default): links are untouched
+        set_config("enable_click_tracking", "false", db_path=TEST_DB)
+        set_config("tracking_base_url", "http://localhost:8502", db_path=TEST_DB)
+        res = wrap_links_with_click_tracking(html_body, email_id=7, db_path=TEST_DB)
+        self.assertEqual(res, html_body)
+        self.assertIn('href="https://sellomize.com"', res)
+        self.assertNotIn('/track/click/', res)
+
+        # When click tracking is enabled with a public domain: links are wrapped
+        set_config("enable_click_tracking", "true", db_path=TEST_DB)
+        set_config("tracking_base_url", "https://track.sellomize.com", db_path=TEST_DB)
+        res_public = wrap_links_with_click_tracking(html_body, email_id=7, db_path=TEST_DB)
+        self.assertIn('https://track.sellomize.com/track/click/7?url=https%3A%2F%2Fsellomize.com', res_public)
+
+        # Reset config
+        set_config("enable_click_tracking", "false", db_path=TEST_DB)
+        set_config("tracking_base_url", "http://localhost:8502", db_path=TEST_DB)
+
+    def test_50_tracker_handles_google_encoded_redirect_and_fallback(self):
+        """Test that the tracker properly decodes Google's %3D encoded query string and extracts destination."""
+        import urllib.parse
+        
+        # Simulate Gmail redirect query string
+        path = "/track/click/7?url%3Dhttps%253A%252F%252Fsellomize.com"
+        parsed_url = urllib.parse.urlparse(path)
+        query_str = parsed_url.query
+        if "%3D" in query_str.upper():
+            query_str = urllib.parse.unquote(query_str)
+        params = urllib.parse.parse_qs(query_str)
+        raw_target = params.get("url", [""])[0]
+        target_url = urllib.parse.unquote(raw_target).strip()
+        while "%" in target_url and ("%2F" in target_url.upper() or "%3A" in target_url.upper()):
+            target_url = urllib.parse.unquote(target_url).strip()
+
+        self.assertEqual(target_url, "https://sellomize.com")
+
 if __name__ == "__main__":
     unittest.main()
 

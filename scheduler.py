@@ -45,7 +45,12 @@ from database import (
     get_log_file_path
 )
 from smtp_dispatcher import send_smtp_email, sanitize_header, scan_all_hostinger_bounces, scan_all_hostinger_inbox
-from tracker import inject_tracking_pixel, inject_tracking_and_links, start_tracking_server
+from tracker import (
+    inject_tracking_pixel,
+    inject_tracking_and_links,
+    wrap_links_with_click_tracking,
+    start_tracking_server
+)
 from mx_checker import verify_email_domain_mx
 
 # Configure logging with both console and sellomize.log file handler
@@ -509,8 +514,12 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
     # Prepare signature, tracking pixel, and payload
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
     bcc_address = sanitize_header(get_config("bcc_email", db_path=db_path) or "")
-    combined_body = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
-    final_payload = inject_tracking_and_links(combined_body, email_id)
+
+    # Click tracking (if enabled with a public domain) applies ONLY to campaign body links.
+    # Corporate signature links (e.g. sellomize.com) remain 100% direct and pristine.
+    body_with_links = wrap_links_with_click_tracking(approved_email_html, email_id)
+    combined_body = f"{body_with_links}<br><br>{signature_html}" if signature_html else body_with_links
+    final_payload = inject_tracking_pixel(combined_body, email_id)
 
     followup_delay = int(get_config("followup_delay_days", "4", db_path=db_path) or 4)
 
@@ -615,11 +624,13 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
             mail.BCC = bcc_address
 
         # Concatenate approved HTML body with signature HTML and tracking pixel
+        # Click tracking applies ONLY to campaign body links, NEVER to corporate signature links
+        body_with_links = wrap_links_with_click_tracking(approved_email_html, email_id)
         if signature_html:
-            combined_body = f"{approved_email_html}<br><br>{signature_html}"
+            combined_body = f"{body_with_links}<br><br>{signature_html}"
         else:
-            combined_body = approved_email_html
-        final_payload = inject_tracking_and_links(combined_body, email_id)
+            combined_body = body_with_links
+        final_payload = inject_tracking_pixel(combined_body, email_id)
 
         # Assign directly to HTMLBody
         mail.HTMLBody = final_payload
