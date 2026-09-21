@@ -35,12 +35,29 @@ from ui.tabs.campaigns import render_campaigns_tab
 from ui.tabs.review import render_review_tab
 from ui.tabs.analytics import render_analytics_tab
 
-# Ensure DB is initialized and tracking server is running
+import threading
+from scheduler import start_scheduler_loop
+
+def ensure_scheduler_running():
+    """Ensure the background email dispatch scheduler thread is active (e.g. when hosted on Streamlit Cloud)."""
+    for th in threading.enumerate():
+        if th.name == "SellomizeSchedulerThread" and th.is_alive():
+            return
+    sched_thread = threading.Thread(
+        target=start_scheduler_loop,
+        kwargs={"interval": 60},
+        daemon=True,
+        name="SellomizeSchedulerThread"
+    )
+    sched_thread.start()
+
+# Ensure DB is initialized, tracking server is running, and scheduler daemon is active
 init_db()
 try:
     start_tracking_server(port=8502)
 except Exception:
     pass
+ensure_scheduler_running()
 
 st.set_page_config(
     page_title="Sellomize Reach | Agency Email Automation",
