@@ -1,4 +1,4 @@
-﻿# Deploying Sellomize Reach on Streamlit Community Cloud
+# Deploying Sellomize Reach on Streamlit Community Cloud
 
 This guide walks you through deploying your **Sellomize Reach** web dashboard to **Streamlit Community Cloud** so you and your team can access the CRM, template engine, AI generator, and email review queue from any browser or device.
 
@@ -26,21 +26,7 @@ Streamlit Cloud will install dependencies from `requirements.txt` and launch you
 
 ---
 
-## 3. (Optional) Configure API Keys via Streamlit Secrets
-Instead of re-entering your LLM API keys in the UI every time, you can add them to Streamlit Cloud Secrets:
-1. In your deployed app, click the **Settings** menu (three dots in top-right or bottom-right) &rarr; **Settings** &rarr; **Secrets**.
-2. Paste the following:
-```toml
-gemini_api_key = "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw"
-gcp_project_id = "606768026327"
-openai_api_key = ""
-anthropic_api_key = ""
-```
-3. Click **Save**.
-
----
-
-## 4. Cloud Architecture vs Local Outlook Dispatch
+## 3. Cloud Architecture vs Local Outlook Dispatch
 
 - **Streamlit Community Cloud (Web Dashboard):**
   - Cloud-hosted web interface for lead management, tagging, CSV imports, Spintax templates, LiteLLM generation, and draft review.

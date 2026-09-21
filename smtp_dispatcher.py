@@ -87,6 +87,17 @@ def test_smtp_connection(
         logger.error(f"SMTP error during test connection to {host}: {e}")
         return False, f"Connection failed: {str(e)}"
 
+def sanitize_header(val: Optional[str]) -> str:
+    """
+    Sanitize email header values by stripping carriage returns, newlines, and null bytes
+    to prevent SMTP/MIME header injection (CRLF) and BCC smuggling.
+    """
+    if not val:
+        return ""
+    # Strip \r, \n, and \x00
+    cleaned = re.sub(r'[\r\n\x00]+', ' ', str(val))
+    return cleaned.strip()
+
 def send_smtp_email(
     smtp_account: Dict[str, Any],
     recipient: str,
@@ -105,16 +116,19 @@ def send_smtp_email(
     pwd = smtp_account["password"].strip()
     sender_name = smtp_account.get("sender_name", "").strip() or user.split("@")[0]
 
-    if not recipient or not recipient.strip():
+    target_recipient = sanitize_header(recipient)
+    if not target_recipient:
         return False, "Recipient email is missing."
 
-    target_recipient = recipient.strip()
+    clean_subject = sanitize_header(subject)
+    clean_sender = sanitize_header(sender_name)
+
     domain = user.split("@")[-1] if "@" in user else "sellomize.com"
 
     # Build MIME message
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject.strip()
-    msg["From"] = formataddr((sender_name, user))
+    msg["Subject"] = clean_subject
+    msg["From"] = formataddr((clean_sender, user))
     msg["To"] = target_recipient
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain=domain)
@@ -131,9 +145,10 @@ def send_smtp_email(
     # Build recipient list including optional BCC
     destinations = [target_recipient]
     if bcc_email and bcc_email.strip():
-        bcc_clean = bcc_email.strip()
-        msg["Bcc"] = bcc_clean
-        destinations.append(bcc_clean)
+        bcc_clean = sanitize_header(bcc_email)
+        if bcc_clean:
+            msg["Bcc"] = bcc_clean
+            destinations.append(bcc_clean)
 
     context = ssl.create_default_context()
 

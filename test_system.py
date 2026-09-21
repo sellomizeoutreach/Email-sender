@@ -81,21 +81,23 @@ from contacts_handler import (
     export_contacts_to_csv,
     import_contacts_from_csv
 )
-from llm_engine import (
-    _build_spam_instruction,
-    _parse_variations_json,
-    _parse_single_email_json,
+from template_engine import (
     inject_variables,
     parse_spintax,
     scan_negative_keywords,
+    scan_all_negative_keywords,
     audit_email_deliverability,
-    COMMON_SPAM_TRIGGERS
+    COMMON_SPAM_TRIGGERS,
+    format_email_html,
+    resolve_template
 )
 from scheduler import (
     run_scheduler_cycle,
     dispatch_email_hostinger,
     dispatch_email_outlook,
-    dispatch_email
+    dispatch_email,
+    calculate_staggered_schedule,
+    analyze_schedule_overflow
 )
 from mx_checker import (
     verify_email_domain_mx,
@@ -122,18 +124,18 @@ class TestEmailAutomationSystem(unittest.TestCase):
 
     def test_01_configuration_crud(self):
         """Verify configuration reading, writing, and defaults."""
-        set_config("primary_model", "gemini/gemini-1.5-pro", db_path=TEST_DB)
-        val = get_config("primary_model", db_path=TEST_DB)
-        self.assertEqual(val, "gemini/gemini-1.5-pro")
+        set_config("dispatch_method", "hostinger_smtp", db_path=TEST_DB)
+        val = get_config("dispatch_method", db_path=TEST_DB)
+        self.assertEqual(val, "hostinger_smtp")
 
         set_config("negative_keywords", "guarantee, winner, risk-free", db_path=TEST_DB)
         self.assertEqual(get_config("negative_keywords", db_path=TEST_DB), "guarantee, winner, risk-free")
 
-        # Verify default Gemini API key and GCP project
-        gemini_key = get_config("gemini_api_key", db_path=TEST_DB)
-        self.assertEqual(gemini_key, "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw")
-        gcp_proj = get_config("gcp_project_id", db_path=TEST_DB)
-        self.assertEqual(gcp_proj, "606768026327")
+        # Verify defaults for sending schedule
+        days = get_config("sending_days", db_path=TEST_DB)
+        self.assertEqual(days, "Monday,Tuesday,Wednesday,Thursday,Friday")
+        start_t = get_config("sending_start_time", db_path=TEST_DB)
+        self.assertEqual(start_t, "09:00")
 
     def test_02_contact_manager_crud(self):
         """Verify contact CRM persistence and custom variables JSON parsing."""
@@ -202,17 +204,26 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn(resolved_nested, ["Hi there", "Hi friend", "Welcome"])
 
     def test_06_negative_keyword_scanner(self):
-        """Test negative keyword scanner flags restricted terms."""
+        """Test negative keyword scanner flags restricted terms and reports all matches."""
         banned_list = "guarantee, 100% free, winner, cash prize, risk-free"
 
         # Text with negative keyword
         clean_text = "<p>Hi John, we have a case study on increasing catalog visibility.</p>"
         flagged_text = "<p>Hi John, we guarantee a 25% lift in conversion rates.</p>"
         phrase_flagged = "<p>Try this completely risk-free for 30 days.</p>"
+        multi_flagged = "<p>We guarantee this audit is 100% free and completely risk-free!</p>"
 
         self.assertIsNone(scan_negative_keywords(clean_text, banned_list))
         self.assertEqual(scan_negative_keywords(flagged_text, banned_list), "guarantee")
         self.assertEqual(scan_negative_keywords(phrase_flagged, banned_list), "risk-free")
+
+        # Verify scan_all_negative_keywords detects every distinct trigger
+        self.assertEqual(scan_all_negative_keywords(clean_text, banned_list), [])
+        self.assertEqual(scan_all_negative_keywords(flagged_text, banned_list), ["guarantee"])
+        self.assertEqual(
+            sorted(scan_all_negative_keywords(multi_flagged, banned_list)),
+            sorted(["guarantee", "100% free", "risk-free"])
+        )
 
     def test_07_email_flagging_and_auto_rewrite_status(self):
         """Verify Flagged email lifecycle in SQLite."""
@@ -239,18 +250,54 @@ class TestEmailAutomationSystem(unittest.TestCase):
         cleaned = get_email_by_id(draft_id, db_path=TEST_DB)
         self.assertEqual(cleaned["status"], "Pending")
 
-    def test_08_llm_json_parser_robustness(self):
-        """Test variations parser handles strict variations schema and markdown fences."""
-        strict_schema_json = '''{
-            "variations": [
-                {"subject": "Variation 1", "body_html": "<p>Body 1</p>"},
-                {"subject": "Variation 2", "body_html": "<p>Body 2</p>"}
-            ]
-        }'''
-        parsed_strict = _parse_variations_json(strict_schema_json, expected_count=2)
-        self.assertEqual(len(parsed_strict), 2)
-        self.assertEqual(parsed_strict[0]["subject"], "Variation 1")
-        self.assertEqual(parsed_strict[1]["body_html"], "<p>Body 2</p>")
+    def test_07b_email_approval_clears_flag_notes_and_reports_triggers(self):
+        """Verify flag_email accepts multiple triggers and approve_email clears notes."""
+        eid = create_email(
+            email_html="<p>Draft with trigger terms.</p>",
+            subject="Check this out",
+            status="Pending",
+            db_path=TEST_DB
+        )
+
+        # Flag with multiple triggers
+        flag_email(eid, ["guarantee", "100% free"], db_path=TEST_DB)
+        flagged_rec = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(flagged_rec["status"], "Flagged")
+        self.assertIn("'guarantee'", flagged_rec["revision_notes"])
+        self.assertIn("'100% free'", flagged_rec["revision_notes"])
+
+        # Approve email - should change status to Approved and clear revision_notes
+        approve_email(
+            email_id=eid,
+            recipient="test@example.com",
+            scheduled_time="2026-09-20 12:00:00",
+            email_html="<p>Cleaned copy without triggers.</p>",
+            subject="Clean Subject",
+            db_path=TEST_DB
+        )
+        approved_rec = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(approved_rec["status"], "Approved")
+        self.assertIsNone(approved_rec["revision_notes"])
+        self.assertEqual(approved_rec["recipient"], "test@example.com")
+
+    def test_08_deterministic_template_resolution(self):
+        """Verify deterministic variable injection, spintax resolution, and HTML formatting."""
+        contact = {
+            "name": "Sarah Connor",
+            "company": "Cyberdyne Systems",
+            "email": "sarah@cyberdyne.com",
+            "custom_variables_dict": {"Role": "Security Director", "Store_URL": "cyberdyne.com"}
+        }
+        template = "{Hi|Hello|Hey} [Name], regarding [Company] and your role as [Role] at [Store_URL].\n\nWe saw your recent updates."
+        resolved = resolve_template(template, contact)
+        self.assertTrue(any(resolved.startswith(g) for g in ["Hi Sarah Connor,", "Hello Sarah Connor,", "Hey Sarah Connor,"]))
+        self.assertIn("regarding Cyberdyne Systems", resolved)
+        self.assertIn("Security Director at cyberdyne.com", resolved)
+
+        # Test HTML paragraph wrapping
+        formatted_html = format_email_html(resolved)
+        self.assertTrue(formatted_html.startswith("<p style='margin: 0 0 1em 0;'>"))
+        self.assertIn("<p style='margin: 0 0 1em 0;'>We saw your recent updates.</p>", formatted_html)
 
     def test_09_tags_and_upsert(self):
         """Test contact tagging, deduplicated upsert, and distinct tags retrieval."""
@@ -1057,8 +1104,21 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("Multiple exclamation points '!!'", issues_text)
         self.assertIn("dollar signs", issues_text)
 
-    def test_29_mx_checker_valid_and_invalid_domains(self):
+    @patch("dns.resolver.Resolver.resolve")
+    def test_29_mx_checker_valid_and_invalid_domains(self, mock_resolve):
         """Test pre-flight MX record verification, DNS resolution, dead domain detection, and caching."""
+        import dns.resolver
+        def dns_mock(domain, qtype):
+            dom = str(domain).rstrip(".")
+            if dom in ["gmail.com"]:
+                if qtype == "MX":
+                    r = MagicMock()
+                    r.exchange.to_text.return_value = "gmail-smtp-in.l.google.com."
+                    return [r]
+                return [MagicMock(to_text=lambda: "142.250.190.5")]
+            raise dns.resolver.NXDOMAIN()
+
+        mock_resolve.side_effect = dns_mock
         clear_mx_cache()
         self.assertEqual(get_cached_domain_count(), 0)
 
@@ -1099,8 +1159,12 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertEqual(batch_res["invalid_count"], 2)
         self.assertEqual(len(batch_res["invalid_contacts"]), 2)
 
-    def test_30_scheduler_preflight_mx_interception(self):
+    @patch("dns.resolver.Resolver.resolve")
+    def test_30_scheduler_preflight_mx_interception(self, mock_resolve):
         """Test that scheduler intercepts dead domain emails before dispatch, marking them Bounced."""
+        import dns.resolver
+        mock_resolve.side_effect = dns.resolver.NXDOMAIN()
+
         # 1. Create a contact with a dead domain
         dead_domain_email = "ceo@nonexistentcompany999888777666.org"
         cid = create_contact(
@@ -1146,8 +1210,21 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("Bounced", c_check["tags_list"])
         self.assertIn("[Bounced:", c_check["notes"])
 
-    def test_31_csv_import_with_mx_verification(self):
+    @patch("dns.resolver.Resolver.resolve")
+    def test_31_csv_import_with_mx_verification(self, mock_resolve):
         """Test CSV import with verify_mx=True automatically flags dead domains with 'Invalid MX'."""
+        import dns.resolver
+        def dns_mock(domain, qtype):
+            dom = str(domain).rstrip(".")
+            if "gmail" in dom:
+                if qtype == "MX":
+                    r = MagicMock()
+                    r.exchange.to_text.return_value = "gmail-smtp-in.l.google.com."
+                    return [r]
+                return [MagicMock(to_text=lambda: "142.250.190.5")]
+            raise dns.resolver.NXDOMAIN()
+
+        mock_resolve.side_effect = dns_mock
         csv_payload = (
             "Name,Email,Company,Tags\n"
             "Live User,live@gmail.com,Google,Tech\n"
@@ -1233,6 +1310,217 @@ class TestEmailAutomationSystem(unittest.TestCase):
 
         # Clean up
         delete_smtp_account(acc_id, db_path=TEST_DB)
+
+    def test_34_staggered_schedule_span_hours(self):
+        """Test distributing contacts across a rolling span of X hours from now."""
+        base = datetime(2026, 9, 21, 10, 0, 0).astimezone()  # Monday 10:00
+        # 10 contacts spread across 3 hours
+        schedule = calculate_staggered_schedule(
+            total_contacts=10,
+            stagger_mode="next_x_hours",
+            base_dt=base,
+            span_hours=3.0,
+            sending_days=["Monday"],
+            start_time_str="09:00",
+            end_time_str="18:00",
+            use_jitter=False
+        )
+        self.assertEqual(len(schedule), 10)
+        self.assertEqual(schedule[0].replace(second=0, microsecond=0), base.replace(second=0, microsecond=0))
+        # All 10 contacts fall strictly within the 3-hour span (last at 162 mins = 12:42)
+        self.assertLess(schedule[-1], base + timedelta(hours=3))
+        self.assertEqual(schedule[-1].replace(second=0, microsecond=0) - schedule[0].replace(second=0, microsecond=0), timedelta(minutes=162))
+        # Verify strictly increasing
+        for i in range(len(schedule) - 1):
+            self.assertLess(schedule[i], schedule[i + 1])
+
+    def test_35_staggered_schedule_daily_window(self):
+        """Test distributing contacts across an active daily sending window."""
+        base = datetime(2026, 9, 21, 9, 0, 0).astimezone()  # Monday 09:00
+        # 5 contacts spread across 09:00 to 17:00 (8 hours = 480 mins -> 96 mins step)
+        schedule = calculate_staggered_schedule(
+            total_contacts=5,
+            stagger_mode="daily_window",
+            base_dt=base,
+            sending_days=["Monday"],
+            start_time_str="09:00",
+            end_time_str="17:00",
+            use_jitter=False
+        )
+        self.assertEqual(len(schedule), 5)
+        self.assertEqual(schedule[0].replace(second=0, microsecond=0), base.replace(second=0, microsecond=0))
+        # Each step is exactly 96 minutes
+        self.assertEqual(schedule[1] - schedule[0], timedelta(minutes=96))
+        # All 5 contacts are scheduled before the 17:00 cutoff on the same Monday
+        cutoff_dt = datetime(2026, 9, 21, 17, 0, 0).astimezone()
+        self.assertLess(schedule[-1], cutoff_dt)
+        self.assertEqual(schedule[-1].strftime("%A"), "Monday")
+
+    def test_36_staggered_schedule_fixed_interval_and_edge_cases(self):
+        """Test fixed interval spacing and edge cases (1 contact, 0 contacts)."""
+        base = datetime(2026, 9, 21, 10, 0, 0).astimezone()
+        # 4 contacts at 15-minute intervals
+        schedule = calculate_staggered_schedule(
+            total_contacts=4,
+            stagger_mode="fixed_interval",
+            base_dt=base,
+            spacing_minutes=15.0,
+            sending_days=["Monday"],
+            start_time_str="09:00",
+            end_time_str="18:00",
+            use_jitter=False
+        )
+        self.assertEqual(len(schedule), 4)
+        for i in range(3):
+            self.assertEqual(schedule[i + 1] - schedule[i], timedelta(minutes=15))
+
+        # 1 contact
+        single = calculate_staggered_schedule(total_contacts=1, base_dt=base)
+        self.assertEqual(len(single), 1)
+
+        # 0 contacts
+        empty = calculate_staggered_schedule(total_contacts=0, base_dt=base)
+        self.assertEqual(len(empty), 0)
+
+    def test_37_staggered_schedule_jitter(self):
+        """Test that natural jitter produces slight non-round variation while preserving contact count."""
+        base = datetime(2026, 9, 21, 10, 0, 0).astimezone()
+        schedule = calculate_staggered_schedule(
+            total_contacts=6,
+            stagger_mode="fixed_interval",
+            base_dt=base,
+            spacing_minutes=10.0,
+            sending_days=["Monday"],
+            start_time_str="09:00",
+            end_time_str="18:00",
+            use_jitter=True,
+            jitter_seed=42
+        )
+        self.assertEqual(len(schedule), 6)
+        # At least one timestamp should have non-zero seconds due to jitter
+        has_seconds = any(dt.second != 0 for dt in schedule)
+        self.assertTrue(has_seconds)
+
+    def test_38_selective_batch_approval_and_deletion(self):
+        """Test that selecting a subset of drafts approves only the chosen drafts and leaves unselected pending."""
+        d1 = create_email(email_html="<p>Body 1</p>", subject="Subj 1", recipient="r1@example.com", status="Pending", db_path=TEST_DB)
+        d2 = create_email(email_html="<p>Body 2</p>", subject="Subj 2", recipient="r2@example.com", status="Pending", db_path=TEST_DB)
+        d3 = create_email(email_html="<p>Body 3</p>", subject="Subj 3", recipient="r3@example.com", status="Pending", db_path=TEST_DB)
+
+        # Simulate user picking d1 and d3 from outside with checkboxes, leaving d2 unselected
+        selected_ids = [d1, d3]
+
+        for sid in selected_ids:
+            rec = get_email_by_id(sid, db_path=TEST_DB)
+            approve_email(
+                email_id=sid,
+                recipient=rec["recipient"],
+                scheduled_time="2026-09-20 10:00:00",
+                email_html=rec["email_html"],
+                subject=rec["subject"],
+                db_path=TEST_DB
+            )
+
+        # Verify d1 and d3 are Approved
+        r1 = get_email_by_id(d1, db_path=TEST_DB)
+        r2 = get_email_by_id(d2, db_path=TEST_DB)
+        r3 = get_email_by_id(d3, db_path=TEST_DB)
+
+        self.assertEqual(r1["status"], "Approved")
+        self.assertEqual(r3["status"], "Approved")
+        # Verify d2 was not approved and remains untouched in Pending
+        self.assertEqual(r2["status"], "Pending")
+
+        # Verify bulk delete on selected draft removes it
+        delete_email(d2, db_path=TEST_DB)
+        self.assertIsNone(get_email_by_id(d2, db_path=TEST_DB))
+
+    def test_39_staggered_schedule_window_rollover_no_clumping(self):
+        """Test that schedules crossing the daily cutoff roll over to next business morning and maintain spacing without clumping."""
+        from datetime import time
+        base = datetime(2026, 9, 21, 16, 37, 0).astimezone()  # Monday 16:37
+        # 10 contacts spread across a 4-hour span (step = 24.0 mins)
+        # Cutoff is 18:00 -> Contacts 0..3 fit Monday (16:37, 17:01, 17:25, 17:49)
+        # Contacts 4..9 roll over to Tuesday starting at 09:00, spaced by 24 mins
+        schedule = calculate_staggered_schedule(
+            total_contacts=10,
+            stagger_mode="span_hours",
+            base_dt=base,
+            span_hours=4.0,
+            sending_days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            start_time_str="09:00",
+            end_time_str="18:00",
+            use_jitter=False
+        )
+        self.assertEqual(len(schedule), 10)
+
+        # Mon 16:37
+        self.assertEqual(schedule[0].strftime("%A %H:%M"), "Monday 16:37")
+        self.assertEqual(schedule[1].strftime("%A %H:%M"), "Monday 17:01")
+        self.assertEqual(schedule[2].strftime("%A %H:%M"), "Monday 17:25")
+        self.assertEqual(schedule[3].strftime("%A %H:%M"), "Monday 17:49")
+
+        # Tuesday rollover starting at 09:00
+        self.assertEqual(schedule[4].strftime("%A %H:%M"), "Tuesday 09:00")
+        self.assertEqual(schedule[5].strftime("%A %H:%M"), "Tuesday 09:24")
+        self.assertEqual(schedule[6].strftime("%A %H:%M"), "Tuesday 09:48")
+        self.assertEqual(schedule[7].strftime("%A %H:%M"), "Tuesday 10:12")
+        self.assertEqual(schedule[8].strftime("%A %H:%M"), "Tuesday 10:36")
+        self.assertEqual(schedule[9].strftime("%A %H:%M"), "Tuesday 11:00")
+
+        # Verify no emails outside 09:00 - 18:00
+        for dt in schedule:
+            mins = dt.hour * 60 + dt.minute
+            self.assertGreaterEqual(mins, 9 * 60)
+            self.assertLess(mins, 18 * 60)
+
+        # Verify strictly increasing (no clumping)
+        for i in range(len(schedule) - 1):
+            self.assertLess(schedule[i], schedule[i + 1])
+
+    def test_40_schedule_overflow_analysis(self):
+        """Test analyze_schedule_overflow helper for transparent live UI warnings."""
+        base = datetime(2026, 9, 21, 16, 37, 0).astimezone()  # Monday 16:37
+        schedule = calculate_staggered_schedule(
+            total_contacts=10,
+            stagger_mode="span_hours",
+            base_dt=base,
+            span_hours=4.0,
+            sending_days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            start_time_str="09:00",
+            end_time_str="18:00",
+            use_jitter=False
+        )
+
+        analysis = analyze_schedule_overflow(schedule, end_time_str="18:00", reference_dt=base)
+        self.assertEqual(analysis["total_count"], 10)
+        self.assertEqual(analysis["today_count"], 4)
+        self.assertEqual(analysis["overflow_count"], 6)
+        self.assertFalse(analysis["fits_today"])
+        self.assertEqual(
+            analysis["warning_message"],
+            "10 contacts won't all fit before 18:00 today — 6 will continue tomorrow from 09:00."
+        )
+
+        # Early day case: all fit today
+        base_early = datetime(2026, 9, 21, 10, 0, 0).astimezone()
+        schedule_early = calculate_staggered_schedule(
+            total_contacts=4,
+            stagger_mode="fixed_interval",
+            base_dt=base_early,
+            spacing_minutes=15.0,
+            sending_days=["Monday"],
+            start_time_str="09:00",
+            end_time_str="18:00",
+            use_jitter=False
+        )
+        analysis_early = analyze_schedule_overflow(schedule_early, end_time_str="18:00", reference_dt=base_early)
+        self.assertEqual(analysis_early["total_count"], 4)
+        self.assertEqual(analysis_early["today_count"], 4)
+        self.assertEqual(analysis_early["overflow_count"], 0)
+        self.assertTrue(analysis_early["fits_today"])
+        self.assertIsNone(analysis_early["warning_message"])
+        self.assertIn("All 4 contacts will be dispatched today", analysis_early["summary_message"])
 
 if __name__ == "__main__":
     unittest.main()

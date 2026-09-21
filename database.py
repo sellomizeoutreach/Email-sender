@@ -9,6 +9,164 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Tuple
+import re
+import logging
+
+logger = logging.getLogger("database")
+
+def get_log_file_path() -> str:
+    """Determine sellomize.log file location."""
+    if getattr(sys, 'frozen', False):
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        log_dir = os.path.join(appdata, "SellomizeReach")
+    else:
+        log_dir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, "sellomize.log")
+
+try:
+    _fh = logging.FileHandler(get_log_file_path(), mode="a", encoding="utf-8")
+    _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] [%(name)s] %(message)s"))
+    logger.addHandler(_fh)
+except Exception:
+    pass
+
+
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    Fernet = None
+    InvalidToken = Exception
+    CRYPTOGRAPHY_AVAILABLE = False
+
+try:
+    import keyring
+    KEYRING_AVAILABLE = True
+except ImportError:
+    keyring = None
+    KEYRING_AVAILABLE = False
+
+try:
+    import win32crypt
+    DPAPI_AVAILABLE = True
+except ImportError:
+    win32crypt = None
+    DPAPI_AVAILABLE = False
+
+IDENTIFIER_REGEX = re.compile(r'^[a-zA-Z0-9_]+$')
+
+def validate_identifier(name: str) -> str:
+    """Validate that an SQL column or table identifier matches ^[a-zA-Z0-9_]+$ to prevent DDL injection."""
+    if not name or not IDENTIFIER_REGEX.match(str(name).strip()):
+        raise ValueError(f"Invalid SQL column identifier: {name!r}")
+    return str(name).strip()
+
+KEYRING_SERVICE_NAME = "SellomizeReach"
+KEYRING_USERNAME = "smtp_fernet_key"
+
+def _get_dpapi_key_file_path() -> str:
+    """Fallback location for DPAPI-protected encryption key."""
+    if getattr(sys, 'frozen', False):
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        data_dir = os.path.join(appdata, "SellomizeReach")
+    else:
+        data_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(data_dir, ".smtp_dpapi.key")
+
+def get_or_create_encryption_key() -> bytes:
+    """
+    Retrieve or generate a 256-bit Fernet key stored securely in the OS keychain via keyring.
+    Falls back gracefully to Windows DPAPI if keyring is unavailable or restricted.
+    """
+    if KEYRING_AVAILABLE and keyring:
+        try:
+            stored_key = keyring.get_password(KEYRING_SERVICE_NAME, KEYRING_USERNAME)
+            if stored_key:
+                return stored_key.encode("utf-8")
+            if Fernet:
+                new_key = Fernet.generate_key().decode("utf-8")
+                keyring.set_password(KEYRING_SERVICE_NAME, KEYRING_USERNAME, new_key)
+                return new_key.encode("utf-8")
+        except Exception as e:
+            logger.warning(f"Keyring access error: {e}. Falling back to DPAPI.")
+
+    if DPAPI_AVAILABLE and win32crypt and Fernet:
+        key_file = _get_dpapi_key_file_path()
+        try:
+            if os.path.exists(key_file):
+                with open(key_file, "rb") as f:
+                    encrypted_data = f.read()
+                decrypted = win32crypt.CryptUnprotectData(encrypted_data, None, None, None, 0)[1]
+                return decrypted
+            else:
+                new_key = Fernet.generate_key()
+                protected_data = win32crypt.CryptProtectData(new_key, "SellomizeKey", None, None, None, 0)
+                with open(key_file, "wb") as f:
+                    f.write(protected_data)
+                return new_key
+        except Exception as e:
+            logger.warning(f"DPAPI key management error: {e}")
+
+    logger.warning("Neither Keyring nor DPAPI available. Using local ephemeral fallback key.")
+    if Fernet:
+        return b"4XW7c1o3K9nL0pQ_vRtY2uI5eA8sD6fG1hJ4kL7zX9c="
+    return b"fallback_insecure_key_32_bytes_!"
+
+def encrypt_smtp_password(plain_password: str) -> str:
+    """
+    Encrypt plaintext password using Fernet symmetric encryption.
+    Returns ciphertext string starting with 'gAAAAA'.
+    """
+    if not plain_password:
+        return ""
+    if not CRYPTOGRAPHY_AVAILABLE or not Fernet:
+        logger.warning("Cryptography library not available; returning plaintext.")
+        return plain_password
+    try:
+        key = get_or_create_encryption_key()
+        f = Fernet(key)
+        encrypted = f.encrypt(plain_password.strip().encode("utf-8"))
+        return encrypted.decode("utf-8")
+    except Exception as e:
+        logger.error(f"Error encrypting password: {e}")
+        return plain_password
+
+def decrypt_smtp_password(raw_value: str) -> Tuple[str, bool]:
+    """
+    Decrypt an SMTP password stored in SQLite.
+    Returns (decrypted_password, is_undecryptable).
+    - If raw_value is empty: returns ('', False)
+    - If raw_value is legacy plaintext (not starting with 'gAAAAA'): returns (raw_value, False)
+    - If decryption fails (corrupted token or DB moved across machines): returns ('', True)
+    """
+    if not raw_value or not raw_value.strip():
+        return "", False
+    val = raw_value.strip()
+    if not val.startswith("gAAAAA"):
+        # Legacy unencrypted plaintext password
+        return val, False
+    if not CRYPTOGRAPHY_AVAILABLE or not Fernet:
+        logger.warning("Cryptography library not available to decrypt password.")
+        return "", True
+    try:
+        key = get_or_create_encryption_key()
+        f = Fernet(key)
+        decrypted = f.decrypt(val.encode("utf-8")).decode("utf-8")
+        return decrypted, False
+    except (InvalidToken, Exception) as e:
+        logger.warning(f"Failed to decrypt SMTP password with current OS keychain key: {e}")
+        return "", True
+
+def _hydrate_smtp_account(acc: Dict[str, Any]) -> Dict[str, Any]:
+    """Decrypt the stored password on an account record, setting safety flags if undecryptable."""
+    raw_pass = acc.get("password") or ""
+    dec_pass, undecryptable = decrypt_smtp_password(raw_pass)
+    acc["password"] = dec_pass
+    if undecryptable:
+        acc["password_undecryptable"] = True
+    return acc
+
 
 def get_db_path() -> str:
     """
@@ -75,9 +233,11 @@ def init_db(db_path: str = DB_FILE):
     ]
     for col_name, col_def in contact_migrations:
         try:
-            cursor.execute(f"ALTER TABLE contacts ADD COLUMN {col_name} {col_def}")
-        except Exception:
-            pass
+            valid_col = validate_identifier(col_name)
+            cursor.execute(f"ALTER TABLE contacts ADD COLUMN {valid_col} {col_def}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.warning(f"OperationalError during contacts migration for {col_name}: {e}")
 
     # 3. Templates table (Reusable Spintax & Variable templates)
     cursor.execute("""
@@ -126,9 +286,11 @@ def init_db(db_path: str = DB_FILE):
     ]
     for col_name, col_def in email_migrations:
         try:
-            cursor.execute(f"ALTER TABLE emails ADD COLUMN {col_name} {col_def}")
-        except Exception:
-            pass
+            valid_col = validate_identifier(col_name)
+            cursor.execute(f"ALTER TABLE emails ADD COLUMN {valid_col} {col_def}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.warning(f"OperationalError during emails migration for {col_name}: {e}")
 
     # High-performance database indexes for sub-millisecond query execution
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_status_sched ON emails(status, scheduled_time)")
@@ -169,24 +331,19 @@ def init_db(db_path: str = DB_FILE):
     ]
     for col_name, col_def in smtp_migrations:
         try:
-            cursor.execute(f"ALTER TABLE smtp_accounts ADD COLUMN {col_name} {col_def}")
-        except Exception:
-            pass
+            valid_col = validate_identifier(col_name)
+            cursor.execute(f"ALTER TABLE smtp_accounts ADD COLUMN {valid_col} {col_def}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.warning(f"OperationalError during smtp_accounts migration for {col_name}: {e}")
 
     # Populate default configuration keys if not already present
     default_configs = {
-        "gemini_api_key": "AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw",
-        "gcp_project_id": "606768026327",
-        "openai_api_key": "",
-        "anthropic_api_key": "",
-        "primary_model": "gemini/gemini-1.5-flash",
-        "fallback_model": "gpt-4o-mini",
         "dispatch_method": "hostinger_smtp",
         "min_delay_seconds": "20",
         "max_delay_seconds": "45",
         "sender_email": "",
         "bcc_email": "",
-        "spam_blocklist": "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast",
         "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
         "signature_html": "<p>Best regards,<br><strong>Listing Audit Team</strong><br><a href='https://example.com'>example.com</a></p>",
         "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
@@ -287,48 +444,9 @@ def is_within_sending_window(
     check_dt: Optional[datetime] = None,
     db_path: str = DB_FILE
 ) -> Tuple[bool, str]:
-    """
-    Evaluate whether a given datetime (or current local time) falls inside the
-    configured campaign sending window and allowed business days.
-    Returns (True, message) if dispatch is allowed, or (False, reason) if paused.
-    """
-    enforce_str = get_config("enforce_sending_window", "true", db_path=db_path) or "true"
-    enforce = enforce_str.strip().lower() in ["true", "1", "yes", "on"]
-    if not enforce:
-        return True, "Sending window enforcement disabled (24/7 delivery allowed)"
-
-    dt = check_dt or datetime.now().astimezone()
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-
-    day_name = dt.strftime("%A")
-    raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
-    allowed_days = [d.strip().capitalize() for d in raw_days.split(",") if d.strip()]
-    if not allowed_days:
-        allowed_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-
-    if day_name not in allowed_days:
-        return False, f"Today ({day_name}) is outside allowed sending days ({', '.join(allowed_days)})"
-
-    start_str = (get_config("sending_start_time", "09:00", db_path=db_path) or "09:00").strip()
-    end_str = (get_config("sending_end_time", "18:00", db_path=db_path) or "18:00").strip()
-
-    try:
-        sh, sm = map(int, start_str.split(":"))
-        eh, em = map(int, end_str.split(":"))
-    except Exception:
-        sh, sm, eh, em = 9, 0, 18, 0
-
-    curr_mins = dt.hour * 60 + dt.minute
-    start_mins = sh * 60 + sm
-    end_mins = eh * 60 + em
-
-    if curr_mins < start_mins:
-        return False, f"Current time ({dt.strftime('%H:%M')}) is before daily start time ({start_str})"
-    if curr_mins >= end_mins:
-        return False, f"Current time ({dt.strftime('%H:%M')}) is past daily cutoff time ({end_str})"
-
-    return True, f"Inside outbound window ({day_name} {start_str}-{end_str})"
+    """Compatibility wrapper delegating to scheduler.is_within_sending_window."""
+    from scheduler import is_within_sending_window as _fn
+    return _fn(check_dt=check_dt, db_path=db_path)
 
 def get_next_valid_sending_datetime(
     base_dt: Optional[datetime] = None,
@@ -338,60 +456,16 @@ def get_next_valid_sending_datetime(
     end_time_str: Optional[str] = None,
     db_path: str = DB_FILE
 ) -> datetime:
-    """
-    Calculate the next valid sending datetime adhering to allowed days of week
-    and daily working hours. If outside hours or on a weekend/pause day, advances
-    to the next allowed day at start_time.
-    """
-    dt = base_dt or datetime.now().astimezone()
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-
-    if delay_minutes > 0:
-        dt = dt + timedelta(minutes=delay_minutes)
-
-    if sending_days is not None and len(sending_days) > 0:
-        allowed_days = [d.strip().capitalize() for d in sending_days if d.strip()]
-    else:
-        raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
-        allowed_days = [d.strip().capitalize() for d in raw_days.split(",") if d.strip()]
-        if not allowed_days:
-            allowed_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-
-    s_str = (start_time_str or get_config("sending_start_time", "09:00", db_path=db_path) or "09:00").strip()
-    e_str = (end_time_str or get_config("sending_end_time", "18:00", db_path=db_path) or "18:00").strip()
-
-    try:
-        sh, sm = map(int, s_str.split(":"))
-        eh, em = map(int, e_str.split(":"))
-    except Exception:
-        sh, sm, eh, em = 9, 0, 18, 0
-
-    start_mins = sh * 60 + sm
-    end_mins = eh * 60 + em
-
-    # Loop up to 14 days to find next valid time slot
-    for _ in range(14):
-        day_name = dt.strftime("%A")
-        curr_mins = dt.hour * 60 + dt.minute
-
-        if day_name in allowed_days:
-            if curr_mins < start_mins:
-                # Before start time today -> snap to start time today
-                return dt.replace(hour=sh, minute=sm, second=0, microsecond=0)
-            elif curr_mins < end_mins:
-                # Within window today -> use as is
-                return dt
-            else:
-                # Past end time today -> advance to tomorrow at start time
-                tomorrow = dt + timedelta(days=1)
-                dt = tomorrow.replace(hour=sh, minute=sm, second=0, microsecond=0)
-        else:
-            # Non-sending day -> advance to tomorrow at start time
-            tomorrow = dt + timedelta(days=1)
-            dt = tomorrow.replace(hour=sh, minute=sm, second=0, microsecond=0)
-
-    return dt
+    """Compatibility wrapper delegating to scheduler.get_next_valid_sending_datetime."""
+    from scheduler import get_next_valid_sending_datetime as _fn
+    return _fn(
+        base_dt=base_dt,
+        delay_minutes=delay_minutes,
+        sending_days=sending_days,
+        start_time_str=start_time_str,
+        end_time_str=end_time_str,
+        db_path=db_path
+    )
 
 # ------------------------------------------------------------------------------
 # CONTACTS CRM HELPERS
@@ -455,7 +529,8 @@ def _populate_contact_defaults(d: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure all CRM spreadsheet fields have standardized non-null default values."""
     try:
         d["custom_variables_dict"] = json.loads(d.get("custom_variables") or "{}")
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError) as json_err:
+        logger.warning(f"Error parsing custom_variables JSON on contact {d.get('id')}: {json_err}")
         d["custom_variables_dict"] = {}
     raw_tags = d.get("tags") or ""
     d["tags_list"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
@@ -466,7 +541,7 @@ def _populate_contact_defaults(d: Dict[str, Any]) -> Dict[str, Any]:
     d["status"] = d.get("status") or "Not Contacted"
     try:
         d["follow_ups_sent"] = int(d.get("follow_ups_sent") if d.get("follow_ups_sent") is not None else 0)
-    except Exception:
+    except (ValueError, TypeError):
         d["follow_ups_sent"] = 0
     d["last_contact_date"] = d.get("last_contact_date") or ""
     d["next_follow_up"] = d.get("next_follow_up") or ""
@@ -907,8 +982,8 @@ def get_all_distinct_custom_variable_keys(include_predefined: bool = True, db_pa
                 for k in parsed.keys():
                     if k and str(k).strip():
                         keys_set.add(str(k).strip())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, TypeError, ValueError) as json_err:
+            logger.warning(f"Error decoding custom_variables JSON in contacts: {json_err}")
     return sorted(list(keys_set))
 
 def parse_variables_from_text(raw_text: str) -> Dict[str, str]:
@@ -932,7 +1007,7 @@ def parse_variables_from_text(raw_text: str) -> Dict[str, str]:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
                 return {str(k).strip(): str(v).strip() for k, v in parsed.items() if str(k).strip()}
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
     # Parse line by line: Key: Value or Key = Value
@@ -1077,7 +1152,8 @@ def bulk_update_contacts_details(
             cid = r["id"]
             try:
                 curr_vars = json.loads(r["custom_variables"] or "{}")
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError) as json_err:
+                logger.warning(f"Error parsing custom_variables JSON on contact {cid}: {json_err}")
                 curr_vars = {}
             curr_vars.update(custom_vars_to_merge)
             cursor.execute("UPDATE contacts SET custom_variables = ? WHERE id = ?", (json.dumps(curr_vars), cid))
@@ -1190,6 +1266,8 @@ def get_email_by_id(email_id: int, db_path: str = DB_FILE) -> Optional[Dict[str,
     conn.close()
     return dict(row) if row else None
 
+_FIELD_UNSET = object()
+
 def update_email(
     email_id: int,
     email_html: Optional[str] = None,
@@ -1197,8 +1275,8 @@ def update_email(
     recipient: Optional[str] = None,
     scheduled_time: Optional[str] = None,
     status: Optional[str] = None,
-    revision_notes: Optional[str] = None,
-    error_message: Optional[str] = None,
+    revision_notes: Any = _FIELD_UNSET,
+    error_message: Any = _FIELD_UNSET,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
@@ -1223,10 +1301,10 @@ def update_email(
     if status is not None:
         fields.append("status = ?")
         values.append(status)
-    if revision_notes is not None:
+    if revision_notes is not _FIELD_UNSET:
         fields.append("revision_notes = ?")
         values.append(revision_notes)
-    if error_message is not None:
+    if error_message is not _FIELD_UNSET:
         fields.append("error_message = ?")
         values.append(error_message)
 
@@ -1239,7 +1317,7 @@ def update_email(
 def approve_email(
     email_id: int,
     recipient: str,
-    scheduled_time: str,
+    scheduled_time: Optional[str] = None,
     email_html: Optional[str] = None,
     subject: Optional[str] = None,
     db_path: str = DB_FILE
@@ -1252,15 +1330,21 @@ def approve_email(
         scheduled_time=scheduled_time,
         status="Approved",
         error_message=None,
+        revision_notes=None,
         db_path=db_path
     )
 
-def flag_email(email_id: int, trigger_word: str, db_path: str = DB_FILE):
-    """Mark email status as Flagged due to a detected negative keyword."""
+def flag_email(email_id: int, trigger_word: Union[str, List[str]], db_path: str = DB_FILE):
+    """Mark email status as Flagged due to detected negative keyword(s)."""
+    if isinstance(trigger_word, (list, tuple, set)):
+        trig_str = ", ".join(f"'{w}'" for w in trigger_word)
+        notes = f"Flagged for trigger keyword(s): {trig_str}"
+    else:
+        notes = f"Flagged for trigger keyword(s): '{trigger_word}'"
     update_email(
         email_id=email_id,
         status="Flagged",
-        revision_notes=f"Flagged for negative keyword: '{trigger_word}'",
+        revision_notes=notes,
         db_path=db_path
     )
 
@@ -1398,24 +1482,74 @@ def record_email_click(email_id: int, clicked_url: str = "", db_path: str = DB_F
     conn.close()
     return True
 
-def record_email_bounce(recipient_email: str, bounce_reason: str = "", db_path: str = DB_FILE) -> int:
+def record_email_bounce(
+    recipient_email: str,
+    bounce_reason: str = "",
+    smtp_code: Optional[int] = None,
+    db_path: str = DB_FILE
+) -> int:
     """
-    Mark all emails and contacts associated with recipient_email as bounced.
+    Record an email bounce with hard vs soft bounce discrimination.
+    Hard bounce (e.g. 550, user unknown, mailbox not found):
+      - Update emails table: is_bounced = 1, status = 'Bounced'.
+      - Quarantine contact: status = 'Bounced', tag 'Bounced', notes audit log.
+    Soft bounce (e.g. 452 mailbox full, greylisting, temporary 4xx failure):
+      - Update emails table: is_bounced = 0, status = 'Flagged' for retry.
+      - Contact status is UNCHANGED (not 'Do Not Contact', not 'Bounced').
+      - Add audit note [Soft Bounce: ...] to contact notes.
     """
     clean_email = recipient_email.strip().lower()
     if not clean_email:
         return 0
 
+    # Determine if soft or hard bounce
+    is_soft = False
+    if smtp_code is not None:
+        if 400 <= smtp_code < 500:
+            is_soft = True
+    else:
+        reason_lower = (bounce_reason or "").lower()
+        soft_signals = ["452", "451", "421", "mailbox full", "quota exceeded", "greylist", "try again", "temporary", "busy"]
+        if any(sig in reason_lower for sig in soft_signals):
+            is_soft = True
+
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
-    # 1. Update emails table
+    if is_soft:
+        # 1. Update emails table: mark Flagged for retry, not hard bounced
+        cursor.execute("""
+            UPDATE emails SET is_bounced = 0, bounce_reason = ?, status = 'Flagged'
+            WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved', 'Draft')
+        """, (f"Soft bounce: {bounce_reason.strip()}", clean_email))
+
+        # 2. Update contacts table: leave status unchanged, add audit note
+        cursor.execute("SELECT id, status, tags, notes FROM contacts WHERE LOWER(TRIM(email)) = ?", (clean_email,))
+        contact_rows = cursor.fetchall()
+        for crow in contact_rows:
+            cid = crow["id"]
+            curr_notes = crow["notes"] or ""
+            reason_note = f"[Soft Bounce: {bounce_reason}]" if bounce_reason else "[Soft Bounce: Temporary Delivery Failure]"
+            if reason_note not in curr_notes:
+                updated_notes = f"{curr_notes} {reason_note}".strip() if curr_notes else reason_note
+            else:
+                updated_notes = curr_notes
+
+            # Status is strictly preserved unchanged
+            cursor.execute("""
+                UPDATE contacts SET notes = ? WHERE id = ?
+            """, (updated_notes, cid))
+
+        conn.commit()
+        conn.close()
+        return len(contact_rows)
+
+    # Hard bounce
     cursor.execute("""
         UPDATE emails SET is_bounced = 1, bounce_reason = ?, status = 'Bounced'
         WHERE LOWER(TRIM(recipient)) = ?
     """, (bounce_reason.strip(), clean_email))
 
-    # 2. Update contacts table
     cursor.execute("SELECT id, tags, notes FROM contacts WHERE LOWER(TRIM(email)) = ?", (clean_email,))
     contact_rows = cursor.fetchall()
     for crow in contact_rows:
@@ -1609,32 +1743,71 @@ def get_bounced_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
 # SMTP ACCOUNTS HELPERS (HOSTINGER / MULTI-ACCOUNT ROTATION)
 # ------------------------------------------------------------------------------
 
-def get_effective_daily_limit(account: Dict[str, Any], today_str: Optional[str] = None) -> int:
+def get_warmup_info(account: Dict[str, Any], today_str: Optional[str] = None) -> Dict[str, Any]:
     """
-    Calculate the active daily sending cap for an SMTP account.
-    If warmup is enabled:
-        days_elapsed = max(0, (today - warmup_start_date).days)
-        effective_limit = min(warmup_target_limit, warmup_starting_limit + (days_elapsed * warmup_daily_increment))
-    If warmup is disabled:
-        effective_limit = daily_limit
+    Single source of truth for warmup progress and effective daily sending limits.
+    Returns:
+        {
+            "is_warmup": bool,
+            "day_num": int,
+            "effective_limit": int,
+            "target_limit": int,
+            "days_elapsed": int
+        }
     """
-    if not account.get("warmup_enabled"):
-        return int(account.get("daily_limit", 50))
+    is_warmup = bool(account.get("warmup_enabled"))
+    target_limit = int(account.get("warmup_target_limit") or account.get("daily_limit") or 50)
+    start_lim = int(account.get("warmup_starting_limit") if account.get("warmup_starting_limit") is not None else 10)
+    inc = int(account.get("warmup_daily_increment") if account.get("warmup_daily_increment") is not None else 5)
+
+    if not is_warmup:
+        eff = int(account.get("daily_limit", 50))
+        return {
+            "is_warmup": False,
+            "day_num": 1,
+            "effective_limit": eff,
+            "target_limit": target_limit,
+            "days_elapsed": 0
+        }
+
+    start_date_str = (account.get("warmup_start_date") or "").strip()
+    if not start_date_str:
+        eff = int(account.get("daily_limit", 50))
+        return {
+            "is_warmup": True,
+            "day_num": 1,
+            "effective_limit": eff,
+            "target_limit": target_limit,
+            "days_elapsed": 0
+        }
 
     try:
-        start_date_str = (account.get("warmup_start_date") or "").strip()
-        if not start_date_str:
-            return int(account.get("daily_limit", 50))
         start_date = datetime.strptime(start_date_str.split()[0], "%Y-%m-%d").date()
         today = datetime.strptime(today_str, "%Y-%m-%d").date() if today_str else datetime.now().astimezone().date()
         days_elapsed = max(0, (today - start_date).days)
-        start_lim = int(account.get("warmup_starting_limit") if account.get("warmup_starting_limit") is not None else 10)
-        inc = int(account.get("warmup_daily_increment") if account.get("warmup_daily_increment") is not None else 5)
-        target = int(account.get("warmup_target_limit") if account.get("warmup_target_limit") is not None else account.get("daily_limit", 50))
-        calculated = start_lim + (days_elapsed * inc)
-        return min(calculated, target)
-    except Exception:
-        return int(account.get("daily_limit", 50))
+        day_num = days_elapsed + 1
+        effective_limit = min(target_limit, start_lim + (days_elapsed * inc))
+        return {
+            "is_warmup": True,
+            "day_num": day_num,
+            "effective_limit": effective_limit,
+            "target_limit": target_limit,
+            "days_elapsed": days_elapsed
+        }
+    except (ValueError, TypeError, AttributeError) as d_err:
+        logger.warning(f"Error calculating warmup info: {d_err}. Falling back to default daily limit.")
+        return {
+            "is_warmup": True,
+            "day_num": 1,
+            "effective_limit": int(account.get("daily_limit", 50)),
+            "target_limit": target_limit,
+            "days_elapsed": 0
+        }
+
+def get_effective_daily_limit(account: Dict[str, Any], today_str: Optional[str] = None) -> int:
+    """Calculate the active daily sending cap for an SMTP account using get_warmup_info."""
+    return get_warmup_info(account, today_str=today_str)["effective_limit"]
+
 
 def add_smtp_account(
     sender_name: str,
@@ -1656,6 +1829,7 @@ def add_smtp_account(
     today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
     conn = get_connection(db_path)
     cursor = conn.cursor()
+    encrypted_pw = encrypt_smtp_password(password.strip())
     cursor.execute("""
         INSERT INTO smtp_accounts (
             sender_name, email, smtp_host, smtp_port, password,
@@ -1668,7 +1842,7 @@ def add_smtp_account(
         email.strip().lower(),
         smtp_host.strip(),
         int(smtp_port),
-        password.strip(),
+        encrypted_pw,
         int(daily_limit),
         today_str,
         1 if is_active else 0,
@@ -1685,7 +1859,7 @@ def add_smtp_account(
     return account_id
 
 def get_smtp_accounts(active_only: bool = False, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
-    """Retrieve all or active SMTP sender accounts."""
+    """Retrieve all or active SMTP sender accounts, hydrating decrypted passwords."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
     if active_only:
@@ -1694,7 +1868,7 @@ def get_smtp_accounts(active_only: bool = False, db_path: str = DB_FILE) -> List
         cursor.execute("SELECT * FROM smtp_accounts ORDER BY id ASC")
     rows = cursor.fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [_hydrate_smtp_account(dict(r)) for r in rows]
 
 def get_smtp_account_by_id(account_id: int, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
     conn = get_connection(db_path)
@@ -1702,7 +1876,7 @@ def get_smtp_account_by_id(account_id: int, db_path: str = DB_FILE) -> Optional[
     cursor.execute("SELECT * FROM smtp_accounts WHERE id = ?", (account_id,))
     row = cursor.fetchone()
     conn.close()
-    return dict(row) if row else None
+    return _hydrate_smtp_account(dict(row)) if row else None
 
 def update_smtp_account(
     account_id: int,
@@ -1731,8 +1905,9 @@ def update_smtp_account(
         fields.append("email = ?")
         values.append(email.strip().lower())
     if password is not None and password.strip():
+        encrypted_pw = encrypt_smtp_password(password.strip())
         fields.append("password = ?")
-        values.append(password.strip())
+        values.append(encrypted_pw)
     if smtp_host is not None:
         fields.append("smtp_host = ?")
         values.append(smtp_host.strip())
@@ -1804,7 +1979,7 @@ def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str
     conn.close()
 
     for r in rows:
-        acc = dict(r)
+        acc = _hydrate_smtp_account(dict(r))
         eff_limit = get_effective_daily_limit(acc, today_str=today_str)
         if acc["sent_today"] < eff_limit:
             acc["effective_daily_limit"] = eff_limit
@@ -1824,6 +1999,114 @@ def increment_smtp_sent(account_id: int, db_path: str = DB_FILE):
     """, (today_str, account_id))
     conn.commit()
     conn.close()
+
+def generate_campaign_drafts(
+    contact_ids: List[int],
+    template_id: int,
+    subject_template: str = "",
+    sending_days: Optional[List[str]] = None,
+    start_time_str: str = "09:00",
+    end_time_str: str = "18:00",
+    spacing_minutes: int = 5,
+    auto_stagger: bool = True,
+    base_start_dt: Optional[datetime] = None,
+    db_path: str = DB_FILE
+) -> Dict[str, Any]:
+    """
+    Deterministically generate personalized outreach draft emails for target contacts.
+    1. Injects recipient dynamic variables ([Name], [Company], custom variables).
+    2. Resolves Spintax {option1|option2}.
+    3. Formats paragraphs in clean HTML <p> tags.
+    4. Evaluates copy against negative keyword guardrails (flags if detected).
+    5. Calculates staggered send times adhering to sending window boundaries.
+    6. Persists drafts to SQLite emails table.
+    """
+    from template_engine import (
+        resolve_template,
+        format_email_html,
+        scan_negative_keywords,
+        scan_all_negative_keywords,
+        parse_spintax,
+        inject_variables
+    )
+
+    template = get_template_by_id(template_id, db_path=db_path)
+    if not template:
+        raise ValueError(f"Template ID #{template_id} does not exist.")
+
+    neg_keywords_setting = get_config("negative_keywords", "", db_path=db_path) or ""
+
+    first_slot = get_next_valid_sending_datetime(
+        base_dt=base_start_dt or datetime.now(),
+        sending_days=sending_days,
+        start_time_str=start_time_str,
+        end_time_str=end_time_str,
+        db_path=db_path
+    )
+
+    created_ids = []
+    created_pending = 0
+    created_flagged = 0
+    last_sched_dt = first_slot
+
+    for idx, cid in enumerate(contact_ids):
+        contact = get_contact_by_id(cid, db_path=db_path)
+        if not contact:
+            continue
+
+        # 1. Deterministic Variable Injection & Spintax Resolution
+        resolved_body = resolve_template(template["body_content"], contact)
+        final_html = format_email_html(resolved_body)
+
+        # 2. Subject Line Resolution with Variables & Spintax
+        subj_template = subject_template.strip() if subject_template.strip() else template["template_name"]
+        final_subject = parse_spintax(inject_variables(subj_template, contact))
+
+        # 3. Negative Keyword Guardrail
+        combined_text = f"{final_subject} {final_html}"
+        detected_triggers = scan_all_negative_keywords(combined_text, neg_keywords_setting)
+
+        if detected_triggers:
+            status = "Flagged"
+            trig_str = ", ".join(f"'{t}'" for t in detected_triggers)
+            reason = f"Automated Scan Alert: Negative keyword(s) {trig_str} detected in copy."
+            created_flagged += 1
+        else:
+            status = "Draft"
+            reason = None
+            created_pending += 1
+
+        # 4. Stagger schedule time if requested
+        if idx == 0 or not auto_stagger:
+            sched_time = last_sched_dt
+        else:
+            next_cand = last_sched_dt + timedelta(minutes=int(spacing_minutes))
+            sched_time = get_next_valid_sending_datetime(
+                base_dt=next_cand,
+                sending_days=sending_days,
+                start_time_str=start_time_str,
+                end_time_str=end_time_str,
+                db_path=db_path
+            )
+            last_sched_dt = sched_time
+
+        eid = create_email(
+            email_html=final_html,
+            subject=final_subject,
+            recipient=contact["email"],
+            status=status,
+            revision_notes=reason,
+            scheduled_time=sched_time.strftime("%Y-%m-%d %H:%M:%S"),
+            db_path=db_path
+        )
+        created_ids.append(eid)
+
+    return {
+        "created_count": len(created_ids),
+        "pending_count": created_pending,
+        "flagged_count": created_flagged,
+        "email_ids": created_ids
+    }
 
 # Initialize upon import if DB does not exist
 if not os.path.exists(DB_FILE):

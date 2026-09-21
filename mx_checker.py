@@ -18,9 +18,15 @@ EMAIL_REGEX = re.compile(
     r"^[a-zA-Z0-9_.+-]+@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)$"
 )
 
-# In-memory thread-safe domain cache
-# Maps domain -> (is_valid: bool, reason: str, records: List[str])
-_MX_CACHE: Dict[str, Tuple[bool, str, List[str]]] = {}
+import time
+from collections import OrderedDict
+
+MAX_CACHE_SIZE = 1000
+CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+
+# In-memory thread-safe domain LRU cache
+# Maps domain -> ( (is_valid, reason, records), timestamp )
+_MX_CACHE: OrderedDict[str, Tuple[Tuple[bool, str, List[str]], float]] = OrderedDict()
 _CACHE_LOCK = threading.Lock()
 
 # Try importing dnspython
@@ -62,8 +68,28 @@ def get_domain_from_email(email_address: str) -> Optional[str]:
         return None
     return domain
 
+def get_cached_domain_mx(email_address: str) -> Optional[Tuple[bool, str]]:
+    """
+    Check if the domain's MX status is already in the in-memory LRU cache and unexpired.
+    Never initiates a live network or DNS query.
+    Returns (is_valid, reason) or None if not cached.
+    """
+    clean_email = (email_address or "").strip()
+    if not clean_email:
+        return None
+    domain = get_domain_from_email(clean_email)
+    if not domain:
+        return False, "Invalid email format"
+    with _CACHE_LOCK:
+        if domain in _MX_CACHE:
+            cached_res, cached_ts = _MX_CACHE[domain]
+            if time.time() - cached_ts <= CACHE_TTL_SECONDS:
+                return cached_res[0], cached_res[1]
+    return None
+
 
 def verify_email_domain_mx(
+
     email_address: str,
     timeout: float = 3.0,
     use_cache: bool = True
@@ -89,7 +115,13 @@ def verify_email_domain_mx(
     if use_cache:
         with _CACHE_LOCK:
             if domain in _MX_CACHE:
-                return _MX_CACHE[domain]
+                cached_res, cached_ts = _MX_CACHE[domain]
+                if time.time() - cached_ts <= CACHE_TTL_SECONDS:
+                    _MX_CACHE.move_to_end(domain)
+                    return cached_res
+                else:
+                    # Expired entry (>24h) -> evict and resolve fresh
+                    del _MX_CACHE[domain]
 
     result: Tuple[bool, str, List[str]]
 
@@ -124,10 +156,14 @@ def verify_email_domain_mx(
         # 2. Fallback path: native socket
         result = _fallback_socket_check(domain)
 
-    # Cache result
+    # Cache result in LRU cache with current timestamp
     if use_cache:
         with _CACHE_LOCK:
-            _MX_CACHE[domain] = result
+            if domain in _MX_CACHE:
+                _MX_CACHE.move_to_end(domain)
+            _MX_CACHE[domain] = (result, time.time())
+            while len(_MX_CACHE) > MAX_CACHE_SIZE:
+                _MX_CACHE.popitem(last=False)
 
     return result
 

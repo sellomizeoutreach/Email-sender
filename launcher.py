@@ -122,20 +122,6 @@ def start_background_scheduler(stop_event: threading.Event):
         base_dir = get_base_dir()
         if base_dir not in sys.path:
             sys.path.insert(0, base_dir)
-        for mod_name in ["database", "contacts_handler", "smtp_dispatcher", "llm_engine", "tracker", "scheduler"]:
-            py_path = os.path.join(base_dir, f"{mod_name}.py")
-            if os.path.exists(py_path):
-                try:
-                    import importlib.util
-                    spec = importlib.util.spec_from_file_location(mod_name, py_path)
-                    if spec and spec.loader:
-                        mod = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(mod)
-                        sys.modules[mod_name] = mod
-                except Exception as mod_err:
-                    logger.warning(f"Could not dynamically load {mod_name}: {mod_err}")
-                    if mod_name in sys.modules and getattr(sys.modules[mod_name], "__file__", None) == py_path:
-                        del sys.modules[mod_name]
         from scheduler import start_scheduler_loop
         logger.info("Initializing Email dispatch background thread...")
         start_scheduler_loop(interval=60, stop_event=stop_event)
@@ -181,12 +167,6 @@ def main():
         logger.error(err)
         show_error_dialog(err, "Sellomize Reach Startup Error")
         return
-
-    # Ensure offline tiktoken cache is recognized
-    tiktoken_cache = os.path.join(base_dir, "tiktoken_cache")
-    if os.path.exists(tiktoken_cache):
-        os.environ["TIKTOKEN_CACHE_DIR"] = tiktoken_cache
-        logger.info(f"Using offline tiktoken cache at: {tiktoken_cache}")
 
     logger.info(f"Base Directory: {base_dir}")
     logger.info(f"App Script: {app_path}")

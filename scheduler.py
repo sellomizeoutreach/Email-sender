@@ -17,8 +17,8 @@ import sys
 import random
 import logging
 import argparse
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, Tuple, List, Dict, Any
 
 # Import COM modules (Windows desktop only)
 try:
@@ -39,22 +39,360 @@ from database import (
     get_next_available_smtp_account,
     increment_smtp_sent,
     advance_contact_followup,
-    is_within_sending_window,
     record_email_bounce,
     init_db,
-    DB_FILE
+    DB_FILE,
+    get_log_file_path
 )
-from smtp_dispatcher import send_smtp_email, scan_all_hostinger_bounces, scan_all_hostinger_inbox
+from smtp_dispatcher import send_smtp_email, sanitize_header, scan_all_hostinger_bounces, scan_all_hostinger_inbox
 from tracker import inject_tracking_pixel, inject_tracking_and_links, start_tracking_server
 from mx_checker import verify_email_domain_mx
 
-# Configure logging
+# Configure logging with both console and sellomize.log file handler
+handlers = [logging.StreamHandler(sys.stdout)]
+try:
+    file_handler = logging.FileHandler(get_log_file_path(), mode="a", encoding="utf-8")
+    handlers.append(file_handler)
+except Exception:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [Scheduler] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=handlers
 )
 logger = logging.getLogger("scheduler")
+
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+def is_within_sending_window(
+    check_dt: Optional[datetime] = None,
+    db_path: str = DB_FILE
+) -> Tuple[bool, str]:
+    """
+    Evaluate whether a given datetime (or current local time) falls inside the
+    configured campaign sending window and allowed business days.
+    Returns (True, message) if dispatch is allowed, or (False, reason) if paused.
+    """
+    enforce_str = get_config("enforce_sending_window", "true", db_path=db_path) or "true"
+    enforce = enforce_str.strip().lower() in ["true", "1", "yes", "on"]
+    if not enforce:
+        return True, "Sending window enforcement disabled (24/7 delivery allowed)"
+
+    dt = check_dt or datetime.now().astimezone()
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+
+    day_name = dt.strftime("%A")
+    raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
+    allowed_days = [d.strip().capitalize() for d in raw_days.split(",") if d.strip()]
+    if not allowed_days:
+        allowed_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    if day_name not in allowed_days:
+        return False, f"Today ({day_name}) is outside allowed sending days ({', '.join(allowed_days)})"
+
+    start_str = (get_config("sending_start_time", "09:00", db_path=db_path) or "09:00").strip()
+    end_str = (get_config("sending_end_time", "18:00", db_path=db_path) or "18:00").strip()
+
+    try:
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+    except (ValueError, AttributeError) as t_err:
+        logger.warning(f"Error parsing sending window time '{start_str}'-'{end_str}': {t_err}. Using default 09:00-18:00.")
+        sh, sm, eh, em = 9, 0, 18, 0
+
+    curr_mins = dt.hour * 60 + dt.minute
+    start_mins = sh * 60 + sm
+    end_mins = eh * 60 + em
+
+    if start_mins <= end_mins:
+        inside = (start_mins <= curr_mins < end_mins)
+        if not inside:
+            if curr_mins < start_mins:
+                return False, f"Current time ({dt.strftime('%H:%M')}) is before daily start time ({start_str})"
+            else:
+                return False, f"Current time ({dt.strftime('%H:%M')}) is past daily cutoff time ({end_str})"
+    else:
+        # Crosses midnight (e.g. 21:00 - 05:00)
+        inside = (curr_mins >= start_mins or curr_mins < end_mins)
+        if not inside:
+            return False, f"Current time ({dt.strftime('%H:%M')}) is outside overnight window ({start_str}-{end_str})"
+
+    return True, f"Inside outbound window ({day_name} {start_str}-{end_str})"
+
+def get_next_valid_sending_datetime(
+    base_dt: Optional[datetime] = None,
+    delay_minutes: int = 0,
+    sending_days: Optional[List[str]] = None,
+    start_time_str: Optional[str] = None,
+    end_time_str: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> datetime:
+    """
+    Calculate the next valid sending datetime adhering to allowed days of week
+    and daily working hours. If outside hours or on a weekend/pause day, advances
+    to the next allowed day at start_time.
+    """
+    dt = base_dt or datetime.now().astimezone()
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+
+    if delay_minutes > 0:
+        dt = dt + timedelta(minutes=delay_minutes)
+
+    if sending_days is not None and len(sending_days) > 0:
+        allowed_days = [d.strip().capitalize() for d in sending_days if d.strip()]
+    else:
+        raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
+        allowed_days = [d.strip().capitalize() for d in raw_days.split(",") if d.strip()]
+        if not allowed_days:
+            allowed_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    s_str = (start_time_str or get_config("sending_start_time", "09:00", db_path=db_path) or "09:00").strip()
+    e_str = (end_time_str or get_config("sending_end_time", "18:00", db_path=db_path) or "18:00").strip()
+
+    try:
+        sh, sm = map(int, s_str.split(":"))
+        eh, em = map(int, e_str.split(":"))
+    except (ValueError, AttributeError) as t_err:
+        logger.warning(f"Error parsing sending window time '{s_str}'-'{e_str}': {t_err}. Using default 09:00-18:00.")
+        sh, sm, eh, em = 9, 0, 18, 0
+
+    start_mins = sh * 60 + sm
+    end_mins = eh * 60 + em
+
+    # Loop up to 14 days to find next valid time slot
+    for _ in range(14):
+        day_name = dt.strftime("%A")
+        curr_mins = dt.hour * 60 + dt.minute
+
+        if day_name in allowed_days:
+            if curr_mins < start_mins:
+                return dt.replace(hour=sh, minute=sm, second=0, microsecond=0)
+            elif curr_mins < end_mins:
+                return dt
+            else:
+                tomorrow = dt + timedelta(days=1)
+                dt = tomorrow.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        else:
+            tomorrow = dt + timedelta(days=1)
+            dt = tomorrow.replace(hour=sh, minute=sm, second=0, microsecond=0)
+
+    return dt
+
+
+def calculate_staggered_schedule(
+    total_contacts: int,
+    stagger_mode: str = "fixed_interval",
+    base_dt: Optional[datetime] = None,
+    span_hours: float = 4.0,
+    spacing_minutes: float = 5.0,
+    sending_days: Optional[List[str]] = None,
+    start_time_str: str = "09:00",
+    end_time_str: str = "18:00",
+    use_jitter: bool = False,
+    jitter_seed: Optional[int] = None
+) -> List[datetime]:
+    """
+    Calculate an individual scheduled datetime for each contact in a campaign batch.
+
+    Supported stagger_mode values:
+    - 'send_now' or 'none': Schedule all contacts for the earliest valid delivery slot.
+    - 'fixed_interval' or 'fixed_gap': Step by a fixed spacing_minutes per contact.
+    - 'next_x_hours' or 'span_hours': Distribute all contacts evenly across the next X hours from base_dt.
+    - 'daily_window': Distribute all contacts evenly across the active daily window (start_time to end_time).
+
+    Sending Window Hard Constraint & Rollover Pacing:
+    The sending window is the hard constraint. Always. If a schedule reaches or exceeds today's
+    daily cutoff (end_time_str), the remaining contacts roll over to the next allowed sending day
+    at start_time_str and continue pacing forward from there at the same cadence spacing, without clumping.
+    """
+    if total_contacts <= 0:
+        return []
+
+    import random
+    rng = random.Random(jitter_seed) if jitter_seed is not None else random
+
+    dt = base_dt or datetime.now().astimezone()
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+
+    normalized_mode = (stagger_mode or "fixed_interval").strip().lower()
+
+    if "hour" in normalized_mode or "span" in normalized_mode:
+        total_span_mins = max(1.0, float(span_hours) * 60.0)
+        step_mins = (total_span_mins / total_contacts) if total_contacts > 1 else 0.0
+    elif "window" in normalized_mode or "daily" in normalized_mode:
+        try:
+            sh, sm = map(int, start_time_str.split(":"))
+            eh, em = map(int, end_time_str.split(":"))
+        except Exception:
+            sh, sm, eh, em = 9, 0, 18, 0
+        start_mins = sh * 60 + sm
+        end_mins = eh * 60 + em
+        if end_mins > start_mins:
+            win_mins = float(end_mins - start_mins)
+        else:
+            win_mins = float((24 * 60 - start_mins) + end_mins)
+        win_mins = max(1.0, win_mins)
+        step_mins = (win_mins / total_contacts) if total_contacts > 1 else 0.0
+    elif "none" in normalized_mode or "no" in normalized_mode or "now" in normalized_mode:
+        step_mins = 0.0
+    else:
+        step_mins = max(0.0, float(spacing_minutes))
+
+    scheduled_dts = []
+    prev_nominal = None
+
+    for i in range(total_contacts):
+        if i == 0:
+            nominal = get_next_valid_sending_datetime(
+                base_dt=dt,
+                delay_minutes=0,
+                sending_days=sending_days,
+                start_time_str=start_time_str,
+                end_time_str=end_time_str
+            )
+        else:
+            if step_mins <= 0:
+                nominal = prev_nominal
+            else:
+                cand = prev_nominal + timedelta(minutes=step_mins)
+                nominal = get_next_valid_sending_datetime(
+                    base_dt=cand,
+                    delay_minutes=0,
+                    sending_days=sending_days,
+                    start_time_str=start_time_str,
+                    end_time_str=end_time_str
+                )
+        prev_nominal = nominal
+
+        if use_jitter and step_mins > 0:
+            max_jitter_sec = min(90.0, max(20.0, step_mins * 60.0 * 0.2))
+            jitter_sec = rng.uniform(-max_jitter_sec, max_jitter_sec)
+            actual_dt = nominal + timedelta(seconds=jitter_sec)
+
+            try:
+                sh, sm = map(int, start_time_str.split(":"))
+                eh, em = map(int, end_time_str.split(":"))
+            except Exception:
+                sh, sm, eh, em = 9, 0, 18, 0
+
+            day_start = nominal.replace(hour=sh, minute=sm, second=0, microsecond=0)
+            if eh == 24 and em == 0:
+                day_end = nominal.replace(hour=23, minute=59, second=59, microsecond=0)
+            else:
+                day_end = nominal.replace(hour=eh, minute=em, second=0, microsecond=0) - timedelta(seconds=1)
+
+            if actual_dt < day_start:
+                actual_dt = day_start
+            elif actual_dt > day_end:
+                actual_dt = day_end
+
+            if scheduled_dts and actual_dt <= scheduled_dts[-1]:
+                actual_dt = scheduled_dts[-1] + timedelta(seconds=1)
+        else:
+            actual_dt = nominal
+
+        scheduled_dts.append(actual_dt)
+
+    return scheduled_dts
+
+
+def analyze_schedule_overflow(
+    scheduled_dts: List[datetime],
+    end_time_str: str = "18:00",
+    reference_dt: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """
+    Analyze scheduled datetimes to detect if contacts spill beyond the initial day's cutoff.
+    Returns detailed breakdown including today's count, overflow count, and transparent warning text.
+    """
+    if not scheduled_dts:
+        return {
+            "total_count": 0,
+            "today_count": 0,
+            "overflow_count": 0,
+            "fits_today": True,
+            "first_dt": None,
+            "last_dt": None,
+            "warning_message": None,
+            "summary_message": "No contacts selected."
+        }
+
+    first_dt = scheduled_dts[0]
+    last_dt = scheduled_dts[-1]
+    first_date = first_dt.date()
+
+    today_contacts = [dt for dt in scheduled_dts if dt.date() == first_date]
+    overflow_contacts = [dt for dt in scheduled_dts if dt.date() > first_date]
+
+    total_count = len(scheduled_dts)
+    today_count = len(today_contacts)
+    overflow_count = len(overflow_contacts)
+    fits_today = (overflow_count == 0)
+
+    ref = reference_dt or datetime.now().astimezone()
+    if ref.tzinfo is None and first_dt.tzinfo is not None:
+        ref = ref.replace(tzinfo=first_dt.tzinfo)
+
+    ref_date = ref.date()
+    if first_date == ref_date:
+        first_day_label = "today"
+    elif first_date == ref_date + timedelta(days=1):
+        first_day_label = "tomorrow"
+    else:
+        first_day_label = first_dt.strftime("%A, %b %d")
+
+    warning_message = None
+    if overflow_count > 0:
+        next_dt = overflow_contacts[0]
+        next_date = next_dt.date()
+        if next_date == ref_date + timedelta(days=1):
+            next_day_label = "tomorrow"
+        elif next_date == first_date + timedelta(days=1):
+            next_day_label = "tomorrow"
+        else:
+            next_day_label = next_dt.strftime("%A")
+
+        next_start_str = next_dt.strftime("%H:%M")
+        if first_day_label == "today":
+            warning_message = (
+                f"{total_count} contacts won't all fit before {end_time_str} today — "
+                f"{overflow_count} will continue {next_day_label} from {next_start_str}."
+            )
+        else:
+            warning_message = (
+                f"{total_count} contacts won't all fit before {end_time_str} on {first_day_label} — "
+                f"{overflow_count} will continue {next_day_label} from {next_start_str}."
+            )
+
+    if total_count == 1:
+        summary_message = f"1 contact scheduled for {first_dt.strftime('%A, %b %d at %H:%M')}."
+    elif fits_today:
+        summary_message = (
+            f"All {total_count} contacts will be dispatched {first_day_label} "
+            f"between {first_dt.strftime('%H:%M')} and {last_dt.strftime('%H:%M')}."
+        )
+    else:
+        summary_message = (
+            f"Scheduled from {first_dt.strftime('%A, %b %d at %H:%M')} "
+            f"through {last_dt.strftime('%A, %b %d at %H:%M')}."
+        )
+
+    return {
+        "total_count": total_count,
+        "today_count": today_count,
+        "overflow_count": overflow_count,
+        "fits_today": fits_today,
+        "first_dt": first_dt,
+        "last_dt": last_dt,
+        "warning_message": warning_message,
+        "summary_message": summary_message
+    }
+
+
 
 def get_local_system_time_str() -> str:
     """
@@ -132,8 +470,8 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
     Shields reputation with pre-flight MX and DNS sanity verification.
     """
     email_id = email_record["id"]
-    recipient = email_record.get("recipient", "").strip()
-    subject = email_record.get("subject", "Listing Audit").strip()
+    recipient = sanitize_header(email_record.get("recipient", ""))
+    subject = sanitize_header(email_record.get("subject", "Listing Audit"))
     approved_email_html = email_record.get("email_html", "").strip()
 
     logger.info(f"[Hostinger SMTP] Processing Email ID #{email_id} for recipient '{recipient}'...")
@@ -165,7 +503,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
 
     # Prepare signature, tracking pixel, and payload
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
-    bcc_address = (get_config("bcc_email", db_path=db_path) or "").strip()
+    bcc_address = sanitize_header(get_config("bcc_email", db_path=db_path) or "")
     combined_body = f"{approved_email_html}<br><br>{signature_html}" if signature_html else approved_email_html
     final_payload = inject_tracking_and_links(combined_body, email_id)
 
@@ -205,8 +543,8 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
     Shields reputation with pre-flight MX and DNS sanity verification.
     """
     email_id = email_record["id"]
-    recipient = email_record.get("recipient", "").strip()
-    subject = email_record.get("subject", "Listing Audit").strip()
+    recipient = sanitize_header(email_record.get("recipient", ""))
+    subject = sanitize_header(email_record.get("subject", "Listing Audit"))
     approved_email_html = email_record.get("email_html", "").strip()
 
     logger.info(f"[Outlook] Processing Email ID #{email_id} for recipient '{recipient}'...")
@@ -229,8 +567,8 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
             return
 
     # Fetch configuration
-    designated_sender = (get_config("sender_email", db_path=db_path) or "").strip()
-    bcc_address = (get_config("bcc_email", db_path=db_path) or "").strip()
+    designated_sender = sanitize_header(get_config("sender_email", db_path=db_path) or "")
+    bcc_address = sanitize_header(get_config("bcc_email", db_path=db_path) or "")
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
 
     if dry_run:

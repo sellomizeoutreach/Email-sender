@@ -103,8 +103,7 @@ python scheduler.py
   - Daily quota utilization tracking and automated midnight reset.
 - **⏱️ Anti-Spam Human Delay Throttling**: Configurable randomized 20–45s gaps between outgoing emails to protect domain reputation and prevent spam filters.
 - **Dual Outbound Engines**: Seamlessly switch between `⚡ Hostinger Direct SMTP` and `📧 Desktop Microsoft Outlook`.
-- Pre-configured with Google Gemini / Vertex credentials (`AQ.Ab8RN6JyptGhhfk8w83PSpKVcFpmNJOA7aoEJtiB2BCEEiuwVw` and project `606768026327`), OpenAI, and Anthropic.
-- Manage **Restricted Negative Keywords** and **Restricted Spam Words**.
+- Manage **Restricted Negative Keywords** to prevent embarrassing mistakes before dispatch.
 - Manage Outlook fallback sender account and verification BCC address.
 - Dual-mode HTML Signature Manager.
 - Outbox monitor for `Approved`, `Sent`, `Flagged`, and `Account Mismatch` records with `Dispatched Via` auditing.

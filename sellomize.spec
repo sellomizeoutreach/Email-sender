@@ -9,10 +9,6 @@ datas = []
 datas += copy_metadata('streamlit')
 datas += collect_data_files('streamlit')
 
-# Collect LiteLLM definitions
-datas += copy_metadata('litellm')
-datas += collect_data_files('litellm')
-
 # Collect streamlit-quill rich text component
 try:
     datas += copy_metadata('streamlit_quill')
@@ -20,37 +16,26 @@ try:
 except Exception:
     pass
 
-# Collect tiktoken definitions
-datas += copy_metadata('tiktoken')
-datas += collect_data_files('tiktoken')
-try:
-    datas += copy_metadata('tiktoken_ext')
-    datas += collect_data_files('tiktoken_ext')
-except Exception:
-    pass
-
 # Project application files
 datas += [
     ('app.py', '.'),
     ('database.py', '.'),
-    ('llm_engine.py', '.'),
+    ('template_engine.py', '.'),
     ('scheduler.py', '.'),
     ('smtp_dispatcher.py', '.'),
     ('contacts_handler.py', '.'),
+    ('tracker.py', '.'),
+    ('mx_checker.py', '.'),
+    ('ui', 'ui'),
     ('.streamlit/config.toml', '.streamlit'),
     ('.streamlit/secrets.toml', '.streamlit'),
     ('assets/logo.jpg', 'assets'),
     ('assets/sellomize.ico', 'assets'),
-    ('tiktoken_cache', 'tiktoken_cache'),
 ]
 
 hiddenimports = [
     'streamlit',
     'streamlit.web.cli',
-    'litellm',
-    'tiktoken',
-    'tiktoken_ext',
-    'tiktoken_ext.openai_public',
     'win32com',
     'win32com.client',
     'pythoncom',
@@ -64,14 +49,49 @@ hiddenimports = [
     'sqlite3',
     'smtplib',
     'ssl',
-    'smtp_dispatcher',
+    'imaplib',
+    'email',
     'email.mime.text',
     'email.mime.multipart',
+    'database',
+    'contacts_handler',
+    'scheduler',
+    'template_engine',
+    'smtp_dispatcher',
+    'tracker',
+    'mx_checker',
+    'ui',
+    'ui.theme',
+    'ui.components',
+    'ui.sidebar',
+    'ui.tabs',
+    'ui.tabs.crm',
+    'ui.tabs.studio',
+    'ui.tabs.campaigns',
+    'ui.tabs.review',
+    'ui.tabs.analytics',
+    'dns',
+    'dns.resolver',
+    'cryptography',
+    'cryptography.fernet',
+    'keyring',
+    'keyring.backends',
+    'keyring.backends.Windows',
+    'nh3',
 ]
 hiddenimports += collect_submodules('streamlit')
 hiddenimports += collect_submodules('streamlit_quill')
-hiddenimports += collect_submodules('tiktoken')
-hiddenimports += collect_submodules('tiktoken_ext')
+hiddenimports += collect_submodules('cryptography')
+hiddenimports += collect_submodules('keyring')
+hiddenimports += collect_submodules('nh3')
+
+try:
+    datas += copy_metadata('keyring')
+    datas += copy_metadata('cryptography')
+    datas += copy_metadata('nh3')
+except Exception:
+    pass
+
 
 a = Analysis(
     ['launcher.py'],
