@@ -155,7 +155,10 @@ def render_studio_tab(all_templates=None, contacts_list=None):
             tpl_id = tpl["id"]
             is_tpl_editing = (st.session_state.get("editing_tpl_id") == tpl_id)
 
-            with st.expander(f"📑 {tpl['template_name']} (Created: {tpl['created_at'][:10]})", expanded=is_tpl_editing):
+            with st.expander(f"📑 {tpl['template_name']}", expanded=is_tpl_editing):
+                if tpl.get("created_at"):
+                    st.markdown(f"<div class='timestamp-right'>Created: {tpl['created_at'][:10]}</div>", unsafe_allow_html=True)
+
                 if is_tpl_editing:
                     st.markdown(f"""
                     <div style="background: rgba(14, 46, 39, 0.65); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin: 8px 0 14px;">

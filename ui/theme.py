@@ -699,6 +699,20 @@ SELLOMIZE_THEME_CSS = """<style>
         padding: 0 2px;
     }
 
+    /* Right-aligned low-opacity timestamp utility */
+    .timestamp-right {
+        display: flex !important;
+        justify-content: flex-end !important;
+        text-align: right !important;
+        opacity: 0.45 !important;
+        font-size: 0.75rem !important;
+        color: #64748B !important;
+        letter-spacing: 0.2px !important;
+        user-select: none !important;
+        margin-top: -4px !important;
+        margin-bottom: 8px !important;
+    }
+
     /* Sidebar Styling (Sellomize 30% Pine Green & 60% Crisp White) */
     section[data-testid="stSidebar"] {
         background-color: #F8FAF9 !important;

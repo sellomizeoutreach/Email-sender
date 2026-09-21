@@ -191,6 +191,9 @@ def render_review_tab():
 
             with col_exp:
                 with st.expander(container_title, expanded=is_flagged):
+                    if draft.get("created_at"):
+                        st.markdown(f"<div class='timestamp-right'>Created: {draft['created_at'][:19]}</div>", unsafe_allow_html=True)
+
                     # DUAL-PANE SPLIT PREVIEW WORKSPACE
                     col_editor, col_preview = st.columns([1, 1], gap="medium")
 
@@ -404,6 +407,8 @@ def render_review_tab():
                 st_class = "badge-flagged"
 
             with st.expander(f"#{item['id']} | [{item['status'].upper()}] {item['subject']} -> {item.get('recipient') or 'No Recipient'}"):
+                if item.get("created_at"):
+                    st.markdown(f"<div class='timestamp-right'>Created: {item['created_at'][:19]}</div>", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 with c1:
                     st.markdown(f"**Status:** <span class='{st_class}'>{item['status']}</span>", unsafe_allow_html=True)
@@ -411,7 +416,6 @@ def render_review_tab():
                     if item.get("sent_via"):
                         st.markdown(f"**Dispatched Via:** `{item['sent_via']}`")
                     st.markdown(f"**Scheduled Send Time:** `{item.get('scheduled_time')}`")
-                    st.markdown(f"**Created:** `{item.get('created_at')}`")
                 with c2:
                     if item.get("revision_notes"):
                         st.info(f"**Notes / Trigger:** {item['revision_notes']}")

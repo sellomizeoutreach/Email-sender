@@ -559,7 +559,7 @@ def render_crm_tab(all_contacts=None):
 
                 with col_c1:
                     st.markdown(f"**{contact['name']}**")
-                    st.caption(f"Lead ID: `L-{c_id:04d}` | Added: {contact['created_at']}")
+                    st.caption(f"Lead ID: `L-{c_id:04d}`")
                     if contact.get("owner"):
                         st.caption(f"👤 Owner: {contact['owner']}")
                 with col_c2:
@@ -623,6 +623,12 @@ def render_crm_tab(all_contacts=None):
                         st.caption(f"📝 {contact['notes']}")
 
                 with col_c4:
+                    c_added = contact.get("created_at") or ""
+                    if c_added:
+                        st.markdown(
+                            f"<div style='text-align:right; opacity:0.4; font-size:0.72rem; color:#64748B; margin-bottom:4px;' title='Added: {c_added}'>Added {c_added[:10]}</div>",
+                            unsafe_allow_html=True
+                        )
                     col_btn_e, col_btn_d = st.columns(2)
                     with col_btn_e:
                         if st.button("✏️", key=f"edit_btn_{c_id}"):
