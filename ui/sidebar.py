@@ -3,6 +3,7 @@ Sidebar infrastructure and configuration panel for Sellomize Reach.
 Manages sending window, mailbox fleet, system diagnostics, signature studio, and negative keyword shield.
 """
 
+import socket
 import streamlit as st
 from database import (
     get_all_configs,
@@ -19,6 +20,18 @@ from database import (
 )
 from smtp_dispatcher import test_smtp_connection
 from tracker import is_port_in_use, start_tracking_server, get_tracking_base_url
+
+
+def get_local_ip() -> str:
+    """Retrieve the primary local IP address of this machine on the LAN."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 
 def render_sidebar():
@@ -298,3 +311,26 @@ def render_sidebar():
                 set_config("spam_blocklist", sb_spam_words.strip())
                 st.success("Keywords updated.")
                 st.rerun()
+
+        # SECTION 5: MULTI-PC & TEAM ACCESS
+        with st.expander("Multi-PC & Team Access", expanded=False):
+            local_ip = get_local_ip()
+            st.markdown(f"""
+            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:12px; margin-bottom:10px;">
+                <div style="font-size:0.75rem; color:#64748B; font-weight:700; text-transform:uppercase; margin-bottom:4px;">Single Source of Truth</div>
+                <div style="font-size:0.82rem; color:#1E293B; line-height:1.4;">
+                    Run Sellomize Reach on this main host PC. All other computers on your Wi-Fi or LAN share this exact database and queue in real time.
+                </div>
+                <div style="margin-top:10px; font-size:0.78rem; font-weight:700; color:#083731;">Network URL for other PCs:</div>
+                <code style="display:block; background:#EEF2F6; padding:6px 8px; border-radius:4px; font-size:0.85rem; color:#083731; word-break:break-all; margin-top:3px;">
+                    http://{local_ip}:8501
+                </code>
+            </div>
+            """, unsafe_allow_html=True)
+            st.caption(
+                f"**How to connect other PCs:**\n"
+                f"1. Leave this Host PC running.\n"
+                f"2. Open Chrome or Edge on any other computer/laptop on the same network.\n"
+                f"3. Go to `http://{local_ip}:8501`.\n"
+                f"4. *(Optional)* In the browser address bar, click **Install App** to launch it as a native desktop window!"
+            )

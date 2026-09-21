@@ -206,10 +206,11 @@ def main():
         "--global.developmentMode=false",
         "--server.headless=true",
         "--server.port=8501",
+        "--server.address=0.0.0.0",
         "--browser.serverAddress=localhost",
         "--browser.gatherUsageStats=false",
         "--server.enableCORS=false",
-        "--server.enableXsrfProtection=true"
+        "--server.enableXsrfProtection=false"
     ]
 
     try:

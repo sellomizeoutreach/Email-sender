@@ -174,7 +174,11 @@ def get_db_path() -> str:
     When running in a packaged PyInstaller executable (frozen mode), store in
     %APPDATA%/SellomizeReach/email_system.db so user data persists across updates.
     In development mode, use local email_system.db.
+    Can be overridden by setting the SELLOMIZE_DB_PATH environment variable.
     """
+    custom = os.environ.get("SELLOMIZE_DB_PATH")
+    if custom and custom.strip():
+        return custom.strip()
     if getattr(sys, 'frozen', False):
         appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
         data_dir = os.path.join(appdata, "SellomizeReach")
