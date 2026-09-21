@@ -1,6 +1,7 @@
 """
 Leads & Contacts CRM Tab for Sellomize Reach.
-Includes contact creation, CSV import/export, filtering, bulk actions, Excel grid editor, and card view.
+Includes contact creation, unified CSV center (import/export/template),
+intelligent search/filtering, bulk actions, Excel grid editor, and interactive card view with unified modal editing.
 """
 
 import html
@@ -30,173 +31,155 @@ from contacts_handler import (
 from mx_checker import batch_verify_contacts_mx
 
 
+@st.dialog("✏️ Edit & Manage Lead")
+def render_edit_contact_dialog(contact: dict):
+    """
+    Unified contact management modal dialog.
+    Puts Update, Edit details, and Delete functions together in the exact same place.
+    """
+    c_id = contact["id"]
+    c_name_val = contact.get("name") or ""
+    c_email_val = contact.get("email") or ""
+    c_company_val = contact.get("company") or ""
+    c_added = contact.get("created_at") or ""
+
+    st.markdown(f"""
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(8,55,49,0.15); padding-bottom:8px;">
+        <span style="font-weight:800; font-size:1.1rem; color:#083731;">Lead #L-{c_id:04d}</span>
+        <span class="timestamp-right" style="margin:0;">Added {c_added[:10]}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_det, tab_vars = st.tabs(["👤 Details & Pipeline", "🏷️ Tags & Variables"])
+
+    with tab_det:
+        ec1, ec2, ec3 = st.columns(3)
+        with ec1:
+            e_name = st.text_input("Full Name *", value=c_name_val, key=f"dlg_name_{c_id}")
+        with ec2:
+            e_email = st.text_input("Email Address *", value=c_email_val, key=f"dlg_email_{c_id}")
+        with ec3:
+            e_company = st.text_input("Company", value=c_company_val, key=f"dlg_comp_{c_id}")
+
+        ec_r1, ec_r2, ec_r3, ec_r4 = st.columns(4)
+        with ec_r1:
+            source_opts = ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"]
+            curr_src = contact.get("lead_source") or "Other"
+            src_idx = source_opts.index(curr_src) if curr_src in source_opts else 7
+            e_source = st.selectbox("Lead Source", source_opts, index=src_idx, key=f"dlg_src_{c_id}")
+        with ec_r2:
+            prio_opts = ["High", "Medium", "Low"]
+            curr_prio = contact.get("priority") or "Medium"
+            prio_idx = prio_opts.index(curr_prio) if curr_prio in prio_opts else 1
+            e_priority = st.selectbox("Priority", prio_opts, index=prio_idx, key=f"dlg_prio_{c_id}")
+        with ec_r3:
+            e_owner = st.text_input("Lead Owner", value=contact.get("owner") or "", key=f"dlg_own_{c_id}")
+        with ec_r4:
+            stat_opts = ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]
+            curr_st = contact.get("status") or "Not Contacted"
+            st_idx = stat_opts.index(curr_st) if curr_st in stat_opts else 0
+            e_status = st.selectbox("Pipeline Status", stat_opts, index=st_idx, key=f"dlg_stat_{c_id}")
+
+        e_notes = st.text_input("Internal Notes", value=contact.get("notes") or "", key=f"dlg_notes_{c_id}")
+
+    with tab_vars:
+        all_avail_tags = get_all_distinct_tags(include_predefined=True)
+        curr_tags = contact.get("tags_list") or []
+        col_et1, col_et2 = st.columns([2, 1])
+        with col_et1:
+            e_tags = st.multiselect(
+                "Tags (Select Predefined / Existing)",
+                options=all_avail_tags,
+                default=[t for t in curr_tags if t in all_avail_tags],
+                key=f"dlg_tags_{c_id}"
+            )
+        with col_et2:
+            e_new_tag = st.text_input("Add Custom Tag(s)", placeholder="e.g. Q4 Audit, Tier 1", key=f"dlg_newtag_{c_id}")
+
+        st.markdown("##### 🧩 Outreach Variables")
+        c_cv = contact.get("custom_variables_dict") or {}
+        col_ecv1, col_ecv2, col_ecv3 = st.columns(3)
+        with col_ecv1:
+            e_role = st.text_input("Role / Job Title", value=str(c_cv.get("Role", "")), key=f"dlg_role_{c_id}", help="Accessible via [Role] in email templates")
+        with col_ecv2:
+            e_web = st.text_input("Website / Store URL", value=str(c_cv.get("Website", "")), key=f"dlg_web_{c_id}", help="Accessible via [Website] in email templates")
+        with col_ecv3:
+            e_asin = st.text_input("Amazon ASIN / Product ID", value=str(c_cv.get("ASIN", "")), key=f"dlg_asin_{c_id}", help="Accessible via [ASIN] in email templates")
+
+        other_vars = {k: v for k, v in c_cv.items() if k not in ["Role", "Website", "ASIN"]}
+        with st.expander("➕ Additional Variables (Key: Value)", expanded=bool(other_vars)):
+            e_other_vars_txt = st.text_area(
+                "Additional Custom Variables",
+                value=format_variables_as_lines(other_vars),
+                key=f"dlg_othervars_{c_id}",
+                height=65,
+                help="One variable per line (e.g. Category: Skincare or Location: NYC). No JSON syntax required!"
+            )
+
+    st.markdown("<hr style='margin: 14px 0 16px; opacity: 0.2;'>", unsafe_allow_html=True)
+
+    # Unified Action Toolbar inside Dialog: Update, Delete, and Cancel together
+    col_act_save, col_act_del, col_act_close = st.columns([2.2, 1.8, 1])
+    with col_act_save:
+        if st.button("💾 Save & Update Lead", type="primary", use_container_width=True, key=f"dlg_btn_save_{c_id}"):
+            if not e_name.strip() or not e_email.strip():
+                st.error("Name and Email are required.")
+            else:
+                parsed_cv = parse_variables_from_text(e_other_vars_txt)
+                if e_role.strip():
+                    parsed_cv["Role"] = e_role.strip()
+                if e_web.strip():
+                    parsed_cv["Website"] = e_web.strip()
+                if e_asin.strip():
+                    parsed_cv["ASIN"] = e_asin.strip()
+
+                extra_t = [t.strip() for t in e_new_tag.split(",") if t.strip()]
+                final_t = list(set(e_tags + extra_t))
+
+                update_contact(
+                    contact_id=c_id,
+                    name=e_name.strip(),
+                    email=e_email.strip(),
+                    company=e_company.strip(),
+                    tags=final_t,
+                    custom_variables=parsed_cv,
+                    lead_source=e_source,
+                    priority=e_priority,
+                    owner=e_owner.strip() if e_owner else None,
+                    status=e_status,
+                    notes=e_notes.strip() if e_notes else None
+                )
+                st.session_state["crm_editing_id"] = None
+                st.success("Lead updated successfully!")
+                st.rerun()
+
+    with col_act_del:
+        if st.session_state.get(f"dlg_confirm_del_{c_id}"):
+            if st.button("⚠️ Confirm Delete?", key=f"dlg_btn_del_conf_{c_id}", use_container_width=True):
+                delete_contact(c_id)
+                st.session_state["crm_selected_ids"].discard(c_id)
+                st.session_state["crm_editing_id"] = None
+                st.session_state[f"dlg_confirm_del_{c_id}"] = False
+                st.rerun()
+        else:
+            if st.button("🗑️ Delete Lead", key=f"dlg_btn_del_{c_id}", use_container_width=True):
+                st.session_state[f"dlg_confirm_del_{c_id}"] = True
+                st.rerun()
+
+    with col_act_close:
+        if st.button("Close", key=f"dlg_btn_close_{c_id}", use_container_width=True):
+            st.session_state["crm_editing_id"] = None
+            st.session_state[f"dlg_confirm_del_{c_id}"] = False
+            st.rerun()
+
+
 def render_crm_tab(all_contacts=None):
     """Render Tab 1: Leads & Contacts CRM."""
     if all_contacts is None:
         all_contacts = get_contacts()
 
     st.subheader("👥 Leads & Contacts")
-    st.caption("High-density contact command center: 14-column spreadsheet grid, custom variables dossier, and pre-flight domain validation.")
-
-    with st.expander("➕ Add New Contact", expanded=len(all_contacts) == 0):
-        with st.form("add_contact_form", clear_on_submit=True):
-            fc1, fc2, fc3 = st.columns(3)
-            with fc1:
-                c_name = st.text_input("Full Name *", placeholder="e.g. Alex Morgan")
-            with fc2:
-                c_email = st.text_input("Email Address *", placeholder="alex@company.com")
-            with fc3:
-                c_company = st.text_input("Company Name", placeholder="Acme Brands")
-
-            # CRM Classification Fields
-            st.markdown("##### 📊 CRM Lead Attributes & Pipeline Classification")
-            col_crm1, col_crm2, col_crm3, col_crm4 = st.columns(4)
-            with col_crm1:
-                c_source = st.selectbox(
-                    "Lead Source",
-                    ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
-                    index=2
-                )
-            with col_crm2:
-                c_priority = st.selectbox(
-                    "Priority",
-                    ["High", "Medium", "Low"],
-                    index=1
-                )
-            with col_crm3:
-                c_owner = st.text_input("Lead Owner", placeholder="e.g. Alex M")
-            with col_crm4:
-                c_status = st.selectbox(
-                    "Pipeline Status",
-                    ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
-                    index=0
-                )
-            c_notes = st.text_input("Internal Notes", placeholder="e.g. Needs mobile listing optimization teardown")
-
-            # Tag Management
-            st.markdown("##### 🏷️ Contact Tags & Outreach Classification")
-            all_tags_list = get_all_distinct_tags(include_predefined=True)
-            col_t1, col_t2 = st.columns([1.8, 1.2])
-            with col_t1:
-                selected_tags = st.multiselect(
-                    "Select Tags (Predefined & Custom)",
-                    options=all_tags_list,
-                    help="Choose one or more tags (e.g. Amazon Brand, Shopify DTC, High Priority, Cold Outreach)."
-                )
-            with col_t2:
-                new_tags_raw = st.text_input("Or Add New Custom Tag(s)", placeholder="e.g. Beauty Brands, Q4 Leads", help="Comma-separated list of new custom tags.")
-
-            st.markdown("##### 🧩 Lead Variables & Outreach Attributes (No JSON needed)")
-            st.caption("Add variables you want to inject into email templates (e.g. `[Role]`, `[Website]`, `[ASIN]`). They will be substituted automatically.")
-
-            col_cv1, col_cv2, col_cv3 = st.columns(3)
-            with col_cv1:
-                cv_role = st.text_input("Role / Job Title", placeholder="e.g. Founder & CEO", help="Accessible via [Role] in email templates")
-            with col_cv2:
-                cv_website = st.text_input("Website / Store URL", placeholder="e.g. https://brand.com", help="Accessible via [Website] in email templates")
-            with col_cv3:
-                cv_asin = st.text_input("Amazon ASIN / Product ID", placeholder="e.g. B08N5WRWNW", help="Accessible via [ASIN] in email templates")
-
-            with st.expander("➕ Add More Variables (Simple Key: Value or JSON)", expanded=False):
-                st.caption("Type one variable per line (e.g. `Category: Skincare` or `Location: Austin, TX`). No JSON quotes or brackets needed!")
-                more_vars_raw = st.text_area(
-                    "Additional Variables",
-                    placeholder="Category: E-Commerce\nLocation: New York, USA\nProduct: Organic Coffee",
-                    height=75
-                )
-
-            add_contact_btn = st.form_submit_button("Save Contact", type="primary")
-
-            if add_contact_btn:
-                if not c_name.strip() or not c_email.strip():
-                    st.error("Name and Email Address are required.")
-                else:
-                    cv_parsed = parse_variables_from_text(more_vars_raw)
-                    if cv_role.strip():
-                        cv_parsed["Role"] = cv_role.strip()
-                    if cv_website.strip():
-                        cv_parsed["Website"] = cv_website.strip()
-                    if cv_asin.strip():
-                        cv_parsed["ASIN"] = cv_asin.strip()
-
-                    # Combine multiselect tags and new text tags
-                    extra_tags = [t.strip() for t in new_tags_raw.split(",") if t.strip()]
-                    combined_tags = list(set(selected_tags + extra_tags))
-
-                    cid, is_new = upsert_contact_by_email(
-                        name=c_name.strip(),
-                        email=c_email.strip(),
-                        company=c_company.strip(),
-                        tags=combined_tags,
-                        custom_variables=cv_parsed,
-                        lead_source=c_source,
-                        priority=c_priority,
-                        owner=c_owner.strip() if c_owner else None,
-                        status=c_status,
-                        notes=c_notes.strip() if c_notes else None
-                    )
-                    action_msg = "added" if is_new else "updated (merged tags & details)"
-                    st.success(f"✅ Contact '{c_name}' successfully {action_msg} (ID #{cid})!")
-                    st.rerun()
-
-    # CSV Import / Export Toolbar
-    st.markdown("---")
-    st.markdown("#### 📁 CSV Import & Export Tools")
-    csv_col1, csv_col2 = st.columns(2)
-
-    with csv_col1:
-        template_csv = generate_csv_template()
-        st.download_button(
-            label="📥 Download CSV Template",
-            data=template_csv,
-            file_name="contacts_template.csv",
-            mime="text/csv",
-            help="Download a formatted CSV template with columns: Name, Email, Company, Tags, Custom_Variables."
-        )
-
-    with csv_col2:
-        with st.expander("⬆️ Bulk Import Contacts from CSV"):
-            uploaded_csv = st.file_uploader("Upload CSV File", type=["csv"], key="contact_csv_uploader")
-            verify_mx_import = st.checkbox(
-                "🛡️ Perform Pre-Flight MX & Domain Verification",
-                value=True,
-                help="Validates domain mail exchangers (MX) during import. Dead or nonexistent domains are tagged 'Invalid MX' to safeguard your sender reputation."
-            )
-            if uploaded_csv is not None:
-                if st.button("Process & Import CSV", type="primary"):
-                    with st.spinner("Processing CSV and validating domains..."):
-                        import_stats = import_contacts_from_csv(uploaded_csv.getvalue(), verify_mx=verify_mx_import)
-                        if import_stats["errors"]:
-                            for err in import_stats["errors"][:5]:
-                                st.error(err)
-                        st.success(
-                            f"🎉 Successfully imported {import_stats['total']} contact(s): "
-                            f"{import_stats['inserted']} new contact(s) added, "
-                            f"{import_stats['updated']} existing contact(s) updated with merged tags & variables!"
-                        )
-                        if import_stats.get("invalid_mx", 0) > 0:
-                            st.warning(f"⚠️ {import_stats['invalid_mx']} lead(s) failed pre-flight MX check and were tagged with 'Invalid MX' to shield your sender reputation.")
-                        st.rerun()
-
-    st.markdown("---")
-
-    # Advanced Filtering (Search + Filter by Tag + Status Filter)
-    st.markdown("#### 🔍 Filter & Search Leads")
-    distinct_tags = get_all_distinct_tags(include_predefined=True)
-    filter_col1, filter_col2, filter_col3 = st.columns([1.8, 1.4, 1.4])
-    with filter_col1:
-        search_query = st.text_input("Search Leads", placeholder="Search by Name, Email, Company, Owner, Notes...", key="crm_search_query")
-    with filter_col2:
-        tag_filter = st.multiselect("Filter by Tag", options=distinct_tags, placeholder="Select tags...", key="crm_tag_filter")
-    with filter_col3:
-        status_filter_choice = st.selectbox(
-            "Filter by Pipeline Status",
-            ["-- All Statuses --", "Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
-            key="crm_status_filter_choice"
-        )
-
-    active_status_filter = None if status_filter_choice == "-- All Statuses --" else status_filter_choice
-    filtered_contacts = get_contacts(tags_filter=tag_filter, search_query=search_query, status_filter=active_status_filter)
+    st.caption("Contact command center: 15-column spreadsheet grid, custom variables dossier, CSV data center, and unified lead editing.")
 
     # Initialize CRM selection and editing session state
     if "crm_selected_ids" not in st.session_state:
@@ -204,45 +187,226 @@ def render_crm_tab(all_contacts=None):
     if "crm_editing_id" not in st.session_state:
         st.session_state["crm_editing_id"] = None
 
+    # Trigger unified edit dialog if a lead is currently selected for editing
+    editing_id = st.session_state.get("crm_editing_id")
+    if editing_id:
+        matching_contact = next((c for c in all_contacts if c["id"] == editing_id), None)
+        if matching_contact:
+            render_edit_contact_dialog(matching_contact)
+        else:
+            st.session_state["crm_editing_id"] = None
+
+    # ==============================================================================
+    # 🎯 SECTION 1: TOP ACTION HUBS (Add Lead & CSV Data Center in One Place)
+    # ==============================================================================
+    top_col1, top_col2 = st.columns(2)
+
+    with top_col1:
+        with st.expander("➕ Add Single Contact", expanded=len(all_contacts) == 0):
+            with st.form("add_contact_form", clear_on_submit=True):
+                fc1, fc2, fc3 = st.columns(3)
+                with fc1:
+                    c_name = st.text_input("Full Name *", placeholder="e.g. Alex Morgan")
+                with fc2:
+                    c_email = st.text_input("Email Address *", placeholder="alex@company.com")
+                with fc3:
+                    c_company = st.text_input("Company Name", placeholder="Acme Brands")
+
+                # CRM Classification Fields
+                st.markdown("##### 📊 Lead Classification")
+                col_crm1, col_crm2, col_crm3, col_crm4 = st.columns(4)
+                with col_crm1:
+                    c_source = st.selectbox(
+                        "Lead Source",
+                        ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
+                        index=2
+                    )
+                with col_crm2:
+                    c_priority = st.selectbox(
+                        "Priority",
+                        ["High", "Medium", "Low"],
+                        index=1
+                    )
+                with col_crm3:
+                    c_owner = st.text_input("Lead Owner", placeholder="e.g. Alex M")
+                with col_crm4:
+                    c_status = st.selectbox(
+                        "Pipeline Status",
+                        ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                        index=0
+                    )
+                c_notes = st.text_input("Internal Notes", placeholder="e.g. Needs Amazon brand listing audit")
+
+                # Tag Management
+                st.markdown("##### 🏷️ Tags & Variables")
+                all_tags_list = get_all_distinct_tags(include_predefined=True)
+                col_t1, col_t2 = st.columns([1.8, 1.2])
+                with col_t1:
+                    selected_tags = st.multiselect(
+                        "Select Tags",
+                        options=all_tags_list,
+                        help="Choose tags (e.g. Amazon Brand, Shopify DTC, High Priority)."
+                    )
+                with col_t2:
+                    new_tags_raw = st.text_input("Or Add New Tag(s)", placeholder="e.g. Beauty Brands, Q4 Leads")
+
+                col_cv1, col_cv2, col_cv3 = st.columns(3)
+                with col_cv1:
+                    cv_role = st.text_input("Role / Title", placeholder="e.g. Founder & CEO", help="Accessible via [Role]")
+                with col_cv2:
+                    cv_website = st.text_input("Website URL", placeholder="e.g. https://brand.com", help="Accessible via [Website]")
+                with col_cv3:
+                    cv_asin = st.text_input("Product ID / ASIN", placeholder="e.g. B08N5WRWNW", help="Accessible via [ASIN]")
+
+                with st.expander("➕ Additional Variables (Key: Value)", expanded=False):
+                    more_vars_raw = st.text_area(
+                        "Additional Custom Variables",
+                        placeholder="Category: Skincare\nLocation: Austin, TX",
+                        height=65
+                    )
+
+                if st.form_submit_button("Save New Contact", type="primary"):
+                    if not c_name.strip() or not c_email.strip():
+                        st.error("Name and Email Address are required.")
+                    else:
+                        cv_parsed = parse_variables_from_text(more_vars_raw)
+                        if cv_role.strip():
+                            cv_parsed["Role"] = cv_role.strip()
+                        if cv_website.strip():
+                            cv_parsed["Website"] = cv_website.strip()
+                        if cv_asin.strip():
+                            cv_parsed["ASIN"] = cv_asin.strip()
+
+                        extra_tags = [t.strip() for t in new_tags_raw.split(",") if t.strip()]
+                        combined_tags = list(set(selected_tags + extra_tags))
+
+                        cid, is_new = upsert_contact_by_email(
+                            name=c_name.strip(),
+                            email=c_email.strip(),
+                            company=c_company.strip(),
+                            tags=combined_tags,
+                            custom_variables=cv_parsed,
+                            lead_source=c_source,
+                            priority=c_priority,
+                            owner=c_owner.strip() if c_owner else None,
+                            status=c_status,
+                            notes=c_notes.strip() if c_notes else None
+                        )
+                        action_msg = "added" if is_new else "updated (merged tags & details)"
+                        st.success(f"✅ Contact '{c_name}' successfully {action_msg} (ID #{cid})!")
+                        st.rerun()
+
+    with top_col2:
+        with st.expander("📁 CSV Center (Import, Export & Template)", expanded=False):
+            tab_imp, tab_exp, tab_tmpl = st.tabs(["⬆️ Import CSV", "📤 Export CSV", "📥 Download Template"])
+
+            with tab_imp:
+                st.caption("Upload a spreadsheet to add new contacts or merge tags and variables into existing leads:")
+                uploaded_csv = st.file_uploader("Upload Leads CSV File", type=["csv"], key="contact_csv_uploader")
+                verify_mx_import = st.checkbox(
+                    "🛡️ Perform Pre-Flight MX & Domain Verification",
+                    value=True,
+                    help="Validates domain mail exchangers (MX) during import to detect dead domains before dispatch."
+                )
+                if uploaded_csv is not None:
+                    if st.button("Process & Import CSV", type="primary", use_container_width=True):
+                        with st.spinner("Processing CSV and validating domains..."):
+                            import_stats = import_contacts_from_csv(uploaded_csv.getvalue(), verify_mx=verify_mx_import)
+                            if import_stats["errors"]:
+                                for err in import_stats["errors"][:5]:
+                                    st.error(err)
+                            st.success(
+                                f"🎉 Successfully imported {import_stats['total']} contact(s): "
+                                f"{import_stats['inserted']} new, {import_stats['updated']} updated!"
+                            )
+                            if import_stats.get("invalid_mx", 0) > 0:
+                                st.warning(f"⚠️ {import_stats['invalid_mx']} lead(s) failed MX check and were tagged 'Invalid MX'.")
+                            st.rerun()
+
+            with tab_exp:
+                st.caption("Export your current contact database with all tags, statuses, and custom variables:")
+                export_data = export_contacts_to_csv(all_contacts)
+                st.download_button(
+                    label=f"📤 Download All ({len(all_contacts)}) Leads as CSV",
+                    data=export_data,
+                    file_name="sellomize_contacts_export.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="btn_csv_export_center"
+                )
+
+            with tab_tmpl:
+                st.caption("Download our pre-formatted blank template with standard columns (`Name`, `Email`, `Company`, `Tags`, `Custom_Variables`):")
+                template_csv = generate_csv_template()
+                st.download_button(
+                    label="📥 Download Starter CSV Template",
+                    data=template_csv,
+                    file_name="contacts_template.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="btn_csv_tmpl_center"
+                )
+
+    st.markdown("---")
+
+    # ==============================================================================
+    # 🔍 SECTION 2: SEARCH, FILTERS & VIEW MODE CONTROLS (Compact Single Bar)
+    # ==============================================================================
+    distinct_tags = get_all_distinct_tags(include_predefined=True)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([2.2, 1.4, 1.4, 1.5])
+    with filter_col1:
+        search_query = st.text_input("🔍 Search Leads", placeholder="Search by Name, Email, Company, Owner, Notes...", key="crm_search_query")
+    with filter_col2:
+        tag_filter = st.multiselect("Filter by Tag", options=distinct_tags, placeholder="All tags...", key="crm_tag_filter")
+    with filter_col3:
+        status_filter_choice = st.selectbox(
+            "Filter by Pipeline",
+            ["-- All Statuses --", "Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+            key="crm_status_filter_choice"
+        )
+    with filter_col4:
+        crm_layout_mode = st.radio(
+            "Display Mode",
+            ["📊 Spreadsheet Grid", "🗂️ Detailed Cards"],
+            horizontal=True,
+            key="crm_display_layout_mode"
+        )
+
+    active_status_filter = None if status_filter_choice == "-- All Statuses --" else status_filter_choice
+    filtered_contacts = get_contacts(tags_filter=tag_filter, search_query=search_query, status_filter=active_status_filter)
+
     filtered_ids = [c["id"] for c in filtered_contacts]
     st.session_state["crm_selected_ids"] = st.session_state["crm_selected_ids"].intersection(set(filtered_ids))
     selected_ids = st.session_state["crm_selected_ids"]
     s_count = len(selected_ids)
 
-    # Selection Toolbar & Export
+    # Selection Toolbar & Counter Bar
     if filtered_contacts:
-        col_sel1, col_sel2, col_sel3, col_sel4 = st.columns([1.3, 1.3, 2.2, 2.2])
-        with col_sel1:
+        sel_c1, sel_c2, sel_c3 = st.columns([1.2, 1.2, 3.6])
+        with sel_c1:
             if st.button(f"☑️ Select All ({len(filtered_contacts)})", key="btn_sel_all_crm", use_container_width=True):
                 st.session_state["crm_selected_ids"] = set(filtered_ids)
                 st.rerun()
-        with col_sel2:
+        with sel_c2:
             if st.button("⬜ Clear Selection", key="btn_clear_sel_crm", use_container_width=True):
                 st.session_state["crm_selected_ids"] = set()
                 st.rerun()
-        with col_sel3:
+        with sel_c3:
             if s_count > 0:
-                st.markdown(f"<div style='padding:7px 12px; background:rgba(8,55,49,0.08); border:1.5px solid #083731; border-radius:8px; color:#083731; font-weight:700; text-align:center;'>📌 {s_count} lead(s) selected</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='padding:7px 14px; background:rgba(8,55,49,0.08); border:1.5px solid #083731; border-radius:8px; color:#083731; font-weight:700;'>📌 {s_count} of {len(filtered_contacts)} lead(s) selected</div>", unsafe_allow_html=True)
             else:
-                st.caption(f"Showing **{len(filtered_contacts)}** contact(s).")
-        with col_sel4:
-            export_csv_data = export_contacts_to_csv(filtered_contacts)
-            st.download_button(
-                label=f"📤 Export ({len(filtered_contacts)}) to CSV",
-                data=export_csv_data,
-                file_name="contacts_export.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+                st.caption(f"Displaying **{len(filtered_contacts)}** of **{len(all_contacts)}** total contacts.")
 
-    # ⚡ BULK ACTIONS COMMAND CENTER (Appears when 1+ contacts selected)
+    # ==============================================================================
+    # ⚡ SECTION 3: BULK ACTIONS COMMAND CENTER (Appears when 1+ contacts selected)
+    # ==============================================================================
     if s_count > 0:
         with st.container():
             st.markdown(f"""
-            <div style="background: #FFFFFF; border: 2px solid #083731; border-radius: 14px; padding: 16px 20px; margin: 12px 0 20px; box-shadow: 0 4px 18px rgba(8, 55, 49, 0.08);">
+            <div style="background: #FFFFFF; border: 2px solid #083731; border-radius: 14px; padding: 14px 18px; margin: 10px 0 16px; box-shadow: 0 4px 16px rgba(8, 55, 49, 0.08);">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size:1.1rem; font-weight:800; color:#083731; letter-spacing:0.5px;">⚡ BULK ACTIONS <span style="color:#083731; font-weight:700;">({s_count} Leads Selected)</span></div>
-                    <div style="font-size:0.85rem; color:#64748B;">Apply tag changes, update details, or delete selected contacts in 1 click</div>
+                    <div style="font-size:1.05rem; font-weight:800; color:#083731; letter-spacing:0.4px;">⚡ BULK ACTIONS <span style="color:#083731; font-weight:700;">({s_count} Leads Selected)</span></div>
+                    <div style="font-size:0.82rem; color:#64748B;">Apply tag updates, edit details, audit domains, or delete selected contacts in 1 click</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -264,8 +428,8 @@ def render_crm_tab(all_contacts=None):
                     )
                 with col_bt2:
                     all_avail_tags = get_all_distinct_tags(include_predefined=True)
-                    bulk_chosen_tags = st.multiselect("Select Predefined / Existing Tags", options=all_avail_tags, key="bulk_tags_multisel")
-                    bulk_custom_tag = st.text_input("Or Type New Tag to Apply", placeholder="e.g. Q4 Audit Target", key="bulk_custom_tag")
+                    bulk_chosen_tags = st.multiselect("Select Existing Tags", options=all_avail_tags, key="bulk_tags_multisel")
+                    bulk_custom_tag = st.text_input("Or Type New Tag", placeholder="e.g. Q4 Audit Target", key="bulk_custom_tag")
 
                 full_bulk_tags = list(set(bulk_chosen_tags + ([bulk_custom_tag.strip()] if bulk_custom_tag.strip() else [])))
                 if st.button(f"🚀 Apply Tags to {s_count} Selected Leads", type="primary", key="btn_apply_bulk_tags"):
@@ -335,29 +499,16 @@ def render_crm_tab(all_contacts=None):
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-    # CRM Display Mode Selector
-    st.markdown("---")
-    col_layout_mode, col_layout_hint = st.columns([2.5, 3.5])
-    with col_layout_mode:
-        crm_layout_mode = st.radio(
-            "CRM Display Mode",
-            ["📊 Excel Spreadsheet Grid View", "🗂️ Detailed Card View"],
-            horizontal=True,
-            key="crm_display_layout_mode"
-        )
-    with col_layout_hint:
-        if crm_layout_mode.startswith("📊 Excel"):
-            st.caption("📊 **Interactive Grid Mode**: Edit any cell or dropdown directly like an Excel sheet. Hit **Save Spreadsheet Changes** to persist.")
-        else:
-            st.caption("🗂️ **Card Mode**: Detailed card view with variable chips and individual edit panels.")
-
+    # ==============================================================================
+    # 🗃️ SECTION 4: MAIN WORKSPACE (Spreadsheet Grid vs Card View)
+    # ==============================================================================
     if not all_contacts:
         st.info("No contacts in database yet. Add a single lead or import a CSV using the panels above to get started.")
     elif not filtered_contacts:
         st.info("No contacts match the current search or filter criteria. Adjust or reset your filters above.")
-    elif crm_layout_mode.startswith("📊 Excel"):
+    elif crm_layout_mode.startswith("📊 Spreadsheet"):
         # ==============================================================================
-        # 📊 EXCEL SPREADSHEET GRID VIEW (st.data_editor with dropdowns)
+        # 📊 SPREADSHEET GRID VIEW (st.data_editor with dropdowns)
         # ==============================================================================
         grid_rows = []
         for c in filtered_contacts:
@@ -382,7 +533,7 @@ def render_crm_tab(all_contacts=None):
 
         df_grid = pd.DataFrame(grid_rows)
 
-        # Column Visibility Controls & Preset Selector
+        # Column Visibility Controls
         all_grid_cols = [
             "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
             "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
@@ -424,26 +575,11 @@ def render_crm_tab(all_contacts=None):
         """, unsafe_allow_html=True)
 
         column_config = {
-            "id": None,  # Hide raw integer ID column
-            "Lead ID": st.column_config.TextColumn(
-                "Lead ID",
-                disabled=True,
-                width="small"
-            ) if "Lead ID" in visible_cols else None,
-            "Company": st.column_config.TextColumn(
-                "Company",
-                width="medium"
-            ) if "Company" in visible_cols else None,
-            "Contact Name": st.column_config.TextColumn(
-                "Contact Name",
-                width="medium",
-                required=True
-            ) if "Contact Name" in visible_cols else None,
-            "Email Address": st.column_config.TextColumn(
-                "Email Address",
-                width="medium",
-                required=True
-            ) if "Email Address" in visible_cols else None,
+            "id": None,
+            "Lead ID": st.column_config.TextColumn("Lead ID", disabled=True, width="small") if "Lead ID" in visible_cols else None,
+            "Company": st.column_config.TextColumn("Company", width="medium") if "Company" in visible_cols else None,
+            "Contact Name": st.column_config.TextColumn("Contact Name", width="medium", required=True) if "Contact Name" in visible_cols else None,
+            "Email Address": st.column_config.TextColumn("Email Address", width="medium", required=True) if "Email Address" in visible_cols else None,
             "Lead Source": st.column_config.SelectboxColumn(
                 "Lead Source",
                 options=["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
@@ -456,56 +592,21 @@ def render_crm_tab(all_contacts=None):
             ) if "Priority" in visible_cols else None,
             "Contacted?": st.column_config.SelectboxColumn(
                 "Contacted?",
-                options=["No", "Yes"],
+                options=["Yes", "No"],
                 width="small"
             ) if "Contacted?" in visible_cols else None,
-            "Date First Emailed": st.column_config.TextColumn(
-                "Date First Emailed",
-                width="small"
-            ) if "Date First Emailed" in visible_cols else None,
+            "Date First Emailed": st.column_config.TextColumn("Date First Emailed", width="small") if "Date First Emailed" in visible_cols else None,
             "Status": st.column_config.SelectboxColumn(
                 "Status",
-                options=[
-                    "Not Contacted",
-                    "Contacted",
-                    "Follow-Up Sent",
-                    "Opened / Interested",
-                    "Replied",
-                    "Meeting Booked",
-                    "Closed Won",
-                    "Closed Lost",
-                    "Bounced",
-                    "Do Not Contact"
-                ],
+                options=["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
                 width="medium"
             ) if "Status" in visible_cols else None,
-            "Follow-Ups Sent": st.column_config.NumberColumn(
-                "Follow-Ups Sent",
-                min_value=0,
-                max_value=100,
-                step=1,
-                width="small"
-            ) if "Follow-Ups Sent" in visible_cols else None,
-            "Last Contact Date": st.column_config.TextColumn(
-                "Last Contact Date",
-                width="small"
-            ) if "Last Contact Date" in visible_cols else None,
-            "Next Follow-Up": st.column_config.TextColumn(
-                "Next Follow-Up",
-                width="small"
-            ) if "Next Follow-Up" in visible_cols else None,
-            "Owner": st.column_config.TextColumn(
-                "Owner",
-                width="small"
-            ) if "Owner" in visible_cols else None,
-            "Notes": st.column_config.TextColumn(
-                "Notes",
-                width="large"
-            ) if "Notes" in visible_cols else None,
-            "Tags": st.column_config.TextColumn(
-                "Tags",
-                width="medium"
-            ) if "Tags" in visible_cols else None
+            "Follow-Ups Sent": st.column_config.NumberColumn("Follow-Ups Sent", min_value=0, max_value=20, step=1, width="small") if "Follow-Ups Sent" in visible_cols else None,
+            "Last Contact Date": st.column_config.TextColumn("Last Contact Date", width="small") if "Last Contact Date" in visible_cols else None,
+            "Next Follow-Up": st.column_config.TextColumn("Next Follow-Up", width="small") if "Next Follow-Up" in visible_cols else None,
+            "Owner": st.column_config.TextColumn("Owner", width="small") if "Owner" in visible_cols else None,
+            "Notes": st.column_config.TextColumn("Notes", width="large") if "Notes" in visible_cols else None,
+            "Tags": st.column_config.TextColumn("Tags", width="medium") if "Tags" in visible_cols else None,
         }
 
         edited_grid = st.data_editor(
@@ -539,15 +640,14 @@ def render_crm_tab(all_contacts=None):
 
     else:
         # ==============================================================================
-        # 🗂️ DETAILED CARD VIEW
+        # 🗂️ DETAILED CARD VIEW (Clean, Unified Edit & Delete in the same place)
         # ==============================================================================
         for contact in filtered_contacts:
             c_id = contact["id"]
-            is_editing = (st.session_state.get("crm_editing_id") == c_id)
             is_selected = (c_id in selected_ids)
 
             with st.container():
-                col_chk, col_c1, col_c2, col_c3, col_c4 = st.columns([0.45, 2.5, 2.5, 3.1, 1.45])
+                col_chk, col_c1, col_c2, col_c3, col_c4 = st.columns([0.45, 2.3, 2.3, 3.1, 1.85])
                 with col_chk:
                     checked = st.checkbox(f"Select contact #{c_id}", key=f"sel_c_{c_id}", value=is_selected, label_visibility="collapsed")
                     if checked != is_selected:
@@ -562,15 +662,15 @@ def render_crm_tab(all_contacts=None):
                     st.caption(f"Lead ID: `L-{c_id:04d}`")
                     if contact.get("owner"):
                         st.caption(f"👤 Owner: {contact['owner']}")
+
                 with col_c2:
                     st.markdown(f"📧 `{contact['email']}`")
                     st.markdown(f"🏢 {contact.get('company') or 'No Company'}")
-                    # Pipeline status badge
                     p_status = contact.get("status") or "Not Contacted"
                     status_color = "#A78BFA" if p_status == "Replied" else ("#34D399" if p_status == "Contacted" else ("#60A5FA" if "Opened" in p_status else ("#F87171" if p_status == "Bounced" else "#94A3B8")))
                     st.markdown(f"<span style='font-size:0.8rem; font-weight:700; color:{status_color};'>● {p_status}</span> (Sent: {contact.get('follow_ups_sent', 0)})", unsafe_allow_html=True)
+
                 with col_c3:
-                    # Tag Badges with distinct intelligent colors
                     tags_list = contact.get("tags_list") or []
                     if tags_list:
                         tags_html = ""
@@ -622,22 +722,22 @@ def render_crm_tab(all_contacts=None):
                     if contact.get("notes"):
                         st.caption(f"📝 {contact['notes']}")
 
+                # Far Right Column: Low-opacity timestamp + Unified Edit and Delete buttons in the same place
                 with col_c4:
                     c_added = contact.get("created_at") or ""
                     if c_added:
                         st.markdown(
-                            f"<div style='text-align:right; opacity:0.4; font-size:0.72rem; color:#64748B; margin-bottom:4px;' title='Added: {c_added}'>Added {c_added[:10]}</div>",
+                            f"<div class='timestamp-right' style='margin-bottom:6px;' title='Added: {c_added}'>Added {c_added[:10]}</div>",
                             unsafe_allow_html=True
                         )
-                    col_btn_e, col_btn_d = st.columns(2)
-                    with col_btn_e:
-                        if st.button("✏️", key=f"edit_btn_{c_id}"):
-                            if st.session_state.get("crm_editing_id") == c_id:
-                                st.session_state["crm_editing_id"] = None
-                            else:
-                                st.session_state["crm_editing_id"] = c_id
+
+                    col_btn_edit, col_btn_del = st.columns([2.5, 1])
+                    with col_btn_edit:
+                        if st.button("✏️ Edit & Manage", key=f"edit_btn_{c_id}", use_container_width=True):
+                            st.session_state["crm_editing_id"] = c_id
                             st.rerun()
-                    with col_btn_d:
+
+                    with col_btn_del:
                         if st.session_state.get(f"confirm_del_c_{c_id}"):
                             if st.button("Confirm", key=f"del_conf_{c_id}", use_container_width=True):
                                 delete_contact(c_id)
@@ -646,120 +746,8 @@ def render_crm_tab(all_contacts=None):
                                 st.warning(f"Contact #{c_id} deleted.")
                                 st.rerun()
                         else:
-                            if st.button("🗑️", key=f"del_contact_{c_id}"):
+                            if st.button("🗑️", key=f"del_contact_{c_id}", use_container_width=True, help="Delete this contact"):
                                 st.session_state[f"confirm_del_c_{c_id}"] = True
-                                st.rerun()
-
-                # INLINE EDIT EXPANDER/FORM
-                if is_editing:
-                    with st.container():
-                        st.markdown(f"""
-                        <div style="background: rgba(14, 46, 39, 0.65); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin: 8px 0 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
-                            <strong style="color: #34D399;">✏️ Edit Lead #{c_id}: {contact['name']}</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        with st.form(f"edit_contact_form_{c_id}"):
-                            ec1, ec2, ec3 = st.columns(3)
-                            with ec1:
-                                edit_name = st.text_input("Full Name *", value=contact["name"])
-                            with ec2:
-                                edit_email = st.text_input("Email Address *", value=contact["email"])
-                            with ec3:
-                                edit_company = st.text_input("Company", value=contact.get("company") or "")
-
-                            ec_r1, ec_r2, ec_r3, ec_r4 = st.columns(4)
-                            with ec_r1:
-                                source_opts = ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"]
-                                curr_src = contact.get("lead_source") or "Other"
-                                src_idx = source_opts.index(curr_src) if curr_src in source_opts else 7
-                                edit_source = st.selectbox("Lead Source", source_opts, index=src_idx, key=f"esrc_{c_id}")
-                            with ec_r2:
-                                prio_opts = ["High", "Medium", "Low"]
-                                curr_prio = contact.get("priority") or "Medium"
-                                prio_idx = prio_opts.index(curr_prio) if curr_prio in prio_opts else 1
-                                edit_priority = st.selectbox("Priority", prio_opts, index=prio_idx, key=f"eprio_{c_id}")
-                            with ec_r3:
-                                edit_owner = st.text_input("Lead Owner", value=contact.get("owner") or "", key=f"eown_{c_id}")
-                            with ec_r4:
-                                stat_opts = ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]
-                                curr_st = contact.get("status") or "Not Contacted"
-                                st_idx = stat_opts.index(curr_st) if curr_st in stat_opts else 0
-                                edit_status = st.selectbox("Pipeline Status", stat_opts, index=st_idx, key=f"estat_{c_id}")
-
-                            edit_notes = st.text_input("Internal Notes", value=contact.get("notes") or "", key=f"enotes_{c_id}")
-
-                            all_avail_tags = get_all_distinct_tags(include_predefined=True)
-                            curr_tags = contact.get("tags_list") or []
-                            col_et1, col_et2 = st.columns([2, 1])
-                            with col_et1:
-                                edit_selected_tags = st.multiselect(
-                                    "Tags (Select Predefined / Existing)",
-                                    options=all_avail_tags,
-                                    default=[t for t in curr_tags if t in all_avail_tags]
-                                )
-                            with col_et2:
-                                edit_new_tags = st.text_input("Or Add New Tag(s)", placeholder="e.g. Q4 Audit, Tier 1")
-
-                            st.markdown("##### 🧩 Lead Variables (No JSON needed)")
-                            c_cv = contact.get("custom_variables_dict") or {}
-                            col_ecv1, col_ecv2, col_ecv3 = st.columns(3)
-                            with col_ecv1:
-                                edit_role = st.text_input("Role / Job Title", value=str(c_cv.get("Role", "")), key=f"edit_role_{c_id}")
-                            with col_ecv2:
-                                edit_web = st.text_input("Website / Store URL", value=str(c_cv.get("Website", "")), key=f"edit_web_{c_id}")
-                            with col_ecv3:
-                                edit_asin = st.text_input("Amazon ASIN / Product", value=str(c_cv.get("ASIN", "")), key=f"edit_asin_{c_id}")
-
-                            other_vars = {k: v for k, v in c_cv.items() if k not in ["Role", "Website", "ASIN"]}
-                            with st.expander("➕ Other Variables (Key: Value or JSON)", expanded=bool(other_vars)):
-                                edit_other_vars_text = st.text_area(
-                                    "Additional Custom Variables",
-                                    value=format_variables_as_lines(other_vars),
-                                    key=f"edit_other_vars_{c_id}",
-                                    height=65,
-                                    help="One variable per line (e.g. Category: Skincare or Location: NYC). No JSON syntax required!"
-                                )
-
-                            col_esave, col_ecancel = st.columns([1.5, 4])
-                            with col_esave:
-                                save_edit_btn = st.form_submit_button("💾 Save Changes", type="primary", use_container_width=True)
-                            with col_ecancel:
-                                cancel_edit_btn = st.form_submit_button("Cancel", use_container_width=True)
-
-                            if save_edit_btn:
-                                if not edit_name.strip() or not edit_email.strip():
-                                    st.error("Name and Email are required.")
-                                else:
-                                    parsed_cv = parse_variables_from_text(edit_other_vars_text)
-                                    if edit_role.strip():
-                                        parsed_cv["Role"] = edit_role.strip()
-                                    if edit_web.strip():
-                                        parsed_cv["Website"] = edit_web.strip()
-                                    if edit_asin.strip():
-                                        parsed_cv["ASIN"] = edit_asin.strip()
-
-                                    extra_t = [t.strip() for t in edit_new_tags.split(",") if t.strip()]
-                                    final_t = list(set(edit_selected_tags + extra_t))
-
-                                    update_contact(
-                                        contact_id=c_id,
-                                        name=edit_name.strip(),
-                                        email=edit_email.strip(),
-                                        company=edit_company.strip(),
-                                        tags=final_t,
-                                        custom_variables=parsed_cv,
-                                        lead_source=edit_source,
-                                        priority=edit_priority,
-                                        owner=edit_owner.strip() if edit_owner else None,
-                                        status=edit_status,
-                                        notes=edit_notes.strip() if edit_notes else None
-                                    )
-                                    st.session_state["crm_editing_id"] = None
-                                    st.success(f"✅ Saved changes for contact #{c_id}!")
-                                    st.rerun()
-
-                            if cancel_edit_btn:
-                                st.session_state["crm_editing_id"] = None
                                 st.rerun()
 
                 st.markdown("<hr style='margin: 0.4rem 0; opacity: 0.15;'>", unsafe_allow_html=True)
