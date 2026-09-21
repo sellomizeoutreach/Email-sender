@@ -252,7 +252,7 @@ SELLOMIZE_THEME_CSS = """<style>
         margin-bottom: 1.6rem !important;
     }
 
-    /* Tab List Container Bar */
+    /* Tab List Container Bar (Swipeable on touch screens) */
     .stTabs [role="tablist"],
     div[data-testid="stTabs"] [role="tablist"],
     div[data-testid="stTabs"] > div:first-child,
@@ -267,6 +267,15 @@ SELLOMIZE_THEME_CSS = """<style>
         align-items: center !important;
         position: relative !important;
         border-bottom: 1px solid rgba(8, 55, 49, 0.15) !important;
+        overflow-x: auto !important;
+        max-width: 100% !important;
+        white-space: nowrap !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+    .stTabs [role="tablist"]::-webkit-scrollbar {
+        display: none !important;
     }
 
     /* Eliminate the default bottom pseudo-line on tablist */
@@ -296,6 +305,8 @@ SELLOMIZE_THEME_CSS = """<style>
         justify-content: center !important;
         text-decoration: none !important;
         box-shadow: none !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
     }
 
     /* Unselected Tab Label & Icons (Sellomize Signature Deep Pine Green) */
@@ -705,6 +716,222 @@ SELLOMIZE_THEME_CSS = """<style>
         border: 1px solid rgba(8, 55, 49, 0.14) !important;
         border-radius: 10px !important;
         margin-bottom: 10px !important;
+    }
+
+    /* ==========================================================================
+       📱 COMPREHENSIVE MOBILE & TOUCH RESPONSIVE STYLESHEET (PHONES <= 768px)
+       ========================================================================== */
+    @media (max-width: 768px) {
+        /* 1. Viewport & Canvas Layout: Eliminate huge default desktop padding */
+        .block-container {
+            padding-top: 0.75rem !important;
+            padding-bottom: 2.5rem !important;
+            padding-left: 0.65rem !important;
+            padding-right: 0.65rem !important;
+            max-width: 100% !important;
+        }
+
+        /* 2. Responsive Branded Header Bar */
+        .sellomize-header-container {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            padding: 0.95rem 1rem !important;
+            gap: 0.75rem !important;
+            border-radius: 12px !important;
+            margin-bottom: 1rem !important;
+        }
+        .sellomize-header-left {
+            gap: 0.75rem !important;
+            width: 100% !important;
+        }
+        .sellomize-logo-img {
+            height: 40px !important;
+            width: 40px !important;
+            border-radius: 10px !important;
+        }
+        .sellomize-logo-fallback {
+            font-size: 1.5rem !important;
+            padding: 4px 8px !important;
+        }
+        .sellomize-brand-title {
+            font-size: 1.35rem !important;
+            letter-spacing: 0.4px !important;
+            line-height: 1.15 !important;
+        }
+        .sellomize-brand-subtitle {
+            font-size: 0.72rem !important;
+            line-height: 1.3 !important;
+        }
+        .sellomize-header-right {
+            width: 100% !important;
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.18) !important;
+            padding-top: 0.55rem !important;
+            gap: 0.5rem !important;
+        }
+        .system-status-pill,
+        .sellomize-header-badge {
+            padding: 3px 9px !important;
+            font-size: 0.68rem !important;
+        }
+
+        /* 3. Smooth Swipeable Tab Navigation Bar on Touch Devices */
+        .stTabs [role="tablist"],
+        div[data-testid="stTabs"] [role="tablist"],
+        div[data-testid="stTabs"] > div:first-child,
+        .stTabs [data-baseweb="tab-list"] {
+            padding: 4px 6px !important;
+            gap: 5px !important;
+            border-radius: 10px !important;
+            margin-bottom: 1rem !important;
+        }
+        .stTabs [data-testid="stTab"],
+        .stTabs [role="tab"],
+        .stTabs [data-baseweb="tab"],
+        div[data-testid="stTabs"] button[role="tab"] {
+            height: 38px !important;
+            padding: 0 0.85rem !important;
+        }
+        .stTabs [data-testid="stTab"] p,
+        .stTabs [role="tab"] p,
+        div[data-testid="stTabs"] button[role="tab"] p {
+            font-size: 0.82rem !important;
+        }
+
+        /* 4. Column Stacking on Mobile Screens */
+        [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 0.65rem !important;
+        }
+        [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            width: 100% !important;
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+            margin-bottom: 0.2rem !important;
+        }
+
+        /* Checkbox rows (e.g. triage draft items & CRM card selection) stay neatly inline with their card */
+        [data-testid="stHorizontalBlock"]:has(> [data-testid="column"] [data-testid="stCheckbox"]) {
+            flex-wrap: nowrap !important;
+            align-items: flex-start !important;
+        }
+        [data-testid="stHorizontalBlock"]:has(> [data-testid="column"] [data-testid="stCheckbox"]) > [data-testid="column"]:first-child {
+            width: 36px !important;
+            min-width: 36px !important;
+            max-width: 42px !important;
+            flex: 0 0 36px !important;
+        }
+        [data-testid="stHorizontalBlock"]:has(> [data-testid="column"] [data-testid="stCheckbox"]) > [data-testid="column"]:not(:first-child) {
+            width: calc(100% - 42px) !important;
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+        }
+
+        /* 5. Mobile Touch Targets & iOS Anti-Zoom Fix */
+        button,
+        [data-testid="baseButton-primary"],
+        [data-testid="baseButton-secondary"],
+        .stButton > button,
+        .stDownloadButton > button {
+            min-height: 44px !important;
+            font-size: 0.92rem !important;
+            touch-action: manipulation !important;
+            border-radius: 8px !important;
+        }
+        div[data-baseweb="input"] input,
+        div[data-baseweb="textarea"] textarea,
+        input[data-testid="stTextInputField"],
+        textarea[data-testid="stTextAreaField"],
+        .stTextInput input,
+        .stTextArea textarea,
+        div[data-baseweb="select"] {
+            font-size: 16px !important; /* Prevents iOS Safari from auto-zooming on focus */
+        }
+
+        /* 6. Form Containers on Mobile */
+        div[data-testid="stForm"] {
+            padding: 0.95rem 1rem !important;
+            border-radius: 12px !important;
+        }
+        div[data-testid="stExpander"] {
+            border-radius: 10px !important;
+            margin-bottom: 8px !important;
+        }
+        div[data-testid="stExpander"] summary {
+            font-size: 0.88rem !important;
+            padding: 0.35rem 0.1rem !important;
+        }
+
+        /* 7. Stats Grid on Mobile Phones */
+        .stats-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 0.65rem !important;
+            margin-bottom: 1.1rem !important;
+        }
+        .stat-card {
+            padding: 0.85rem 0.95rem !important;
+            border-radius: 10px !important;
+        }
+        .stat-value {
+            font-size: 1.55rem !important;
+            margin-bottom: 0.15rem !important;
+        }
+        .stat-label {
+            font-size: 0.68rem !important;
+            letter-spacing: 0.5px !important;
+        }
+        .stat-sub {
+            font-size: 0.72rem !important;
+        }
+
+        /* 8. Full-width Responsive Tables & Previews */
+        [data-testid="stDataFrame"],
+        [data-testid="stDataEditor"] {
+            width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+        }
+        .email-preview-box {
+            padding: 0.85rem !important;
+            border-radius: 8px !important;
+            overflow-x: auto !important;
+            word-break: break-word !important;
+        }
+
+        /* 9. Sidebar on Mobile Devices */
+        section[data-testid="stSidebar"] {
+            width: 86vw !important;
+            max-width: 320px !important;
+        }
+
+        /* 10. Modals & Dialogs on Mobile */
+        div[data-testid="stModal"],
+        div[role="dialog"] {
+            width: 95vw !important;
+            max-width: 95vw !important;
+            margin: 10px auto !important;
+            padding: 1rem !important;
+            border-radius: 14px !important;
+        }
+    }
+
+    @media (max-width: 480px) {
+        /* Single column stats on very narrow phones */
+        .stats-grid {
+            grid-template-columns: 1fr !important;
+        }
+        .sellomize-brand-title {
+            font-size: 1.22rem !important;
+        }
+        .stat-header {
+            margin-bottom: 0.35rem !important;
+        }
+        .stat-icon-badge {
+            font-size: 0.95rem !important;
+            padding: 2px 6px !important;
+        }
     }
 
 </style>"""
