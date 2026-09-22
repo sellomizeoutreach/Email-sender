@@ -13,6 +13,16 @@ SELLOMIZE_THEME_CSS = """<style>
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
     }
 
+    /* Complete Sidebar Elimination (Full Horizontal Space dedicated to Core Content) */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarCollapsedControl"],
+    section[data-testid="stSidebar"] {
+        display: none !important;
+        width: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
     /* Custom Sleek Scrollbar */
     ::-webkit-scrollbar {
         width: 8px;

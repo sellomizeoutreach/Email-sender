@@ -895,7 +895,7 @@ def bulk_update_contact_grid(records: List[Dict[str, Any]], db_path: str = DB_FI
             continue
 
         name = str(rec.get("name") or rec.get("Contact Name") or "").strip()
-        email = str(rec.get("email") or rec.get("Email Address") or "").strip()
+        email = str(rec.get("email") or rec.get("Email Address") or "").replace("mailto:", "").strip()
         company = str(rec.get("company") or rec.get("Company") or "").strip()
         tags = rec.get("tags") or rec.get("Tags") or ""
         tags_str = _normalize_tags(tags)

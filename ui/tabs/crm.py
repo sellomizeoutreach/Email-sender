@@ -120,7 +120,7 @@ def render_edit_contact_dialog(contact: dict):
     col_out1, col_out2 = st.columns(2)
     with col_out1:
         if st.button("✉️ Send One-Time Email", key=f"dlg_btn_outreach_once_{c_id}", use_container_width=True, help="Compose and send a single one-off email directly to this contact"):
-            st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+            st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
             st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
             st.session_state["camp_single_contact_picker"] = c_id
             st.session_state["camp_seq_touches"] = "Once (1 Email - Single Touch)"
@@ -128,7 +128,7 @@ def render_edit_contact_dialog(contact: dict):
             st.rerun()
     with col_out2:
         if st.button("⚡ Multi-Touch Sequence", key=f"dlg_btn_outreach_seq_{c_id}", use_container_width=True, help="Create an automated multi-step sequence with follow-ups for this contact"):
-            st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+            st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
             st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
             st.session_state["camp_single_contact_picker"] = c_id
             st.session_state["camp_seq_touches"] = "Twice (2 Emails - Initial Pitch + 1 Follow-Up)"
@@ -604,14 +604,14 @@ def render_crm_tab(all_contacts=None):
                         st.rerun()
             with col_act3:
                 if st.button("✉️ Send One-Time Email", type="primary", use_container_width=True, key=f"btn_mail_once_indiv_grid_{chosen_indiv}", help="Jump directly to compose a single one-off email for this contact"):
-                    st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+                    st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
                     st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
                     st.session_state["camp_single_contact_picker"] = chosen_indiv
                     st.session_state["camp_seq_touches"] = "Once (1 Email - Single Touch)"
                     st.rerun()
             with col_act4:
                 if st.button("⚡ Multi-Touch Sequence", use_container_width=True, key=f"btn_mail_seq_indiv_grid_{chosen_indiv}", help="Jump directly to set up an automated multi-step sequence for this contact"):
-                    st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+                    st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
                     st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
                     st.session_state["camp_single_contact_picker"] = chosen_indiv
                     st.session_state["camp_seq_touches"] = "Twice (2 Emails - Initial Pitch + 1 Follow-Up)"
@@ -642,14 +642,14 @@ def render_crm_tab(all_contacts=None):
                         st.rerun()
             with col_b2:
                 if st.button(f"✉️ Send One-Time Batch ({s_count})", type="primary", use_container_width=True, key="btn_multi_outreach_once_grid", help="Jump directly to send a single one-off email to these selected leads"):
-                    st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+                    st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
                     st.session_state["camp_audience_mode"] = "🎯 Cherry-Pick Specific Contacts (Direct Multi-Select)"
                     st.session_state["camp_cherry_pick_multisel"] = list(selected_ids)
                     st.session_state["camp_seq_touches"] = "Once (1 Email - Single Touch)"
                     st.rerun()
             with col_b3:
                 if st.button(f"⚡ Launch Campaign ({s_count})", use_container_width=True, key="btn_multi_outreach_seq_grid", help="Jump directly to build a multi-step sequence campaign for these selected leads"):
-                    st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+                    st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
                     st.session_state["camp_audience_mode"] = "🎯 Cherry-Pick Specific Contacts (Direct Multi-Select)"
                     st.session_state["camp_cherry_pick_multisel"] = list(selected_ids)
                     st.session_state["camp_seq_touches"] = "Twice (2 Emails - Initial Pitch + 1 Follow-Up)"
@@ -658,13 +658,14 @@ def render_crm_tab(all_contacts=None):
         # 2. Build rows for spreadsheet data editor with 'Select' checkbox
         grid_rows = []
         for c in filtered_contacts:
+            raw_email = (c.get("email") or "").strip()
             grid_rows.append({
                 "Select": (c["id"] in selected_ids),
                 "id": c["id"],
                 "Lead ID": f"L-{c['id']:04d}",
                 "Company": c.get("company") or "",
                 "Contact Name": c.get("name") or "",
-                "Email Address": c.get("email") or "",
+                "Email Address": f"mailto:{raw_email}" if raw_email else "",
                 "Lead Source": c.get("lead_source") or "Other",
                 "Priority": c.get("priority") or "Medium",
                 "Contacted?": c.get("contacted") or "No",
@@ -680,14 +681,14 @@ def render_crm_tab(all_contacts=None):
 
         df_grid = pd.DataFrame(grid_rows)
 
-        # Column Visibility Controls
+        # Column Visibility Controls - Hide system columns (internal IDs, timestamps) by default
         all_grid_cols = [
             "Select", "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
             "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
             "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags"
         ]
         default_outreach_cols = [
-            "Select", "Lead ID", "Company", "Contact Name", "Email Address",
+            "Select", "Company", "Contact Name", "Email Address",
             "Priority", "Status", "Follow-Ups Sent", "Next Follow-Up"
         ]
 
@@ -695,7 +696,7 @@ def render_crm_tab(all_contacts=None):
         with col_v1:
             col_preset = st.radio(
                 "Grid Column View",
-                ["Focused Outreach View (9 cols)", "All Columns (16 cols)", "Custom Columns"],
+                ["Focused Outreach View (8 cols)", "All Columns (16 cols)", "Custom Columns"],
                 horizontal=True,
                 key="crm_col_preset"
             )
@@ -730,7 +731,13 @@ def render_crm_tab(all_contacts=None):
             "Lead ID": st.column_config.TextColumn("Lead ID", disabled=True, width="small") if "Lead ID" in visible_cols else None,
             "Company": st.column_config.TextColumn("Company", width="medium") if "Company" in visible_cols else None,
             "Contact Name": st.column_config.TextColumn("Contact Name", width="medium", required=True) if "Contact Name" in visible_cols else None,
-            "Email Address": st.column_config.TextColumn("Email Address", width="medium", required=True) if "Email Address" in visible_cols else None,
+            "Email Address": st.column_config.LinkColumn(
+                "Email Address",
+                display_text=r"mailto:(.*)",
+                help="Click to open default email client",
+                width="medium",
+                required=True
+            ) if "Email Address" in visible_cols else None,
             "Lead Source": st.column_config.SelectboxColumn(
                 "Lead Source",
                 options=["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
@@ -786,6 +793,9 @@ def render_crm_tab(all_contacts=None):
         with col_save_grid:
             if st.button("💾 Save Spreadsheet Changes", type="primary", use_container_width=True, key="btn_save_crm_spreadsheet"):
                 records_to_save = edited_grid.to_dict(orient="records")
+                for r in records_to_save:
+                    if "Email Address" in r and isinstance(r["Email Address"], str):
+                        r["Email Address"] = r["Email Address"].replace("mailto:", "").strip()
                 saved_count = bulk_update_contact_grid(records_to_save)
                 st.success(f"✅ Successfully saved changes to {saved_count} contact(s)!")
                 st.rerun()
@@ -904,7 +914,7 @@ def render_crm_tab(all_contacts=None):
                     col_btn_mail, col_btn_edit, col_btn_del = st.columns([1, 2.2, 0.8])
                     with col_btn_mail:
                         if st.button("✉️", key=f"mail_btn_{c_id}", use_container_width=True, help=f"Draft 1-to-1 email or sequence for {contact['name']}"):
-                            st.session_state["main_app_tabs"] = "⚡ Sequences & Campaigns"
+                            st.session_state["main_app_tabs"] = "🚀 Dispatch & Review"
                             st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
                             st.session_state["camp_single_contact_picker"] = c_id
                             st.rerun()

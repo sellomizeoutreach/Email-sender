@@ -27,20 +27,20 @@ def render_studio_tab(templates=None, contacts_list=None):
 
     render_tab_header("✍️ Studio & Outreach Templates", "Create reusable cold outreach templates with dynamic variable insertion and Spintax variation.")
 
-    # Dynamic Variable Badges from CRM
-    detected_var_keys = get_all_distinct_custom_variable_keys(include_predefined=True)
-    var_chips = ["Name", "Company", "Email"] + [k for k in detected_var_keys if k not in ["Name", "Company", "Email"]]
-    var_chips_html = "".join([f"<code style='background:rgba(56, 189, 248, 0.12); color:#38BDF8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight:700; padding:2px 6px; border-radius:4px; margin-right:4px; display:inline-block;'>[{k}]</code> " for k in var_chips])
+    # Dynamic Variable Badges & Syntax Guide inside Collapsible Expander
+    with st.expander("💡 How to format templates (Spintax & Variables)", expanded=False):
+        detected_var_keys = get_all_distinct_custom_variable_keys(include_predefined=True)
+        var_chips = ["Name", "Company", "Email"] + [k for k in detected_var_keys if k not in ["Name", "Company", "Email"]]
+        var_chips_html = "".join([f"<code style='background:rgba(56, 189, 248, 0.12); color:#38BDF8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight:700; padding:2px 6px; border-radius:4px; margin-right:4px; display:inline-block;'>[{k}]</code> " for k in var_chips])
 
-    # Syntax Guide Box
-    st.markdown(f"""
-    <div class="syntax-help">
-        <strong>💡 Template Formatting Guide:</strong><br>
-        • <strong>Variables:</strong> Use brackets like <code>[Name]</code> or <code>[Company]</code>. They are automatically injected with prospect data.<br>
-        • <strong>Available Lead Variables:</strong> {var_chips_html}<br>
-        • <strong>Spintax:</strong> Use <code>{{variation1|variation2|variation3}}</code> syntax. The engine randomly selects an option per lead to ensure unique copy.
-    </div>
-    """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="syntax-help">
+            <strong>💡 Template Formatting Guide:</strong><br>
+            • <strong>Variables:</strong> Use brackets like <code>[Name]</code> or <code>[Company]</code>. They are automatically injected with prospect data.<br>
+            • <strong>Available Lead Variables:</strong> {var_chips_html}<br>
+            • <strong>Spintax:</strong> Use <code>{{variation1|variation2|variation3}}</code> syntax. The engine randomly selects an option per lead to ensure unique copy.
+        </div>
+        """, unsafe_allow_html=True)
 
     with st.expander("Turn a written email into a template (External AI Workflow)", expanded=False):
         st.markdown(

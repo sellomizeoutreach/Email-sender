@@ -356,6 +356,21 @@ def render_settings_tab():
         total_capacity = sum(get_effective_daily_limit(acc) for acc in active_accounts)
         total_sent_today = sum(acc.get("sent_today", 0) for acc in active_accounts)
 
+        is_open, window_msg = is_within_sending_window()
+        engine_method = current_configs.get("dispatch_method", "hostinger_smtp")
+        engine_label = "Hostinger SMTP" if engine_method == "hostinger_smtp" else "Outlook Local"
+        status_badge = '<span class="sellomize-badge badge-success">WINDOW OPEN</span>' if is_open else '<span class="sellomize-badge badge-alert">WINDOW PAUSED</span>'
+
+        st.markdown(f"""
+        <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:10px; padding:10px 14px; margin:8px 0 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+                <strong style="color:#083731; font-size:0.92rem;">Dispatch Engine: {engine_label}</strong>
+                <span style="color:#475569; font-size:0.8rem; margin-left:8px;">{window_msg}</span>
+            </div>
+            <div>{status_badge}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("Active Mailboxes", f"{len(active_accounts)} / {len(smtp_accounts)}")
         col_m2.metric("Today's Capacity", f"{total_sent_today} / {total_capacity} sent")

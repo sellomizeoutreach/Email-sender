@@ -252,13 +252,13 @@ def render_touch_composer(
 
 
 def render_campaigns_tab(contacts_list=None, templates_list=None):
-    """Render Tab 3: Sequences & Campaigns."""
+    """Render Campaign Generator section of Dispatch & Review."""
     if contacts_list is None:
         contacts_list = get_contacts()
     if templates_list is None:
         templates_list = get_templates()
 
-    render_tab_header("⚡ Sequences & Campaigns", "Configure sending windows, cadence strategy, and generate personalized outreach batches.")
+    render_tab_header("🚀 Dispatch & Review", "Launch outreach campaigns, compose sequences, inspect rendered HTML previews, and triage drafts.")
 
     if not contacts_list:
         st.warning("You have no contacts saved. Please add contacts in the Contacts tab first.")
@@ -689,102 +689,102 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         else:
             default_preset_idx = 2
 
-        # Section 2: Sending Window
-        st.markdown("#### 2. Allowed Working Hours (In Target Market)")
-        preset_choice = st.radio(
-            "Select Active Sending Schedule",
-            ["Business Days (Mon - Fri, 09:00 - 17:00 Target Time)", "24/7 Continuous (All 7 Days)", "Custom Schedule"],
-            index=default_preset_idx,
-            horizontal=True,
-            key="camp_sched_preset"
-        )
-
-        if preset_choice.startswith("Business Days"):
-            camp_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-            camp_start = m_info.get("default_start", "09:00")
-            camp_end = m_info.get("default_end", "17:00")
-            st.caption(f"Sending restricted strictly to Monday through Friday from {camp_start} to {camp_end} in {m_info.get('country', 'target market')}.")
-        elif preset_choice.startswith("24/7 Continuous"):
-            camp_days = list(WEEKDAY_NAMES)
-            camp_start = "00:00"
-            camp_end = "23:59"
-            st.caption("Continuous dispatch active 24/7 across all 7 days without pauses.")
-        else:
-            col_sd1, col_sd2, col_sd3 = st.columns([2, 1, 1])
-            with col_sd1:
-                camp_days = st.multiselect("Allowed Sending Days", WEEKDAY_NAMES, default=[d for d in db_days_list if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], key="camp_custom_days")
-            with col_sd2:
-                camp_start = st.text_input("Daily Start Time", value=db_start or "09:00", placeholder="09:00", key="camp_custom_start")
-            with col_sd3:
-                camp_end = st.text_input("Daily Cutoff Time", value=db_end or "18:00", placeholder="18:00", key="camp_custom_end")
-
-        col_save_sch, col_sch_info = st.columns([1.3, 2.7])
-        with col_save_sch:
-            if st.button("💾 Save Schedule as Default", key="btn_save_camp_sched", help="Update the background dispatch engine's allowed sending days and hours now."):
-                sync_sending_window_to_db(preset_choice, camp_days, camp_start, camp_end)
-                st.success("Dispatch schedule saved to system configuration.")
-                st.rerun()
-        with col_sch_info:
-            st.caption("This schedule is also automatically synchronized to the background dispatch engine whenever you generate a campaign.")
-
-        st.markdown("---")
-        # Section 3: Batch Dispatch Pacing
-        st.markdown("#### 3. How fast should this batch send? (Batch Dispatch Pacing)")
-        stagger_strategy = st.radio(
-            "Select Dispatch Pacing Strategy",
-            [
-                "Send all now (immediate batch)",
-                "Fixed gap between each send",
-                "Spread evenly across a time span",
-                "Spread evenly across today's window"
-            ],
-            key="camp_stagger_strategy"
-        )
-
-        if stagger_strategy.startswith("Send all now"):
-            span_hours = 0.0
-            spacing_minutes = 0.0
-            stagger_mode_arg = "none"
-            st.caption("All selected drafts will be scheduled for the earliest valid delivery slot.")
-        elif stagger_strategy.startswith("Fixed gap"):
-            spacing_minutes = st.number_input(
-                "Minutes Between Sends",
-                min_value=1.0,
-                max_value=180.0,
-                value=5.0,
-                step=1.0,
-                key="camp_spacing_mins",
-                help="Pause interval between consecutive prospect dispatches in this batch."
+        # Section 2 & 3: Advanced Cadence & Throttle Settings (Progressive Disclosure)
+        with st.expander("⚙️ Advanced Cadence & Throttle Settings", expanded=False):
+            st.markdown("##### 1. Allowed Working Hours (In Target Market)")
+            preset_choice = st.radio(
+                "Select Active Sending Schedule",
+                ["Business Days (Mon - Fri, 09:00 - 17:00 Target Time)", "24/7 Continuous (All 7 Days)", "Custom Schedule"],
+                index=default_preset_idx,
+                horizontal=True,
+                key="camp_sched_preset"
             )
-            span_hours = 4.0
-            stagger_mode_arg = "fixed_interval"
-        elif stagger_strategy.startswith("Spread evenly across a time"):
-            span_hours = st.number_input(
-                "Span Duration (Hours from now)",
-                min_value=0.5,
-                max_value=168.0,
-                value=4.0,
-                step=0.5,
-                key="camp_span_hours",
-                help="Total hours over which all selected contacts in this batch will be evenly distributed."
-            )
-            spacing_minutes = 5.0
-            stagger_mode_arg = "next_x_hours"
-        else:
-            span_hours = 4.0
-            spacing_minutes = 5.0
-            stagger_mode_arg = "daily_window"
-            if preset_choice.startswith("24/7"):
-                st.caption("Emails will be spaced evenly across today's 24-hour window (00:00 – 23:59).")
+
+            if preset_choice.startswith("Business Days"):
+                camp_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+                camp_start = m_info.get("default_start", "09:00")
+                camp_end = m_info.get("default_end", "17:00")
+                st.caption(f"Sending restricted strictly to Monday through Friday from {camp_start} to {camp_end} in {m_info.get('country', 'target market')}.")
+            elif preset_choice.startswith("24/7 Continuous"):
+                camp_days = list(WEEKDAY_NAMES)
+                camp_start = "00:00"
+                camp_end = "23:59"
+                st.caption("Continuous dispatch active 24/7 across all 7 days without pauses.")
             else:
-                st.caption(f"Emails will be spaced evenly across today's active window ({camp_start} – {camp_end}).")
+                col_sd1, col_sd2, col_sd3 = st.columns([2, 1, 1])
+                with col_sd1:
+                    camp_days = st.multiselect("Allowed Sending Days", WEEKDAY_NAMES, default=[d for d in db_days_list if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], key="camp_custom_days")
+                with col_sd2:
+                    camp_start = st.text_input("Daily Start Time", value=db_start or "09:00", placeholder="09:00", key="camp_custom_start")
+                with col_sd3:
+                    camp_end = st.text_input("Daily Cutoff Time", value=db_end or "18:00", placeholder="18:00", key="camp_custom_end")
 
-        use_jitter = st.checkbox(
-            "Add natural human jitter",
-            value=True,
-            help="Adds ±20 to 90 seconds of organic variation so delivery times avoid robotic, fixed-second patterns.",
-            key="camp_use_jitter"
-        )
+            col_save_sch, col_sch_info = st.columns([1.3, 2.7])
+            with col_save_sch:
+                if st.button("💾 Save Schedule as Default", key="btn_save_camp_sched", help="Update the background dispatch engine's allowed sending days and hours now."):
+                    sync_sending_window_to_db(preset_choice, camp_days, camp_start, camp_end)
+                    st.success("Dispatch schedule saved to system configuration.")
+                    st.rerun()
+            with col_sch_info:
+                st.caption("This schedule is also automatically synchronized to the background dispatch engine whenever you generate a campaign.")
+
+            st.markdown("---")
+            st.markdown("##### 2. How fast should this batch send? (Batch Dispatch Pacing)")
+            stagger_strategy = st.radio(
+                "Select Dispatch Pacing Strategy",
+                [
+                    "Send all now (immediate batch)",
+                    "Fixed gap between each send",
+                    "Spread evenly across a time span",
+                    "Spread evenly across today's window"
+                ],
+                key="camp_stagger_strategy"
+            )
+
+            if stagger_strategy.startswith("Send all now"):
+                span_hours = 0.0
+                spacing_minutes = 0.0
+                stagger_mode_arg = "none"
+                st.caption("All selected drafts will be scheduled for the earliest valid delivery slot.")
+            elif stagger_strategy.startswith("Fixed gap"):
+                spacing_minutes = st.number_input(
+                    "Minutes Between Sends",
+                    min_value=1.0,
+                    max_value=180.0,
+                    value=5.0,
+                    step=1.0,
+                    key="camp_spacing_mins",
+                    help="Pause interval between consecutive prospect dispatches in this batch."
+                )
+                span_hours = 4.0
+                stagger_mode_arg = "fixed_interval"
+            elif stagger_strategy.startswith("Spread evenly across a time"):
+                span_hours = st.number_input(
+                    "Span Duration (Hours from now)",
+                    min_value=0.5,
+                    max_value=168.0,
+                    value=4.0,
+                    step=0.5,
+                    key="camp_span_hours",
+                    help="Total hours over which all selected contacts in this batch will be evenly distributed."
+                )
+                spacing_minutes = 5.0
+                stagger_mode_arg = "next_x_hours"
+            else:
+                span_hours = 4.0
+                spacing_minutes = 5.0
+                stagger_mode_arg = "daily_window"
+                if preset_choice.startswith("24/7"):
+                    st.caption("Emails will be spaced evenly across today's 24-hour window (00:00 – 23:59).")
+                else:
+                    st.caption(f"Emails will be spaced evenly across today's active window ({camp_start} – {camp_end}).")
+
+            use_jitter = st.checkbox(
+                "Add natural human jitter",
+                value=True,
+                help="Adds ±20 to 90 seconds of organic variation so delivery times avoid robotic, fixed-second patterns.",
+                key="camp_use_jitter"
+            )
 
         # Real-time Live Schedule Preview & Rollover Analysis
         st.markdown("---")

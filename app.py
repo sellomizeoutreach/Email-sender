@@ -28,7 +28,6 @@ from database import (
 from tracker import start_tracking_server
 from ui.theme import apply_theme
 from ui.components import render_header
-from ui.sidebar import render_sidebar
 from ui.tabs.crm import render_crm_tab
 from ui.tabs.studio import render_studio_tab
 from ui.tabs.campaigns import render_campaigns_tab
@@ -64,7 +63,7 @@ st.set_page_config(
     page_title="Sellomize Reach | Agency Email Automation",
     page_icon="🚀",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom Styling (Sellomize Reach Modern SaaS Theme)
@@ -94,23 +93,17 @@ contacts_list = all_contacts
 all_templates = get_templates()
 
 # ==============================================================================
-# ⚙️ PERSISTENT SIDEBAR: INFRASTRUCTURE & SETTINGS
-# ==============================================================================
-render_sidebar()
-
-# ==============================================================================
-# 6-SECTION PRIMARY APP NAVIGATION
+# 5-SECTION PRIMARY APP NAVIGATION
 # ==============================================================================
 TAB_NAMES = [
-    "👥 Leads & Contacts",
-    "✍️ Studio & Templates",
-    "⚡ Sequences & Campaigns",
-    "🛡️ Review Queue & Triage",
-    "📊 Analytics & Intelligence",
-    "⚙️ Rules & Settings"
+    "👥 Leads & CRM",
+    "✍️ Templates",
+    "🚀 Dispatch & Review",
+    "📊 Analytics",
+    "⚙️ Settings"
 ]
 
-tab_leads, tab_studio, tab_campaigns, tab_review, tab_analytics, tab_settings = st.tabs(
+tab_leads, tab_templates, tab_dispatch_review, tab_analytics, tab_settings = st.tabs(
     TAB_NAMES,
     key="main_app_tabs"
 )
@@ -118,13 +111,12 @@ tab_leads, tab_studio, tab_campaigns, tab_review, tab_analytics, tab_settings = 
 with tab_leads:
     render_crm_tab(all_contacts)
 
-with tab_studio:
+with tab_templates:
     render_studio_tab(all_templates, contacts_list)
 
-with tab_campaigns:
+with tab_dispatch_review:
     render_campaigns_tab(contacts_list, all_templates)
-
-with tab_review:
+    st.markdown("---")
     render_review_tab()
 
 with tab_analytics:
