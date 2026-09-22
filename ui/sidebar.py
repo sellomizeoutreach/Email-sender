@@ -16,6 +16,9 @@ from database import (
     get_effective_daily_limit,
     get_warmup_info,
     is_within_sending_window,
+    get_unread_notifications_count,
+    get_notifications,
+    mark_all_notifications_as_read,
     WEEKDAY_NAMES
 )
 from smtp_dispatcher import test_smtp_connection
@@ -45,6 +48,32 @@ def render_sidebar():
         """, unsafe_allow_html=True)
 
         current_configs = get_all_configs()
+
+        # SECTION 0: NOTIFICATIONS & INBOX REPLIES
+        unread_count = get_unread_notifications_count()
+        notif_header = f"🔔 Notifications ({unread_count} Unread)" if unread_count > 0 else "🔔 Notifications & Activity"
+        with st.expander(notif_header, expanded=(unread_count > 0)):
+            recent_notifs = get_notifications(limit=15)
+            if not recent_notifs:
+                st.caption("No notifications yet. Replies detected by Hostinger IMAP will appear here.")
+            else:
+                if unread_count > 0:
+                    if st.button("✓ Mark All as Read", key="btn_mark_all_notifs_read", use_container_width=True):
+                        mark_all_notifications_as_read()
+                        st.rerun()
+
+                for notif in recent_notifs:
+                    is_unread = not notif.get("is_read")
+                    dot = "🔴 " if is_unread else "⚪ "
+                    border_color = "#FD4D1B" if is_unread else "rgba(8,55,49,0.14)"
+                    bg_color = "rgba(253,77,27,0.06)" if is_unread else "rgba(8,55,49,0.02)"
+                    st.markdown(f"""
+                    <div style="background:{bg_color}; border:1px solid {border_color}; border-radius:6px; padding:7px 10px; margin-bottom:6px;">
+                        <div style="font-weight:700; font-size:0.82rem; color:#083731;">{dot}{notif['title']}</div>
+                        <div style="font-size:0.75rem; color:#475569; margin:2px 0;">{notif['message']}</div>
+                        <div style="font-size:0.68rem; color:#94A3B8; text-align:right;">{notif['created_at'][:16]}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
         # SECTION 1: OUTBOUND DISPATCH ENGINE & ANTI-SPAM DELAYS
         with st.expander("Outbound Engine & Anti-Spam Delays", expanded=False):

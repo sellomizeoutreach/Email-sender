@@ -4,6 +4,7 @@ Allows audience targeting, sequence stage filtering, schedule window setup, vari
 """
 
 from datetime import datetime, timedelta
+import uuid
 import streamlit as st
 from database import (
     get_contacts,
@@ -225,49 +226,174 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
             selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
 
-        # 2. MESSAGE CONTENT (Template + Subject Line)
-        col_tpl_sel, col_subj_sel = st.columns([1.2, 1.8])
-        with col_tpl_sel:
-            template_options = {t["id"]: t["template_name"] for t in templates_list}
-            selected_template_id = st.selectbox(
-                "Select Email Template *",
-                options=list(template_options.keys()),
-                format_func=lambda tid: template_options[tid],
-                key="camp_template_select"
-            )
-        with col_subj_sel:
-            camp_subject_input = st.text_input(
-                "Campaign Subject Line",
-                value="Quick observation for [Company]",
-                help="Supports dynamic variables like [Company], [Name], and Spintax {Option A|Option B}.",
-                key="camp_subject_input"
-            )
+        # 2. SEQUENCE CADENCE & MESSAGE CONTENT (Once, Twice, Thrice)
+        st.markdown("---")
+        st.markdown("### 2. Outreach Sequence & Follow-Up Cadence")
+        st.caption("Choose how many emails to send in this sequence. Configure custom templates, subject lines, and wait intervals for each touch.")
 
-        # Real-time Template Deliverability & Spintax Pre-Flight Scanner
-        chosen_template = get_template_by_id(selected_template_id)
-        if chosen_template:
-            neg_keywords_setting = get_config("negative_keywords", "")
-            sample_contact = get_contact_by_id(selected_contact_ids[0]) if selected_contact_ids else (matching_contacts[0] if matching_contacts else {"name": "Alex", "company": "Acme Corp", "email": "prospect@acme.com"})
-            preview_subject = parse_spintax(inject_variables(camp_subject_input.strip() or chosen_template["template_name"], sample_contact))
-            preview_body = resolve_template(chosen_template["body_content"], sample_contact)
-            combined_sample_text = f"{preview_subject} {preview_body}"
-            sample_triggers = scan_all_negative_keywords(combined_sample_text, neg_keywords_setting)
+        sequence_touches = st.radio(
+            "Outreach Frequency / Sequence Touches",
+            [
+                "Once (1 Email - Single Touch)",
+                "Twice (2 Emails - Initial Pitch + 1 Follow-Up)",
+                "Thrice (3 Emails - Initial Pitch + 2 Follow-Ups)"
+            ],
+            index=0,
+            horizontal=True,
+            key="camp_seq_touches"
+        )
 
-            if sample_triggers:
-                trig_chips = ", ".join([f"`{t}`" for t in sample_triggers])
-                st.markdown(f"""
-                <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:7px 12px; margin:6px 0 10px;">
-                    <span style="color:#DC2626; font-weight:700; font-size:0.83rem;">⚠️ Negative Keyword Shield Notice:</span>
-                    <span style="color:#475569; font-size:0.8rem;"> Template contains restricted trigger keyword(s) {trig_chips}. Drafts generated from this template will be flagged for review in the Review Queue.</span>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown("""
-                <div style="background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.22); border-radius:8px; padding:6px 12px; margin:6px 0 10px;">
-                    <span style="color:#059669; font-weight:700; font-size:0.82rem;">✅ Deliverability Shield Clean:</span>
-                    <span style="color:#475569; font-size:0.8rem;"> No restricted spam triggers detected in subject line or template copy.</span>
-                </div>
-                """, unsafe_allow_html=True)
+        num_touches = 1
+        if sequence_touches.startswith("Twice"):
+            num_touches = 2
+        elif sequence_touches.startswith("Thrice"):
+            num_touches = 3
+
+        template_options = {t["id"]: t["template_name"] for t in templates_list}
+        tpl_keys = list(template_options.keys())
+        neg_keywords_setting = get_config("negative_keywords", "")
+
+        sample_contact = (
+            get_contact_by_id(selected_contact_ids[0])
+            if selected_contact_ids
+            else (matching_contacts[0] if matching_contacts else {"name": "Alex", "company": "Acme Corp", "email": "prospect@acme.com"})
+        )
+
+        touch_configs = []
+
+        if num_touches == 1:
+            st.markdown("##### Touch 1: Initial Pitch")
+            c_t1_tpl, c_t1_subj = st.columns([1.2, 1.8])
+            with c_t1_tpl:
+                sel_tpl_1 = st.selectbox("Select Template *", options=tpl_keys, format_func=lambda tid: template_options[tid], key="camp_tpl_1")
+            with c_t1_subj:
+                subj_1 = st.text_input("Subject Line", value="Quick observation for [Company]", help="Supports [Name], [Company], and {A|B} Spintax.", key="camp_subj_1")
+
+            chosen_tpl_1 = get_template_by_id(sel_tpl_1)
+            if chosen_tpl_1:
+                preview_subj_1 = parse_spintax(inject_variables(subj_1.strip() or chosen_tpl_1["template_name"], sample_contact))
+                preview_body_1 = resolve_template(chosen_tpl_1["body_content"], sample_contact)
+                triggers_1 = scan_all_negative_keywords(f"{preview_subj_1} {preview_body_1}", neg_keywords_setting)
+                if triggers_1:
+                    trig_chips = ", ".join([f"`{t}`" for t in triggers_1])
+                    st.markdown(f"""
+                    <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:7px 12px; margin:4px 0 10px;">
+                        <span style="color:#DC2626; font-weight:700; font-size:0.83rem;">⚠️ Negative Keyword Shield Notice:</span>
+                        <span style="color:#475569; font-size:0.8rem;"> Template contains trigger(s) {trig_chips}. Drafts will be flagged in Review Queue.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div style="background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.22); border-radius:8px; padding:6px 12px; margin:4px 0 10px;">
+                        <span style="color:#059669; font-weight:700; font-size:0.82rem;">✅ Deliverability Shield Clean:</span>
+                        <span style="color:#475569; font-size:0.8rem;"> No restricted spam triggers detected.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            touch_configs.append({
+                "step": 1,
+                "label": "Touch 1 (Initial Pitch)",
+                "template_id": sel_tpl_1,
+                "subject": subj_1,
+                "delay_days": 0
+            })
+        else:
+            tab_titles = ["Touch 1 (Initial Pitch)", "Touch 2 (Follow-Up 1)"]
+            if num_touches == 3:
+                tab_titles.append("Touch 3 (Final Follow-Up)")
+
+            touch_ui_tabs = st.tabs(tab_titles)
+
+            with touch_ui_tabs[0]:
+                st.caption("Initial outreach message to introduce your agency or service.")
+                c_t1_tpl, c_t1_subj = st.columns([1.2, 1.8])
+                with c_t1_tpl:
+                    sel_tpl_1 = st.selectbox("Select Template *", options=tpl_keys, format_func=lambda tid: template_options[tid], key="camp_tpl_1")
+                with c_t1_subj:
+                    subj_1 = st.text_input("Subject Line", value="Quick observation for [Company]", help="Supports [Name], [Company], and {A|B} Spintax.", key="camp_subj_1")
+
+                chosen_tpl_1 = get_template_by_id(sel_tpl_1)
+                if chosen_tpl_1:
+                    preview_subj_1 = parse_spintax(inject_variables(subj_1.strip() or chosen_tpl_1["template_name"], sample_contact))
+                    preview_body_1 = resolve_template(chosen_tpl_1["body_content"], sample_contact)
+                    triggers_1 = scan_all_negative_keywords(f"{preview_subj_1} {preview_body_1}", neg_keywords_setting)
+                    if triggers_1:
+                        trig_chips = ", ".join([f"`{t}`" for t in triggers_1])
+                        st.warning(f"Touch 1 contains negative keyword trigger(s): {trig_chips}")
+
+                touch_configs.append({
+                    "step": 1,
+                    "label": "Touch 1 (Initial Pitch)",
+                    "template_id": sel_tpl_1,
+                    "subject": subj_1,
+                    "delay_days": 0
+                })
+
+            with touch_ui_tabs[1]:
+                st.caption("First follow-up email, sent if the prospect has not replied to Touch 1.")
+                c_t2_del, c_t2_tpl, c_t2_subj = st.columns([1, 1.2, 1.8])
+                with c_t2_del:
+                    t2_delay = st.number_input("Days after Touch 1", min_value=1, max_value=30, value=3, key="camp_t2_delay", help="Wait interval before sending this follow-up.")
+                with c_t2_tpl:
+                    idx_2 = 1 if len(tpl_keys) > 1 else 0
+                    sel_tpl_2 = st.selectbox("Select Template *", options=tpl_keys, index=idx_2, format_func=lambda tid: template_options[tid], key="camp_tpl_2")
+                with c_t2_subj:
+                    def_subj_2 = f"Re: {subj_1.strip()}" if subj_1.strip() else "Following up on [Company]"
+                    subj_2 = st.text_input("Subject Line", value=def_subj_2, key="camp_subj_2")
+
+                chosen_tpl_2 = get_template_by_id(sel_tpl_2)
+                if chosen_tpl_2:
+                    preview_subj_2 = parse_spintax(inject_variables(subj_2.strip() or chosen_tpl_2["template_name"], sample_contact))
+                    preview_body_2 = resolve_template(chosen_tpl_2["body_content"], sample_contact)
+                    triggers_2 = scan_all_negative_keywords(f"{preview_subj_2} {preview_body_2}", neg_keywords_setting)
+                    if triggers_2:
+                        trig_chips = ", ".join([f"`{t}`" for t in triggers_2])
+                        st.warning(f"Touch 2 contains negative keyword trigger(s): {trig_chips}")
+
+                touch_configs.append({
+                    "step": 2,
+                    "label": "Touch 2 (Follow-Up 1)",
+                    "template_id": sel_tpl_2,
+                    "subject": subj_2,
+                    "delay_days": int(t2_delay)
+                })
+
+            if num_touches == 3:
+                with touch_ui_tabs[2]:
+                    st.caption("Final follow-up or polite breakup email, sent if no reply to Touch 1 or 2.")
+                    c_t3_del, c_t3_tpl, c_t3_subj = st.columns([1, 1.2, 1.8])
+                    with c_t3_del:
+                        t3_delay = st.number_input("Days after Touch 2", min_value=1, max_value=30, value=4, key="camp_t3_delay", help="Wait interval after Touch 2 before sending this final follow-up.")
+                    with c_t3_tpl:
+                        idx_3 = 2 if len(tpl_keys) > 2 else (1 if len(tpl_keys) > 1 else 0)
+                        sel_tpl_3 = st.selectbox("Select Template *", options=tpl_keys, index=idx_3, format_func=lambda tid: template_options[tid], key="camp_tpl_3")
+                    with c_t3_subj:
+                        def_subj_3 = "Final quick note for [Company]"
+                        subj_3 = st.text_input("Subject Line", value=def_subj_3, key="camp_subj_3")
+
+                    chosen_tpl_3 = get_template_by_id(sel_tpl_3)
+                    if chosen_tpl_3:
+                        preview_subj_3 = parse_spintax(inject_variables(subj_3.strip() or chosen_tpl_3["template_name"], sample_contact))
+                        preview_body_3 = resolve_template(chosen_tpl_3["body_content"], sample_contact)
+                        triggers_3 = scan_all_negative_keywords(f"{preview_subj_3} {preview_body_3}", neg_keywords_setting)
+                        if triggers_3:
+                            trig_chips = ", ".join([f"`{t}`" for t in triggers_3])
+                            st.warning(f"Touch 3 contains negative keyword trigger(s): {trig_chips}")
+
+                    touch_configs.append({
+                        "step": 3,
+                        "label": "Touch 3 (Final Follow-Up)",
+                        "template_id": sel_tpl_3,
+                        "subject": subj_3,
+                        "delay_days": int(t3_delay)
+                    })
+
+        st.markdown("""
+        <div style="background:rgba(8,55,49,0.04); border:1px solid rgba(8,55,49,0.12); border-radius:8px; padding:8px 12px; margin:8px 0 14px;">
+            <span style="font-size:0.82rem; color:#083731; font-weight:700;">🛡️ Intelligent Reply Guard Active:</span>
+            <span style="font-size:0.8rem; color:#475569;"> When a prospect replies, all subsequent scheduled sequence follow-ups for that contact are automatically cancelled.</span>
+        </div>
+        """, unsafe_allow_html=True)
 
         # 3. SENDING WINDOW & BATCH DISPATCH PACING (Single Visible Panel, Single Source of Truth)
         st.markdown("---")
@@ -410,9 +536,30 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
             col_prev1, col_prev2 = st.columns(2)
             with col_prev1:
-                st.markdown(f"**First Send:** `{analysis['first_dt'].strftime('%a, %b %d at %H:%M')}`")
+                st.markdown(f"**Touch 1 First Send:** `{analysis['first_dt'].strftime('%a, %b %d at %H:%M')}`")
             with col_prev2:
-                st.markdown(f"**Final Send:** `{analysis['last_dt'].strftime('%a, %b %d at %H:%M')}`")
+                st.markdown(f"**Touch 1 Final Send:** `{analysis['last_dt'].strftime('%a, %b %d at %H:%M')}`")
+
+            if num_touches >= 2:
+                t2_est = get_next_valid_sending_datetime(
+                    base_dt=analysis['first_dt'] + timedelta(days=touch_configs[1]["delay_days"]),
+                    sending_days=camp_days,
+                    start_time_str=camp_start,
+                    end_time_str=camp_end
+                )
+                st.markdown(f"**Touch 2 Follow-Up 1 Starts:** `{t2_est.strftime('%a, %b %d at %H:%M')}` (+{touch_configs[1]['delay_days']} days)")
+
+            if num_touches == 3:
+                t3_est = get_next_valid_sending_datetime(
+                    base_dt=t2_est + timedelta(days=touch_configs[2]["delay_days"]),
+                    sending_days=camp_days,
+                    start_time_str=camp_start,
+                    end_time_str=camp_end
+                )
+                st.markdown(f"**Touch 3 Final Touch Starts:** `{t3_est.strftime('%a, %b %d at %H:%M')}` (+{touch_configs[2]['delay_days']} days after Touch 2)")
+
+            total_drafts_preview = n_sel * num_touches
+            st.info(f"⚡ Multi-Touch Cadence: {n_sel} contact(s) × {num_touches} touch(es) = **{total_drafts_preview} total sequence draft(s)** will be generated and queued.")
 
             if analysis["fits_today"]:
                 st.success(analysis["summary_message"])
@@ -424,9 +571,9 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         # 4. PRIMARY ACTION (Generate Campaign)
         st.markdown("<br>", unsafe_allow_html=True)
         has_recipients = len(selected_contact_ids) > 0
-        btn_help = "Create personalized drafts for selected contacts." if has_recipients else "Select at least one contact above to generate campaign drafts."
+        btn_help = f"Create {num_touches}-touch sequence drafts for selected contacts." if has_recipients else "Select at least one contact above to generate campaign drafts."
         generate_campaign_btn = st.button(
-            "Generate Campaign",
+            f"Generate Campaign ({num_touches}-Touch Sequence)",
             type="primary",
             use_container_width=True,
             disabled=not has_recipients,
@@ -443,20 +590,22 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 sync_sending_window_to_db(preset_choice, camp_days, camp_start, camp_end)
 
                 # 2. Persist user's configured follow-up sequence interval
-                set_config("followup_delay_days", str(int(followup_delay_days)))
+                if num_touches >= 2:
+                    set_config("followup_delay_days", str(int(touch_configs[1]["delay_days"])))
 
-                chosen_template = get_template_by_id(selected_template_id)
+                batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
                 neg_keywords_setting = get_config("negative_keywords", "")
 
-                st.info(f"Generating personalized emails for {len(selected_contact_ids)} contact(s) using template '{chosen_template['template_name']}'...")
+                total_expected = len(selected_contact_ids) * num_touches
+                st.info(f"Generating {num_touches}-touch sequence drafts for {len(selected_contact_ids)} contact(s) ({total_expected} total drafts)...")
                 progress_bar = st.progress(0)
 
                 created_pending = 0
                 created_flagged = 0
                 flagged_details = []
 
-                # Compute distinct scheduled times for all contacts
-                scheduled_dts = calculate_staggered_schedule(
+                # Compute distinct scheduled times for Touch 1 across all contacts
+                scheduled_dts_touch1 = calculate_staggered_schedule(
                     total_contacts=len(selected_contact_ids),
                     stagger_mode=stagger_mode_arg,
                     base_dt=datetime.now(),
@@ -468,67 +617,90 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     use_jitter=use_jitter
                 )
 
+                processed_count = 0
                 for idx, cid in enumerate(selected_contact_ids):
                     contact = get_contact_by_id(cid)
+                    if not contact:
+                        continue
 
-                    # 1. Deterministic Variable Injection & Spintax Resolution
-                    resolved_body = resolve_template(chosen_template["body_content"], contact)
-                    final_html = format_email_html(resolved_body)
+                    t1_dt = scheduled_dts_touch1[idx]
+                    prev_touch_dt = t1_dt
 
-                    # 2. Subject Line Resolution with Variables & Spintax
-                    subj_template = camp_subject_input.strip() if camp_subject_input.strip() else chosen_template["template_name"]
-                    final_subject = parse_spintax(inject_variables(subj_template, contact))
+                    for t_idx, cfg in enumerate(touch_configs):
+                        step_num = cfg["step"]
+                        step_tpl = get_template_by_id(cfg["template_id"])
+                        raw_subj = cfg["subject"].strip() or step_tpl["template_name"]
 
-                    # 3. Negative Keyword Scanner (detect all triggers)
-                    combined_text = f"{final_subject} {final_html}"
-                    detected_triggers = scan_all_negative_keywords(combined_text, neg_keywords_setting)
+                        # Resolve Spintax & Variables
+                        resolved_body = resolve_template(step_tpl["body_content"], contact)
+                        final_html = format_email_html(resolved_body)
+                        final_subj = parse_spintax(inject_variables(raw_subj, contact))
 
-                    if detected_triggers:
-                        status = "Flagged"
-                        trig_str = ", ".join([f"'{t}'" for t in detected_triggers])
-                        notes = f"Flagged for trigger keyword(s): {trig_str}"
-                        created_flagged += 1
-                        flagged_details.append({
-                            "recipient": contact["email"],
-                            "triggers": detected_triggers
-                        })
-                    else:
-                        status = "Pending"
-                        notes = None
-                        created_pending += 1
+                        # Negative keyword scanner
+                        combined_text = f"{final_subj} {final_html}"
+                        triggers = scan_all_negative_keywords(combined_text, neg_keywords_setting)
 
-                    # 4. Use calculated distinct scheduled time
-                    sched_dt = scheduled_dts[idx]
-                    scheduled_time_str = sched_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        if triggers:
+                            status = "Flagged"
+                            trig_str = ", ".join([f"'{t}'" for t in triggers])
+                            notes = f"Touch {step_num}/{num_touches}: Flagged for trigger keyword(s): {trig_str}"
+                            created_flagged += 1
+                            flagged_details.append({
+                                "recipient": contact["email"],
+                                "touch": f"Touch {step_num}",
+                                "triggers": triggers
+                            })
+                        else:
+                            status = "Pending"
+                            notes = f"Sequence Touch {step_num}/{num_touches}"
+                            created_pending += 1
 
-                    create_email(
-                        email_html=final_html,
-                        subject=final_subject,
-                        recipient=contact["email"],
-                        status=status,
-                        revision_notes=notes,
-                        scheduled_time=scheduled_time_str
-                    )
+                        if step_num == 1:
+                            touch_dt = t1_dt
+                        else:
+                            delay_d = cfg["delay_days"]
+                            cand_dt = prev_touch_dt + timedelta(days=delay_d)
+                            touch_dt = get_next_valid_sending_datetime(
+                                base_dt=cand_dt,
+                                sending_days=camp_days,
+                                start_time_str=camp_start,
+                                end_time_str=camp_end
+                            )
+                            prev_touch_dt = touch_dt
 
-                    progress_bar.progress((idx + 1) / len(selected_contact_ids))
+                        scheduled_time_str = touch_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                first_res_dt = scheduled_dts[0]
-                last_res_dt = scheduled_dts[-1]
-                st.success(f"Campaign Generation Complete: Created {created_pending} Pending draft(s) and {created_flagged} Flagged draft(s) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
+                        create_email(
+                            email_html=final_html,
+                            subject=final_subj,
+                            recipient=contact["email"],
+                            status=status,
+                            revision_notes=notes,
+                            scheduled_time=scheduled_time_str,
+                            sequence_step=step_num,
+                            sequence_id=batch_seq_id
+                        )
+
+                        processed_count += 1
+                        progress_bar.progress(processed_count / total_expected)
+
+                first_res_dt = scheduled_dts_touch1[0]
+                last_res_dt = scheduled_dts_touch1[-1]
+                st.success(f"Sequence Generation Complete: Created {created_pending} Pending draft(s) and {created_flagged} Flagged draft(s) across {num_touches} touch(es). Touch 1 scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
                 if created_flagged > 0:
                     st.warning(f"{created_flagged} draft(s) were flagged by the Negative Keyword Shield:")
                     for fd in flagged_details[:8]:
                         trig_badges = ", ".join([f"`{t}`" for t in fd["triggers"]])
-                        st.markdown(f"- **{fd['recipient']}**: Contains restricted trigger keyword(s) {trig_badges}")
+                        st.markdown(f"- **{fd['recipient']}** ({fd['touch']}): Contains restricted trigger keyword(s) {trig_badges}")
                     if len(flagged_details) > 8:
                         st.caption(f"...and {len(flagged_details) - 8} more.")
 
-                st.markdown("""
+                st.markdown(f"""
                 <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
-                    <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Campaign Drafts Ready for Approval</div>
+                    <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 {num_touches}-Touch Sequence Ready for Review &amp; Approval</div>
                     <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
-                        All generated drafts are safely stored in your outreach database.
-                        Switch to the <strong>🛡️ Review Queue &amp; Triage</strong> tab at the top of your dashboard to review, edit, or selectively approve drafts for dispatch.
+                        All {total_expected} sequence drafts are securely registered in your outreach queue.
+                        Switch to the <strong>🛡️ Review Queue &amp; Triage</strong> tab to review and approve drafts for automated dispatch.
                     </div>
                 </div>
                 """, unsafe_allow_html=True)

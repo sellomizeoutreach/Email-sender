@@ -22,7 +22,8 @@ from database import (
     init_db,
     get_emails,
     get_contacts,
-    get_templates
+    get_templates,
+    get_notifications
 )
 from tracker import start_tracking_server
 from ui.theme import apply_theme
@@ -71,6 +72,20 @@ apply_theme()
 
 # Branded Sellomize Reach Top Header Bar
 render_header()
+
+# Real-time Reply Notification Toaster
+if "seen_notification_ids" not in st.session_state:
+    st.session_state["seen_notification_ids"] = set()
+
+try:
+    unread_reply_notifs = get_notifications(unread_only=True, limit=5)
+    for n in unread_reply_notifs:
+        nid = n["id"]
+        if nid not in st.session_state["seen_notification_ids"]:
+            st.session_state["seen_notification_ids"].add(nid)
+            st.toast(f"{n['title']}: {n['message']}", icon="💬")
+except Exception:
+    pass
 
 # Data Collections
 all_emails = get_emails()

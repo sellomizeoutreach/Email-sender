@@ -58,6 +58,13 @@ from database import (
     record_email_bounce,
     record_email_reply,
     record_email_click,
+    create_notification,
+    get_notifications,
+    mark_notification_as_read,
+    mark_all_notifications_as_read,
+    get_unread_notifications_count,
+    delete_notification,
+    DB_FILE,
     get_outreach_analytics,
     get_bounced_contacts,
     get_replied_contacts,
@@ -1716,6 +1723,120 @@ class TestEmailAutomationSystem(unittest.TestCase):
             target_url = urllib.parse.unquote(target_url).strip()
 
         self.assertEqual(target_url, "https://sellomize.com")
+
+    def test_51_multi_touch_sequence_drafts_creation_and_steps(self):
+        """Test multi-touch sequence emails with sequence_step (1, 2, 3) and shared sequence_id."""
+        seq_id = "seq_test_multi_99"
+        e1 = create_email(
+            email_html="<p>Touch 1 pitch</p>",
+            subject="Quick intro",
+            recipient="lead_multitouch@agency.com",
+            status="Pending",
+            scheduled_time="2026-09-25 09:00:00",
+            sequence_step=1,
+            sequence_id=seq_id,
+            db_path=TEST_DB
+        )
+        e2 = create_email(
+            email_html="<p>Touch 2 follow-up</p>",
+            subject="Re: Quick intro",
+            recipient="lead_multitouch@agency.com",
+            status="Pending",
+            scheduled_time="2026-09-28 09:00:00",
+            sequence_step=2,
+            sequence_id=seq_id,
+            db_path=TEST_DB
+        )
+        e3 = create_email(
+            email_html="<p>Touch 3 final breakup</p>",
+            subject="Final note",
+            recipient="lead_multitouch@agency.com",
+            status="Pending",
+            scheduled_time="2026-10-02 09:00:00",
+            sequence_step=3,
+            sequence_id=seq_id,
+            db_path=TEST_DB
+        )
+
+        r1 = get_email_by_id(e1, db_path=TEST_DB)
+        r2 = get_email_by_id(e2, db_path=TEST_DB)
+        r3 = get_email_by_id(e3, db_path=TEST_DB)
+
+        self.assertEqual(r1["sequence_step"], 1)
+        self.assertEqual(r1["sequence_id"], seq_id)
+        self.assertEqual(r2["sequence_step"], 2)
+        self.assertEqual(r2["sequence_id"], seq_id)
+        self.assertEqual(r3["sequence_step"], 3)
+        self.assertEqual(r3["sequence_id"], seq_id)
+
+    def test_52_reply_auto_cancels_all_multi_touch_followups_and_notifies(self):
+        """Test that recording an incoming prospect reply auto-cancels pending/approved/flagged touches and logs a notification."""
+        rep_email = "prospect_sequence@replytest.com"
+        create_contact(name="Alex Miller", email=rep_email, company="Miller Brand", db_path=TEST_DB)
+
+        # Create touch 1 (Approved), touch 2 (Pending), touch 3 (Flagged)
+        t1 = create_email(email_html="<p>Touch 1</p>", subject="Intro", recipient=rep_email, status="Approved", sequence_step=1, db_path=TEST_DB)
+        t2 = create_email(email_html="<p>Touch 2</p>", subject="Re: Intro", recipient=rep_email, status="Pending", sequence_step=2, db_path=TEST_DB)
+        t3 = create_email(email_html="<p>Touch 3</p>", subject="Breakup", recipient=rep_email, status="Flagged", sequence_step=3, db_path=TEST_DB)
+
+        # Prospect replies
+        reply_res = record_email_reply(
+            sender_email=rep_email,
+            reply_subject="Thanks, let's talk tomorrow",
+            db_path=TEST_DB
+        )
+
+        self.assertTrue(reply_res["contact_found"])
+        self.assertEqual(reply_res["cancelled_drafts_count"], 3)
+        self.assertIn(t1, reply_res["cancelled_email_ids"])
+        self.assertIn(t2, reply_res["cancelled_email_ids"])
+        self.assertIn(t3, reply_res["cancelled_email_ids"])
+
+        # Check all touches are Cancelled
+        for tid in [t1, t2, t3]:
+            rec = get_email_by_id(tid, db_path=TEST_DB)
+            self.assertEqual(rec["status"], "Cancelled")
+            self.assertIn("Auto-cancelled", rec.get("error_message", ""))
+
+        # Check notification was created
+        notifs = get_notifications(unread_only=True, limit=10, db_path=TEST_DB)
+        reply_notifs = [n for n in notifs if n.get("contact_email") == rep_email]
+        self.assertTrue(len(reply_notifs) > 0)
+        self.assertIn("Alex Miller", reply_notifs[0]["title"])
+        self.assertIn("auto-cancelled", reply_notifs[0]["message"])
+
+    def test_53_notifications_crud_and_unread_count(self):
+        """Test creating, querying, reading, counting, and deleting notifications."""
+        # Initial count
+        init_unread = get_unread_notifications_count(db_path=TEST_DB)
+
+        nid = create_notification(
+            type="reply",
+            title="💬 Test Reply",
+            message="Test prospect message snippet",
+            contact_email="test_lead@domain.com",
+            db_path=TEST_DB
+        )
+        self.assertIsNotNone(nid)
+
+        # Count should increase by 1
+        new_unread = get_unread_notifications_count(db_path=TEST_DB)
+        self.assertEqual(new_unread, init_unread + 1)
+
+        # Mark read
+        mark_notification_as_read(nid, db_path=TEST_DB)
+        after_read = get_unread_notifications_count(db_path=TEST_DB)
+        self.assertEqual(after_read, init_unread)
+
+        # Mark all read
+        create_notification(type="system", title="Notice 1", message="Msg 1", db_path=TEST_DB)
+        create_notification(type="reply", title="Notice 2", message="Msg 2", db_path=TEST_DB)
+        self.assertGreaterEqual(get_unread_notifications_count(db_path=TEST_DB), 2)
+        mark_all_notifications_as_read(db_path=TEST_DB)
+        self.assertEqual(get_unread_notifications_count(db_path=TEST_DB), 0)
+
+        # Delete notification
+        delete_notification(nid, db_path=TEST_DB)
 
 if __name__ == "__main__":
     unittest.main()

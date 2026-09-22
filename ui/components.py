@@ -7,6 +7,7 @@ import base64
 import html
 import os
 import streamlit as st
+from database import get_unread_notifications_count
 from template_engine import sanitize_email_html
 
 
@@ -67,12 +68,24 @@ def render_html_preview(html_content: str, height: int = None):
 
 
 def render_header():
-    """Render branded top header bar."""
+    """Render branded top header bar with live reply notifications."""
     logo_b64 = get_logo_base64()
     if logo_b64:
         logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" class="sellomize-logo-img" alt="Sellomize Reach Logo" />'
     else:
         logo_html = '<div class="sellomize-logo-fallback">🚀</div>'
+
+    unread_notifs = get_unread_notifications_count()
+    if unread_notifs > 0:
+        badge_lbl = f"{unread_notifs} NEW REPLY" if unread_notifs == 1 else f"{unread_notifs} NEW REPLIES"
+        notif_badge_html = f"""
+        <div style="background:#FD4D1B; color:#FFFFFF; border:1.5px solid #FF8059; padding:5px 13px; border-radius:20px; font-size:0.75rem; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; box-shadow:0 0 12px rgba(253,77,27,0.5); display:inline-flex; align-items:center; gap:6px;">
+            <span>🔔</span>
+            <span>{badge_lbl}</span>
+        </div>
+        """
+    else:
+        notif_badge_html = ""
 
     st.markdown(f"""
 <div class="sellomize-header-container">
@@ -84,6 +97,7 @@ def render_header():
         </div>
     </div>
     <div class="sellomize-header-right">
+        {notif_badge_html}
         <div class="system-status-pill">
             <span class="status-indicator-dot"></span>
             <span>ENGINE ONLINE</span>

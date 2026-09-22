@@ -286,7 +286,9 @@ def init_db(db_path: str = DB_FILE):
         ("bounce_reason", "TEXT DEFAULT ''"),
         ("clicked_at", "TEXT DEFAULT ''"),
         ("click_count", "INTEGER DEFAULT 0"),
-        ("last_clicked_url", "TEXT DEFAULT ''")
+        ("last_clicked_url", "TEXT DEFAULT ''"),
+        ("sequence_step", "INTEGER DEFAULT 1"),
+        ("sequence_id", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in email_migrations:
         try:
@@ -300,6 +302,7 @@ def init_db(db_path: str = DB_FILE):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_status_sched ON emails(status, scheduled_time)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_recipient ON emails(recipient)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_click ON emails(click_count)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_seq ON emails(sequence_id, sequence_step)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
 
@@ -340,6 +343,20 @@ def init_db(db_path: str = DB_FILE):
         except sqlite3.OperationalError as e:
             if "duplicate column name" not in str(e).lower():
                 logger.warning(f"OperationalError during smtp_accounts migration for {col_name}: {e}")
+
+    # 6. Notifications table for incoming prospect replies and alerts
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL DEFAULT 'reply',
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            contact_email TEXT DEFAULT '',
+            is_read INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read, created_at)")
 
     # Populate default configuration keys if not already present
     default_configs = {
@@ -1237,15 +1254,17 @@ def create_email(
     status: str = "Pending",
     variation_num: int = 1,
     revision_notes: Optional[str] = None,
+    sequence_step: int = 1,
+    sequence_id: str = "",
     db_path: str = DB_FILE
 ) -> int:
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO emails (subject, recipient, email_html, status, scheduled_time, variation_num, revision_notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (subject, recipient, email_html, status, scheduled_time, variation_num, revision_notes, now_iso, now_iso))
+        INSERT INTO emails (subject, recipient, email_html, status, scheduled_time, variation_num, revision_notes, sequence_step, sequence_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (subject, recipient, email_html, status, scheduled_time, variation_num, revision_notes, sequence_step, sequence_id, now_iso, now_iso))
     email_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -1281,6 +1300,8 @@ def update_email(
     status: Optional[str] = None,
     revision_notes: Any = _FIELD_UNSET,
     error_message: Any = _FIELD_UNSET,
+    sequence_step: Any = _FIELD_UNSET,
+    sequence_id: Any = _FIELD_UNSET,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
@@ -1311,6 +1332,12 @@ def update_email(
     if error_message is not _FIELD_UNSET:
         fields.append("error_message = ?")
         values.append(error_message)
+    if sequence_step is not _FIELD_UNSET:
+        fields.append("sequence_step = ?")
+        values.append(sequence_step)
+    if sequence_id is not _FIELD_UNSET:
+        fields.append("sequence_id = ?")
+        values.append(sequence_id)
 
     values.append(email_id)
     query = f"UPDATE emails SET {', '.join(fields)} WHERE id = ?"
@@ -1636,10 +1663,10 @@ def record_email_reply(
             WHERE id = ?
         """, (today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
 
-    # 2. Auto-cancel all pending / approved outbox emails for this contact
+    # 2. Auto-cancel all pending / approved / flagged outbox emails for this contact
     cursor.execute("""
         SELECT id FROM emails
-        WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved')
+        WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved', 'Flagged')
     """, (clean_email,))
     pending_emails = cursor.fetchall()
     cancelled_ids = [r["id"] for r in pending_emails]
@@ -1649,8 +1676,19 @@ def record_email_reply(
             UPDATE emails SET
                 status = 'Cancelled',
                 error_message = 'Auto-cancelled: Prospect replied to outreach'
-            WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved')
+            WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved', 'Flagged')
         """, (clean_email,))
+
+    # 3. Record persistent in-app reply notification
+    disp_name = contact_names[0] if contact_names else clean_email
+    notif_title = f"💬 New Reply from {disp_name}"
+    subj_part = f" ('{reply_subject[:45]}')" if reply_subject else ""
+    canc_part = f" — {len(cancelled_ids)} queued follow-up(s) auto-cancelled." if cancelled_ids else "."
+    notif_body = f"Prospect {clean_email} responded to outreach{subj_part}{canc_part}"
+    cursor.execute("""
+        INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
+        VALUES (?, ?, ?, ?, 0, ?)
+    """, ("reply", notif_title, notif_body, clean_email, now_iso))
 
     conn.commit()
     conn.close()
@@ -1662,6 +1700,83 @@ def record_email_reply(
         "cancelled_email_ids": cancelled_ids,
         "sender_email": clean_email
     }
+
+# ------------------------------------------------------------------------------
+# IN-APP NOTIFICATIONS HELPERS
+# ------------------------------------------------------------------------------
+
+def create_notification(
+    type: str = "reply",
+    title: str = "",
+    message: str = "",
+    contact_email: str = "",
+    is_read: int = 0,
+    db_path: str = DB_FILE
+) -> int:
+    """Create a persistent notification record in SQLite."""
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (type, title, message, contact_email, is_read, now_iso))
+    notif_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return notif_id
+
+def get_notifications(
+    unread_only: bool = False,
+    limit: int = 50,
+    db_path: str = DB_FILE
+) -> List[Dict[str, Any]]:
+    """Retrieve notifications ordered by recency."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    if unread_only:
+        cursor.execute("SELECT * FROM notifications WHERE is_read = 0 ORDER BY id DESC LIMIT ?", (limit,))
+    else:
+        cursor.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def mark_notification_as_read(notification_id: int, db_path: str = DB_FILE):
+    """Mark a specific notification as read."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notification_id,))
+    conn.commit()
+    conn.close()
+
+def mark_all_notifications_as_read(db_path: str = DB_FILE):
+    """Mark all unread notifications as read."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+    conn.commit()
+    conn.close()
+
+def get_unread_notifications_count(db_path: str = DB_FILE) -> int:
+    """Return count of unread notifications."""
+    try:
+        conn = get_connection(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM notifications WHERE is_read = 0")
+        row = cursor.fetchone()
+        conn.close()
+        return row["count"] if row else 0
+    except Exception:
+        return 0
+
+def delete_notification(notification_id: int, db_path: str = DB_FILE):
+    """Delete a notification by ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notifications WHERE id = ?", (notification_id,))
+    conn.commit()
+    conn.close()
 
 def get_replied_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     """Retrieve all contacts marked as Replied."""

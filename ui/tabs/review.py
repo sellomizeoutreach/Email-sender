@@ -172,10 +172,9 @@ def render_review_tab():
                     prefix = f"🚨 FLAGGED ({draft['revision_notes']})"
                 else:
                     prefix = "🚨 FLAGGED"
-            else:
-                prefix = "📄 Draft"
-
-            container_title = f"{prefix} #{draft_id} (🛡️ {draft_audit['score']}/100) - {current_subject} -> {draft.get('recipient')}"
+            seq_step = draft.get("sequence_step") or 1
+            seq_badge = f" [Touch {seq_step}]" if (seq_step and (seq_step > 1 or draft.get("sequence_id"))) else ""
+            container_title = f"{prefix} #{draft_id}{seq_badge} (🛡️ {draft_audit['score']}/100) - {current_subject} -> {draft.get('recipient')}"
 
             col_chk, col_exp = st.columns([0.05, 0.95], vertical_alignment="top")
             with col_chk:
@@ -192,6 +191,8 @@ def render_review_tab():
                 with st.expander(container_title, expanded=is_flagged):
                     if draft.get("created_at"):
                         st.markdown(f"<div class='timestamp-right'>Created: {draft['created_at'][:19]}</div>", unsafe_allow_html=True)
+                    if draft.get("sequence_step") and draft.get("sequence_step") > 1:
+                        st.caption(f"⚡ **Sequence Cadence Step {draft['sequence_step']}**: Scheduled for dispatch at `{draft.get('scheduled_time')}`. Auto-cancels if recipient replies.")
 
                     # DUAL-PANE SPLIT PREVIEW WORKSPACE
                     col_editor, col_preview = st.columns([1, 1], gap="medium")
