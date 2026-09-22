@@ -289,21 +289,25 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
             # Detect incoming navigation from CRM or session state
             incoming_mode = st.session_state.get("camp_audience_mode", "")
-            if any(term in incoming_mode for term in ["Single Contact", "Cherry-Pick", "Hand-Pick"]):
-                def_mode_idx = 2
-                single_cid = st.session_state.get("camp_single_contact_picker")
-                if single_cid and single_cid in contact_id_keys:
-                    if "camp_cherry_pick_multisel" not in st.session_state or not st.session_state["camp_cherry_pick_multisel"]:
+            target_method_options = ["🏷️ By Tag", "⚡ By Pipeline Status", "👤 Hand-Pick Individually"]
+
+            if incoming_mode:
+                if any(term in incoming_mode for term in ["Single Contact", "Cherry-Pick", "Hand-Pick"]):
+                    st.session_state["camp_target_method_choice"] = target_method_options[2]
+                    single_cid = st.session_state.get("camp_single_contact_picker")
+                    if single_cid and single_cid in contact_id_keys:
                         st.session_state["camp_cherry_pick_multisel"] = [single_cid]
-            elif any(term in incoming_mode for term in ["Status", "Stage"]):
-                def_mode_idx = 1
-            else:
-                def_mode_idx = 0
+                elif any(term in incoming_mode for term in ["Status", "Stage"]):
+                    st.session_state["camp_target_method_choice"] = target_method_options[1]
+                if "camp_audience_mode" in st.session_state:
+                    del st.session_state["camp_audience_mode"]
+
+            if "camp_target_method_choice" not in st.session_state:
+                st.session_state["camp_target_method_choice"] = target_method_options[0]
 
             target_choice = st.radio(
                 "How do you want to target contacts?",
-                ["🏷️ By Tag", "⚡ By Pipeline Status", "👤 Hand-Pick Individually"],
-                index=def_mode_idx,
+                target_method_options,
                 horizontal=True,
                 key="camp_target_method_choice"
             )
@@ -338,27 +342,29 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
                 if matching_contacts:
                     with st.expander(f"📋 Review / Filter Individual Leads in this Tag ({len(matching_contacts)} Total)", expanded=False):
+                        def _cb_tag_sel_all(leads=matching_contacts):
+                            for c in leads:
+                                st.session_state[f"camp_tag_chk_{c['id']}"] = True
+
+                        def _cb_tag_desel_all(leads=matching_contacts):
+                            for c in leads:
+                                st.session_state[f"camp_tag_chk_{c['id']}"] = False
+
                         col_t_a1, col_t_a2 = st.columns([1, 1])
                         with col_t_a1:
-                            if st.button("Select All", key="btn_tag_sel_all_camp"):
-                                for c in matching_contacts:
-                                    st.session_state[f"camp_chk_{c['id']}"] = True
-                                st.rerun()
+                            st.button("Select All", key="btn_tag_sel_all_camp", on_click=_cb_tag_sel_all, args=(matching_contacts,))
                         with col_t_a2:
-                            if st.button("Deselect All", key="btn_tag_desel_all_camp"):
-                                for c in matching_contacts:
-                                    st.session_state[f"camp_chk_{c['id']}"] = False
-                                st.rerun()
+                            st.button("Deselect All", key="btn_tag_desel_all_camp", on_click=_cb_tag_desel_all, args=(matching_contacts,))
 
                         with st.container(height=200):
                             for c in matching_contacts:
-                                k = f"camp_chk_{c['id']}"
+                                k = f"camp_tag_chk_{c['id']}"
                                 if k not in st.session_state:
                                     st.session_state[k] = True
                                 lbl = f"{c['name']} ({c.get('company') or 'No Company'} — {c['email']})"
                                 st.checkbox(lbl, key=k)
 
-                    selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
+                    selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_tag_chk_{c['id']}", True)]
                 else:
                     selected_contact_ids = []
 
@@ -421,46 +427,60 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
                 if matching_contacts:
                     with st.expander(f"📋 Review / Filter Individual Leads in this Stage ({len(matching_contacts)} Total)", expanded=False):
+                        def _cb_stage_sel_all(leads=matching_contacts):
+                            for c in leads:
+                                st.session_state[f"camp_stage_chk_{c['id']}"] = True
+
+                        def _cb_stage_desel_all(leads=matching_contacts):
+                            for c in leads:
+                                st.session_state[f"camp_stage_chk_{c['id']}"] = False
+
                         col_s_a1, col_s_a2 = st.columns([1, 1])
                         with col_s_a1:
-                            if st.button("Select All", key="btn_stage_sel_all_camp"):
-                                for c in matching_contacts:
-                                    st.session_state[f"camp_chk_{c['id']}"] = True
-                                st.rerun()
+                            st.button("Select All", key="btn_stage_sel_all_camp", on_click=_cb_stage_sel_all, args=(matching_contacts,))
                         with col_s_a2:
-                            if st.button("Deselect All", key="btn_stage_desel_all_camp"):
-                                for c in matching_contacts:
-                                    st.session_state[f"camp_chk_{c['id']}"] = False
-                                st.rerun()
+                            st.button("Deselect All", key="btn_stage_desel_all_camp", on_click=_cb_stage_desel_all, args=(matching_contacts,))
 
                         with st.container(height=200):
                             for c in matching_contacts:
-                                k = f"camp_chk_{c['id']}"
+                                k = f"camp_stage_chk_{c['id']}"
                                 if k not in st.session_state:
                                     st.session_state[k] = True
                                 lbl = f"{c['name']} ({c.get('company') or 'No Company'} — {c['email']})"
                                 st.checkbox(lbl, key=k)
 
-                    selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
+                    selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_stage_chk_{c['id']}", True)]
                 else:
                     selected_contact_ids = []
 
             else:
                 # 👤 Hand-Pick Individually
-                col_hp1, col_hp2 = st.columns([3.5, 0.8], vertical_alignment="bottom")
+                if "camp_cherry_pick_multisel" not in st.session_state:
+                    st.session_state["camp_cherry_pick_multisel"] = [contact_id_keys[0]] if contact_id_keys else []
+                else:
+                    valid_cids = [cid for cid in st.session_state["camp_cherry_pick_multisel"] if cid in contact_id_map]
+                    if len(valid_cids) != len(st.session_state["camp_cherry_pick_multisel"]):
+                        st.session_state["camp_cherry_pick_multisel"] = valid_cids
+
+                def _cb_clear_cherry():
+                    st.session_state["camp_cherry_pick_multisel"] = []
+
+                def _cb_sel_all_cherry():
+                    st.session_state["camp_cherry_pick_multisel"] = list(contact_id_keys)
+
+                col_hp1, col_hp2, col_hp3 = st.columns([3.2, 0.9, 0.9], vertical_alignment="bottom")
+                with col_hp2:
+                    st.button("Clear All", key="btn_clear_cherry", on_click=_cb_clear_cherry, use_container_width=True)
+                with col_hp3:
+                    st.button("Select All", key="btn_sel_all_cherry", on_click=_cb_sel_all_cherry, use_container_width=True)
                 with col_hp1:
                     selected_cherry_ids = st.multiselect(
                         "Search and Select Contacts *",
                         options=contact_id_keys,
-                        default=st.session_state.get("camp_cherry_pick_multisel", [contact_id_keys[0]] if contact_id_keys else []),
                         format_func=lambda cid: f"{contact_id_map[cid]['name']} — {contact_id_map[cid].get('company') or 'No Company'} ({contact_id_map[cid]['email']})",
                         help="Type to search contacts by name, company, or email address.",
                         key="camp_cherry_pick_multisel"
                     )
-                with col_hp2:
-                    if st.button("Clear All", key="btn_clear_cherry", use_container_width=True):
-                        st.session_state["camp_cherry_pick_multisel"] = []
-                        st.rerun()
 
                 selected_contact_ids = selected_cherry_ids
                 matching_contacts = [contact_id_map[cid] for cid in selected_cherry_ids if cid in contact_id_map]
