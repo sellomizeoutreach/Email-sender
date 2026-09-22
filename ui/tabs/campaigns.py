@@ -262,6 +262,35 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
     render_tab_header("🚀 Dispatch & Review", "Launch outreach campaigns, compose sequences, inspect rendered HTML previews, and triage drafts.")
 
+    # Visual 3-Step Pipeline Stepper Banner
+    st.markdown("""
+    <div style="display:flex; align-items:center; justify-content:space-between; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:12px 20px; margin: 6px 0 18px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="background:#083731; color:white; width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:0.82rem;">1</span>
+            <div>
+                <div style="font-size:0.7rem; color:#64748B; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">Step 1</div>
+                <div style="font-weight:700; color:#0F172A; font-size:0.88rem;">Who &amp; What (Audience + Message)</div>
+            </div>
+        </div>
+        <div style="height:1px; flex-grow:1; background:#CBD5E1; margin:0 16px;"></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="background:#083731; color:white; width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:0.82rem;">2</span>
+            <div>
+                <div style="font-size:0.7rem; color:#64748B; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">Step 2</div>
+                <div style="font-weight:700; color:#0F172A; font-size:0.88rem;">When (Delivery Schedule)</div>
+            </div>
+        </div>
+        <div style="height:1px; flex-grow:1; background:#CBD5E1; margin:0 16px;"></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="background:#083731; color:white; width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-weight:800; font-size:0.82rem;">3</span>
+            <div>
+                <div style="font-size:0.7rem; color:#64748B; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">Step 3</div>
+                <div style="font-weight:700; color:#0F172A; font-size:0.88rem;">The Triage Desk (Review Queue)</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     if not contacts_list:
         st.warning("You have no contacts saved. Please add contacts in the Contacts tab first.")
     elif not templates_list:
@@ -279,10 +308,11 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             return
 
         # ==============================================================================
-        # STEP 1: AUDIENCE & MESSAGE
+        # STEP 1: AUDIENCE & MESSAGE (Generation Wizard Block 1)
         # ==============================================================================
-        with st.expander("Step 1: Audience & Message", expanded=True):
-            st.markdown("#### 1. Audience Targeting & Recipients")
+        with st.container(border=True):
+            st.markdown("### 📌 Step 1: Who & What (Audience & Message)")
+            st.caption("Target your prospect audience and customize outreach sequence copy.")
 
             contact_id_map = {c["id"]: c for c in active_candidates}
             contact_id_keys = list(contact_id_map.keys())
@@ -645,9 +675,12 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             """, unsafe_allow_html=True)
 
         # ==============================================================================
-        # STEP 2: SENDING WINDOW & CADENCE
+        # STEP 2: WHEN (DELIVERY SCHEDULE) (Generation Wizard Block 2)
         # ==============================================================================
-        with st.expander("Step 2: Sending Window & Cadence", expanded=True):
+        with st.container(border=True):
+            st.markdown("### ⏰ Step 2: When (Delivery Schedule)")
+            st.caption("Configure prospect market timezones, sending schedule, and batch delivery pacing.")
+
             st.markdown("#### 1. Destination Market & Timezone")
             db_default_market = get_config("default_market", "CA_EAST")
             market_keys = list(TARGET_MARKETS.keys())
@@ -730,57 +763,46 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 with col_sd3:
                     camp_end = st.text_input("Daily Cutoff Time", value=db_end or "18:00", placeholder="18:00", key="camp_custom_end")
 
-            col_pacing1, col_pacing2 = st.columns([2, 1])
-            with col_pacing1:
-                stagger_strategy = st.radio(
-                    "Batch Dispatch Pacing Strategy",
-                    [
-                        "Send all now (immediate batch)",
-                        "Fixed gap between each send",
-                        "Spread evenly across a time span",
-                        "Spread evenly across today's window"
-                    ],
-                    key="camp_stagger_strategy"
-                )
-            with col_pacing2:
-                use_jitter = st.checkbox(
-                    "Add natural human jitter",
-                    value=True,
-                    help="Adds ±20 to 90 seconds of organic variation so delivery times avoid robotic, fixed-second patterns.",
-                    key="camp_use_jitter"
-                )
+            # Simplified Pacing Selector with Advanced Throttle Tuning Expander
+            pacing_options = [
+                "🚀 Send as fast as possible",
+                "⚖️ Spread evenly across active hours"
+            ]
+            pacing_choice = st.selectbox(
+                "Batch Dispatch Pacing *",
+                options=pacing_options,
+                key="camp_pacing_strategy_sel",
+                help="Choose whether to queue emails in immediate succession or distribute them across your active business hours."
+            )
 
-            if stagger_strategy.startswith("Send all now"):
+            with st.expander("⚙️ Advanced Throttle Tuning", expanded=False):
+                st.caption("Fine-tune delivery pacing, anti-spam jitter, and custom pause intervals.")
+                col_att1, col_att2 = st.columns(2)
+                with col_att1:
+                    use_jitter = st.checkbox(
+                        "Add natural human jitter",
+                        value=True,
+                        help="Adds ±20 to 90 seconds of organic variation so delivery times avoid robotic, fixed-second patterns.",
+                        key="camp_use_jitter"
+                    )
+                with col_att2:
+                    adv_gap = st.number_input(
+                        "Custom Minutes Between Sends",
+                        min_value=0.0,
+                        max_value=120.0,
+                        value=0.0 if "fast" in pacing_choice else 5.0,
+                        step=1.0,
+                        key="camp_adv_spacing_mins",
+                        help="Custom pause interval between consecutive dispatches. 0.0 means immediate dispatch."
+                    )
+
+            if "fast" in pacing_choice:
                 span_hours = 0.0
-                spacing_minutes = 0.0
-                stagger_mode_arg = "none"
-            elif stagger_strategy.startswith("Fixed gap"):
-                spacing_minutes = st.number_input(
-                    "Minutes Between Sends",
-                    min_value=1.0,
-                    max_value=180.0,
-                    value=5.0,
-                    step=1.0,
-                    key="camp_spacing_mins",
-                    help="Pause interval between consecutive prospect dispatches in this batch."
-                )
-                span_hours = 4.0
-                stagger_mode_arg = "fixed_interval"
-            elif stagger_strategy.startswith("Spread evenly across a time"):
-                span_hours = st.number_input(
-                    "Span Duration (Hours from now)",
-                    min_value=0.5,
-                    max_value=168.0,
-                    value=4.0,
-                    step=0.5,
-                    key="camp_span_hours",
-                    help="Total hours over which all selected contacts in this batch will be evenly distributed."
-                )
-                spacing_minutes = 5.0
-                stagger_mode_arg = "next_x_hours"
+                spacing_minutes = float(adv_gap) if adv_gap > 0 else 0.0
+                stagger_mode_arg = "none" if adv_gap == 0 else "fixed_interval"
             else:
                 span_hours = 4.0
-                spacing_minutes = 5.0
+                spacing_minutes = float(adv_gap) if adv_gap > 0 else 5.0
                 stagger_mode_arg = "daily_window"
 
             # -------------------------------------------------------------------------
@@ -865,18 +887,18 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             </div>
             """, unsafe_allow_html=True)
 
-            # Primary CTA Button
+            # Primary CTA Button (Massive Action Bar)
             has_recipients = len(selected_contact_ids) > 0
             if len(selected_contact_ids) == 1 and matching_contacts:
                 recip_name = matching_contacts[0]["name"]
-                if num_touches > 1:
-                    btn_title = f"🚀 Create {num_touches}-Touch Sequence for {recip_name}"
-                else:
-                    btn_title = f"🚀 Generate Outreach Email for {recip_name}"
+                btn_title = f"🚀 Generate Drafts ({num_touches}-Touch Sequence for {recip_name})"
                 btn_help = f"Generate {num_touches} personalized draft(s) for {recip_name}."
+            elif has_recipients:
+                btn_title = f"🚀 Generate Drafts ({total_drafts} Emails for {len(selected_contact_ids)} Contacts)"
+                btn_help = f"Create {total_drafts} sequence drafts for {len(selected_contact_ids)} selected contacts."
             else:
-                btn_title = f"🚀 Generate Campaign ({num_touches}-Touch Sequence for {len(selected_contact_ids)} Contacts)"
-                btn_help = f"Create {num_touches}-touch sequence drafts for {len(selected_contact_ids)} selected contacts." if has_recipients else "Select at least one contact above to generate campaign drafts."
+                btn_title = "🚀 Generate Drafts (Select Contacts in Step 1 Above)"
+                btn_help = "Select at least one contact in Step 1 to generate campaign drafts."
 
             generate_campaign_btn = st.button(
                 btn_title,
@@ -1053,8 +1075,10 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     first_res_dt = scheduled_dts_touch1[0]
                     last_res_dt = scheduled_dts_touch1[-1]
 
+                    trigger_toast("Drafts Generated Successfully!", icon="🚀")
+                    st.session_state["scroll_to_triage"] = True
+
                     if num_touches > 1:
-                        trigger_toast(f"Sequence Setup Complete: {created_pending} draft(s) queued!", icon="🚀")
                         create_notification(
                             type="campaign",
                             title="Campaign Sequence Generated",
@@ -1065,14 +1089,13 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                         <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
                             <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Automated Follow-Up Sequence Active</div>
                             <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
-                                Touch 1 drafts are now ready in the <strong>🛡️ Review Queue &amp; Triage</strong> tab.
+                                Touch 1 drafts are now ready in the <strong>🛡️ Step 3: The Triage Desk</strong> below.
                                 Once Touch 1 is dispatched, our background engine automatically starts the delay timer ({touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']}).
                                 If the prospect does not reply, the system will <strong>automatically generate the follow-up draft</strong> using your selected template!
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
                     else:
-                        trigger_toast(f"Campaign generated: {created_pending} draft(s) queued!", icon="🚀")
                         create_notification(
                             type="campaign",
                             title="Campaign Generated",
@@ -1081,9 +1104,9 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                         st.success(f"Outreach Generation Complete: Created {created_pending} Pending draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
                         st.markdown("""
                         <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
-                            <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Outreach Email Drafts Ready for Review</div>
+                            <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Outreach Email Drafts Ready in Triage Desk</div>
                             <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
-                                Drafts are securely queued in the <strong>🛡️ Review Queue &amp; Triage</strong> tab for approval.
+                                Drafts are securely queued in <strong>🛡️ Step 3: The Triage Desk</strong> below for approval.
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
