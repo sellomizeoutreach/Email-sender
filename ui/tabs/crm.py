@@ -516,11 +516,122 @@ def render_crm_tab(all_contacts=None):
         st.info("No contacts match the current search or filter criteria. Adjust or reset your filters above.")
     elif crm_layout_mode.startswith("📊 Spreadsheet"):
         # ==============================================================================
-        # 📊 SPREADSHEET GRID VIEW (st.data_editor with dropdowns)
+        # 📊 SPREADSHEET GRID VIEW (st.data_editor with row selection & quick actions)
         # ==============================================================================
+        id_map = {c["id"]: c for c in filtered_contacts}
+
+        # 1. Dedicated Multi-Pick & Individual Contact Action Bar
+        st.markdown("""
+        <div style="background:#FFFFFF; border:1.5px solid rgba(8,55,49,0.18); border-radius:10px; padding:12px 16px; margin:6px 0 12px; box-shadow:0 2px 8px rgba(8,55,49,0.04);">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-weight:800; font-size:0.95rem; color:#083731;">📋 Spreadsheet Contact Selection & Quick Actions</div>
+                <div style="font-size:0.8rem; color:#64748B;">Select individual leads to edit details or delete, or pick multiple leads for bulk operations</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_bar1, col_bar2 = st.columns([2.6, 2.4], vertical_alignment="bottom")
+
+        with col_bar1:
+            # Multi-Pick from list
+            picked_ids = st.multiselect(
+                "🎯 Multi-Pick Contacts to Select:",
+                options=filtered_ids,
+                default=[cid for cid in selected_ids if cid in filtered_ids],
+                format_func=lambda cid: f"{id_map[cid]['name']} ({id_map[cid].get('company') or 'No Company'} — {id_map[cid]['email']})",
+                key="crm_grid_multipick",
+                help="Search and pick multiple contacts by name, company, or email to select them in the spreadsheet."
+            )
+            if set(picked_ids) != selected_ids:
+                st.session_state["crm_selected_ids"] = set(picked_ids)
+                st.rerun()
+
+        with col_bar2:
+            # Individual contact selector
+            def_indiv_idx = 0
+            indiv_options = [None] + filtered_ids
+            if len(selected_ids) == 1:
+                single_id = list(selected_ids)[0]
+                if single_id in filtered_ids:
+                    def_indiv_idx = indiv_options.index(single_id)
+
+            chosen_indiv = st.selectbox(
+                "👤 Select Single Contact to Edit / Delete:",
+                options=indiv_options,
+                index=def_indiv_idx,
+                format_func=lambda cid: "-- Choose a contact to manage --" if cid is None else f"L-{cid:04d}: {id_map[cid]['name']} ({id_map[cid]['email']})",
+                key="crm_grid_indiv_action_picker"
+            )
+
+        if chosen_indiv is not None:
+            c_target = id_map[chosen_indiv]
+            st.markdown(f"""
+            <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.2); border-radius:8px; padding:10px 14px; margin:6px 0 10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div>
+                    <strong style="color:#083731; font-size:0.92rem;">👤 {c_target['name']}</strong>
+                    <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">({c_target.get('company') or 'No Company'} • <strong>{c_target['email']}</strong>)</span>
+                    <span style="background:rgba(8,55,49,0.08); color:#083731; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:10px; margin-left:8px;">Pipeline: {c_target.get('status') or 'Not Contacted'}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_act1, col_act2, col_act3, _ = st.columns([1.6, 1.4, 1.6, 2.4])
+            with col_act1:
+                if st.button("✏️ Edit Full Lead", type="primary", use_container_width=True, key=f"btn_edit_indiv_grid_{chosen_indiv}", help="Open full lead editor modal with all variables, tags & notes"):
+                    st.session_state["crm_editing_id"] = chosen_indiv
+                    st.rerun()
+            with col_act2:
+                if st.session_state.get(f"confirm_grid_del_{chosen_indiv}"):
+                    if st.button("Confirm Delete", type="primary", use_container_width=True, key=f"btn_conf_grid_del_{chosen_indiv}"):
+                        delete_contact(chosen_indiv)
+                        st.session_state["crm_selected_ids"].discard(chosen_indiv)
+                        st.session_state[f"confirm_grid_del_{chosen_indiv}"] = False
+                        st.success(f"Deleted contact #{chosen_indiv}.")
+                        st.rerun()
+                else:
+                    if st.button("🗑️ Delete Lead", use_container_width=True, key=f"btn_del_indiv_grid_{chosen_indiv}", help="Delete this individual lead"):
+                        st.session_state[f"confirm_grid_del_{chosen_indiv}"] = True
+                        st.rerun()
+            with col_act3:
+                if st.button("✉️ Draft 1-to-1 Email", use_container_width=True, key=f"btn_mail_indiv_grid_{chosen_indiv}", help="Preselect this contact in Sequences & Campaigns"):
+                    st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
+                    st.session_state["camp_single_contact_picker"] = chosen_indiv
+                    st.rerun()
+
+        elif s_count > 1:
+            st.markdown(f"""
+            <div style="background:rgba(8,55,49,0.06); border:1.5px solid #083731; border-radius:8px; padding:10px 14px; margin:6px 0 10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div>
+                    <strong style="color:#083731; font-size:0.92rem;">📌 {s_count} Leads Selected in Spreadsheet</strong>
+                    <span style="color:#64748B; font-size:0.8rem; margin-left:6px;">Use Bulk Actions above or quick controls below</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_b1, col_b2, _ = st.columns([1.8, 2.2, 3])
+            with col_b1:
+                if st.session_state.get("confirm_multi_del_grid"):
+                    if st.button(f"Confirm Delete {s_count} Leads", type="primary", use_container_width=True, key="btn_conf_multi_del_grid"):
+                        bulk_delete_contacts(list(selected_ids))
+                        st.session_state["crm_selected_ids"] = set()
+                        st.session_state["confirm_multi_del_grid"] = False
+                        st.success(f"Deleted {s_count} contact(s).")
+                        st.rerun()
+                else:
+                    if st.button(f"🗑️ Delete {s_count} Selected", use_container_width=True, key="btn_multi_del_grid"):
+                        st.session_state["confirm_multi_del_grid"] = True
+                        st.rerun()
+            with col_b2:
+                if st.button(f"🚀 Outreach with {s_count} Leads", use_container_width=True, key="btn_multi_outreach_grid"):
+                    st.session_state["camp_audience_mode"] = "🎯 Cherry-Pick Specific Contacts (Search & Select)"
+                    st.session_state["camp_cherry_pick_multisel"] = list(selected_ids)
+                    st.rerun()
+
+        # 2. Build rows for spreadsheet data editor with 'Select' checkbox
         grid_rows = []
         for c in filtered_contacts:
             grid_rows.append({
+                "Select": (c["id"] in selected_ids),
                 "id": c["id"],
                 "Lead ID": f"L-{c['id']:04d}",
                 "Company": c.get("company") or "",
@@ -543,12 +654,12 @@ def render_crm_tab(all_contacts=None):
 
         # Column Visibility Controls
         all_grid_cols = [
-            "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
+            "Select", "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
             "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
             "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags"
         ]
         default_outreach_cols = [
-            "Lead ID", "Company", "Contact Name", "Email Address",
+            "Select", "Lead ID", "Company", "Contact Name", "Email Address",
             "Priority", "Status", "Follow-Ups Sent", "Next Follow-Up"
         ]
 
@@ -556,7 +667,7 @@ def render_crm_tab(all_contacts=None):
         with col_v1:
             col_preset = st.radio(
                 "Grid Column View",
-                ["Focused Outreach View (8 cols)", "All Columns (15 cols)", "Custom Columns"],
+                ["Focused Outreach View (9 cols)", "All Columns (16 cols)", "Custom Columns"],
                 horizontal=True,
                 key="crm_col_preset"
             )
@@ -570,19 +681,23 @@ def render_crm_tab(all_contacts=None):
                 )
             elif col_preset.startswith("Focused"):
                 visible_cols = default_outreach_cols
-                st.caption("Showing 8 essential outreach columns. Select 'All Columns' or 'Custom' to expand.")
+                st.caption("Showing essential outreach columns. Select 'All Columns' or 'Custom' to expand.")
             else:
                 visible_cols = all_grid_cols
-                st.caption("Showing all 15 lead columns. Scroll horizontally to browse fields on the right.")
+                st.caption("Showing all 16 lead columns. Scroll horizontally to browse fields on the right.")
+
+        if "Select" not in visible_cols:
+            visible_cols = ["Select"] + visible_cols
 
         st.markdown(f"""
         <div class="crm-scroll-caption">
-            <span>↔️ Scroll horizontally to browse columns</span>
-            <span>Displaying <b>{len(visible_cols)}</b> of 15 columns</span>
+            <span>↔️ Scroll horizontally to browse columns • Check 'Select' box to pick leads</span>
+            <span>Displaying <b>{len(visible_cols)}</b> of 16 columns</span>
         </div>
         """, unsafe_allow_html=True)
 
         column_config = {
+            "Select": st.column_config.CheckboxColumn("Select", help="Check to select contact for editing or bulk actions", width="small", default=False),
             "id": None,
             "Lead ID": st.column_config.TextColumn("Lead ID", disabled=True, width="small") if "Lead ID" in visible_cols else None,
             "Company": st.column_config.TextColumn("Company", width="medium") if "Company" in visible_cols else None,
@@ -626,13 +741,20 @@ def render_crm_tab(all_contacts=None):
             key="crm_spreadsheet_editor"
         )
 
+        # Detect checkbox selection changes in the grid
+        if "Select" in edited_grid.columns:
+            grid_checked = set(edited_grid[edited_grid["Select"] == True]["id"].tolist())
+            if grid_checked != selected_ids:
+                st.session_state["crm_selected_ids"] = grid_checked
+                st.rerun()
+
         has_unsaved_edits = False
         editor_state = st.session_state.get("crm_spreadsheet_editor")
         if editor_state and isinstance(editor_state, dict):
             if editor_state.get("edited_rows"):
                 has_unsaved_edits = True
 
-        col_save_grid, col_reset_grid, _ = st.columns([2, 2, 3])
+        col_save_grid, col_reset_grid, col_sub_acts = st.columns([2, 1.8, 3.2])
         with col_save_grid:
             if st.button("💾 Save Spreadsheet Changes", type="primary", use_container_width=True, key="btn_save_crm_spreadsheet"):
                 records_to_save = edited_grid.to_dict(orient="records")
@@ -644,6 +766,18 @@ def render_crm_tab(all_contacts=None):
                 if st.button("🔄 Discard Unsaved Changes", use_container_width=True, key="btn_reset_crm_spreadsheet"):
                     if "crm_spreadsheet_editor" in st.session_state:
                         del st.session_state["crm_spreadsheet_editor"]
+                    st.rerun()
+        with col_sub_acts:
+            if s_count == 1:
+                single_id_sel = list(selected_ids)[0]
+                if st.button("✏️ Edit Selected Lead (Full Editor)", use_container_width=True, key="btn_bot_edit_sel_grid"):
+                    st.session_state["crm_editing_id"] = single_id_sel
+                    st.rerun()
+            elif s_count > 1:
+                if st.button(f"🗑️ Delete {s_count} Selected Leads", use_container_width=True, key="btn_bot_del_sel_grid"):
+                    bulk_delete_contacts(list(selected_ids))
+                    st.session_state["crm_selected_ids"] = set()
+                    st.success(f"Deleted {s_count} contact(s).")
                     st.rerun()
 
     else:
