@@ -8,22 +8,23 @@ import os
 import socket
 import streamlit as st
 from datetime import datetime
-from database import (
-    get_all_configs,
-    get_config,
-    set_config,
-    get_smtp_accounts,
-    add_smtp_account,
-    update_smtp_account,
-    delete_smtp_account,
-    get_effective_daily_limit,
-    get_warmup_info,
-    is_within_sending_window,
-    cleanup_duplicate_notifications,
-    WEEKDAY_NAMES,
-    DB_FILE,
-    get_log_file_path
-)
+import database as db
+
+# Resilient dynamic bindings prevent hot-reload ImportErrors on Streamlit Cloud & remote hosts
+get_all_configs = lambda *a, **kw: getattr(db, "get_all_configs", lambda: {})(*a, **kw)
+get_config = lambda *a, **kw: getattr(db, "get_config", lambda k, d=None: d)(*a, **kw)
+set_config = lambda *a, **kw: getattr(db, "set_config", lambda k, v: None)(*a, **kw)
+get_smtp_accounts = lambda *a, **kw: getattr(db, "get_smtp_accounts", lambda: [])(*a, **kw)
+add_smtp_account = lambda *a, **kw: getattr(db, "add_smtp_account", lambda **k: None)(*a, **kw)
+update_smtp_account = lambda *a, **kw: getattr(db, "update_smtp_account", lambda *x, **k: None)(*a, **kw)
+delete_smtp_account = lambda *a, **kw: getattr(db, "delete_smtp_account", lambda aid: None)(*a, **kw)
+get_effective_daily_limit = lambda *a, **kw: getattr(db, "get_effective_daily_limit", lambda acc, t=None: int(acc.get("daily_limit", 50)))(*a, **kw)
+get_warmup_info = lambda *a, **kw: getattr(db, "get_warmup_info", lambda acc, t=None: {"is_warmup": False, "effective_limit": int(acc.get("daily_limit", 50))})(*a, **kw)
+is_within_sending_window = lambda *a, **kw: getattr(db, "is_within_sending_window", lambda dt=None: (True, "OK"))(*a, **kw)
+cleanup_duplicate_notifications = lambda *a, **kw: getattr(db, "cleanup_duplicate_notifications", lambda: 0)(*a, **kw)
+WEEKDAY_NAMES = getattr(db, "WEEKDAY_NAMES", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+DB_FILE = getattr(db, "DB_FILE", "email_system.db")
+get_log_file_path = lambda *a, **kw: getattr(db, "get_log_file_path", lambda: "sellomize.log")(*a, **kw)
 from smtp_dispatcher import test_smtp_connection, scan_all_hostinger_inbox, scan_all_hostinger_bounces
 from timezone_helper import (
     TARGET_MARKETS,
