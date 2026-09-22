@@ -383,7 +383,7 @@ def init_db(db_path: str = DB_FILE):
             step_number INTEGER DEFAULT 2,
             delay_unit TEXT DEFAULT 'days',
             delay_value INTEGER DEFAULT 3,
-            template_id INTEGER NOT NULL,
+            template_id INTEGER DEFAULT 0,
             custom_subject TEXT DEFAULT '',
             trigger_email_id INTEGER DEFAULT NULL,
             triggered_at TEXT DEFAULT '',
@@ -395,11 +395,12 @@ def init_db(db_path: str = DB_FILE):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_status_due ON sequence_rules(status, due_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_email ON sequence_rules(contact_email)")
 
-    # Schema migration: sequence_rules timezone and market columns
+    # Schema migration: sequence_rules timezone, market, and custom_body columns
     seq_rule_migrations = [
         ("target_timezone", "TEXT DEFAULT ''"),
         ("target_country", "TEXT DEFAULT ''"),
-        ("market_key", "TEXT DEFAULT ''")
+        ("market_key", "TEXT DEFAULT ''"),
+        ("custom_body", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in seq_rule_migrations:
         try:
@@ -1992,28 +1993,30 @@ def create_sequence_rule(
     step_number: int,
     delay_unit: str,
     delay_value: int,
-    template_id: int,
+    template_id: Optional[int] = None,
     custom_subject: str = "",
+    custom_body: str = "",
     trigger_email_id: Optional[int] = None,
     target_timezone: str = "",
     target_country: str = "",
     market_key: str = "",
     db_path: str = DB_FILE
 ) -> int:
-    """Register an automated follow-up sequence rule for a contact."""
+    """Register an automated follow-up sequence rule for a contact (supports pre-made template or custom body)."""
+    tid_val = int(template_id) if (template_id is not None and str(template_id).isdigit()) else 0
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO sequence_rules (
             sequence_id, contact_id, contact_email, step_number,
-            delay_unit, delay_value, template_id, custom_subject,
+            delay_unit, delay_value, template_id, custom_subject, custom_body,
             trigger_email_id, target_timezone, target_country, market_key,
             status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting_Trigger', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting_Trigger', ?)
     """, (
         sequence_id, contact_id, contact_email.strip().lower(), step_number,
-        delay_unit.lower(), int(delay_value), template_id, custom_subject.strip(),
+        delay_unit.lower(), int(delay_value), tid_val, custom_subject.strip(), custom_body.strip(),
         trigger_email_id, target_timezone.strip(), target_country.strip(), market_key.strip(),
         now_iso
     ))

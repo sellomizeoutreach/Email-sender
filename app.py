@@ -101,14 +101,19 @@ render_sidebar()
 # ==============================================================================
 # 6-SECTION PRIMARY APP NAVIGATION
 # ==============================================================================
-tab_leads, tab_studio, tab_campaigns, tab_review, tab_analytics, tab_settings = st.tabs([
+TAB_NAMES = [
     "👥 Leads & Contacts",
     "✍️ Studio & Templates",
     "⚡ Sequences & Campaigns",
     "🛡️ Review Queue & Triage",
     "📊 Analytics & Intelligence",
     "⚙️ Rules & Settings"
-])
+]
+
+tab_leads, tab_studio, tab_campaigns, tab_review, tab_analytics, tab_settings = st.tabs(
+    TAB_NAMES,
+    key="main_app_tabs"
+)
 
 with tab_leads:
     render_crm_tab(all_contacts)

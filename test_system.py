@@ -2289,6 +2289,60 @@ class TestEmailAutomationSystem(unittest.TestCase):
         # Pending is still preserved!
         self.assertIsNotNone(get_email_by_id(e_pending, db_path=TEST_DB))
 
+    def test_63_custom_body_sequence_rule_and_followup_generation(self):
+        """Test creating sequence rules with self-written custom body and automated draft generation."""
+        from scheduler import process_due_sequence_rules
+        import sqlite3
+
+        # 1. Create a contact with personalization data
+        cid = create_contact(
+            name="Samantha Vance",
+            email="samantha@vanceinnovations.com",
+            company="Vance Innovations",
+            db_path=TEST_DB
+        )
+
+        # 2. Register sequence rule with custom body (no pre-made template_id)
+        custom_subj = "Re: Custom pitch for [Company]"
+        custom_body = "Hi [Name],\n\nFollowing up on my custom message for [Company]. Are you free for a call?"
+        rid = create_sequence_rule(
+            sequence_id="seq_custom_body_test",
+            contact_id=cid,
+            contact_email="samantha@vanceinnovations.com",
+            step_number=2,
+            delay_unit="hours",
+            delay_value=48,
+            template_id=None,
+            custom_subject=custom_subj,
+            custom_body=custom_body,
+            db_path=TEST_DB
+        )
+
+        rules = get_sequence_rules(db_path=TEST_DB)
+        rule = next(r for r in rules if r["id"] == rid)
+        self.assertEqual(rule["custom_body"], custom_body)
+        self.assertEqual(rule["custom_subject"], custom_subj)
+
+        # 3. Simulate email send trigger: mark status as Scheduled and due in the past
+        past_due = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = sqlite3.connect(TEST_DB)
+        conn.execute("UPDATE sequence_rules SET status = 'Scheduled', due_at = ? WHERE id = ?", (past_due, rid))
+        conn.commit()
+        conn.close()
+
+        # 4. Process due rules via the background scheduler engine
+        gen_count = process_due_sequence_rules(db_path=TEST_DB)
+        self.assertEqual(gen_count, 1)
+
+        # 5. Verify the auto-generated follow-up email draft
+        all_emails = get_emails(db_path=TEST_DB)
+        fu_email = next(e for e in all_emails if e.get("recipient") == "samantha@vanceinnovations.com" and e.get("sequence_step") == 2)
+        self.assertIsNotNone(fu_email)
+        self.assertIn("Vance Innovations", fu_email["subject"])
+        self.assertIn("Samantha", fu_email["email_html"])
+        self.assertIn("Vance Innovations", fu_email["email_html"])
+        self.assertEqual(fu_email["status"], "Pending")
+
 if __name__ == "__main__":
     unittest.main()
 

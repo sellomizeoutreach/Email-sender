@@ -17,6 +17,7 @@ from database import (
     create_email,
     create_sequence_rule,
     get_sequence_rules,
+    create_template,
     DB_FILE
 )
 from scheduler import (
@@ -41,7 +42,7 @@ from template_engine import (
     scan_negative_keywords,
     scan_all_negative_keywords
 )
-from ui.components import render_tab_header
+from ui.components import render_tab_header, render_html_preview
 
 
 def sync_sending_window_to_db(preset: str, days: list, start: str, end: str, db_path: str = DB_FILE):
@@ -66,6 +67,188 @@ def sync_sending_window_to_db(preset: str, days: list, start: str, end: str, db_
         set_config("sending_days", ", ".join(clean_days), db_path=db_path)
         set_config("sending_start_time", (start or "09:00").strip(), db_path=db_path)
         set_config("sending_end_time", (end or "18:00").strip(), db_path=db_path)
+
+
+def render_touch_composer(
+    touch_step: int,
+    touch_label: str,
+    template_options: dict,
+    sample_contact: dict,
+    neg_keywords_setting: str,
+    default_subj: str,
+    default_body: str,
+    include_delay: bool = False,
+    default_delay_val: int = 3,
+    default_delay_unit: str = "Days"
+) -> dict:
+    """
+    Renders an authoring card for an outreach touch.
+    Enables user to either select a pre-made template OR write the email copy themselves.
+    Supports variables, spintax, live sandboxed preview, spam shield, and optional template saving.
+    """
+    tpl_keys = list(template_options.keys())
+    d_val = default_delay_val
+    d_unit = default_delay_unit
+
+    if include_delay:
+        col_d1, col_d2, col_d_info = st.columns([1.1, 1.1, 2.8])
+        with col_d1:
+            d_val = st.number_input(
+                f"Wait Delay (after Touch {touch_step - 1}) *",
+                min_value=1,
+                max_value=720,
+                value=default_delay_val,
+                key=f"camp_t{touch_step}_val",
+                help=f"Wait interval after Touch {touch_step - 1} send before generating this follow-up."
+            )
+        with col_d2:
+            d_unit = st.selectbox(
+                "Delay Unit",
+                options=["Days", "Hours"],
+                index=0 if default_delay_unit.lower() == "days" else 1,
+                key=f"camp_t{touch_step}_unit"
+            )
+        with col_d_info:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            st.caption(f"⚡ Follow-up draft will auto-generate **+{d_val} {d_unit.lower()}** after Touch {touch_step - 1} is sent if no reply is received.")
+
+    col_m1, col_m2 = st.columns([2.2, 1.8])
+    with col_m1:
+        author_mode = st.radio(
+            f"Select Drafting Mode for {touch_label}",
+            options=["📋 Select Pre-Made Template", "✍️ Write Email / Copy Yourself"],
+            index=0,
+            horizontal=True,
+            key=f"camp_author_mode_{touch_step}"
+        )
+
+    if author_mode.startswith("📋"):
+        col_tpl, col_subj = st.columns([1.2, 1.8])
+        with col_tpl:
+            def_idx = min(touch_step - 1, len(tpl_keys) - 1) if tpl_keys else 0
+            sel_tpl_id = st.selectbox(
+                "Select Pre-Made Template *",
+                options=tpl_keys,
+                index=def_idx,
+                format_func=lambda tid: template_options[tid],
+                key=f"camp_tpl_{touch_step}"
+            )
+        with col_subj:
+            subj_val = st.text_input(
+                "Subject Line",
+                value=default_subj,
+                help="Supports [Name], [Company], and {A|B} Spintax.",
+                key=f"camp_subj_{touch_step}"
+            )
+
+        chosen_tpl = get_template_by_id(sel_tpl_id)
+        raw_body = chosen_tpl["body_content"] if chosen_tpl else ""
+        raw_subj = subj_val.strip() or (chosen_tpl["template_name"] if chosen_tpl else "Outreach")
+
+        preview_subj = parse_spintax(inject_variables(raw_subj, sample_contact))
+        preview_body = resolve_template(raw_body, sample_contact)
+        final_html = format_email_html(preview_body)
+        triggers = scan_all_negative_keywords(f"{preview_subj} {preview_body}", neg_keywords_setting)
+
+        with st.expander(f"👁️ Preview with Sample Lead ({sample_contact.get('name', 'Alex')})", expanded=False):
+            st.markdown(f"**Subject:** `{preview_subj}`")
+            st.markdown("**Body Preview:**")
+            render_html_preview(final_html, height=180)
+
+        if triggers:
+            trig_chips = ", ".join([f"`{t}`" for t in triggers])
+            st.warning(f"⚠️ {touch_label} contains restricted spam trigger(s): {trig_chips}. Drafts will be flagged for review.")
+        else:
+            st.markdown("""
+            <div style="background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.22); border-radius:8px; padding:6px 12px; margin:4px 0 10px;">
+                <span style="color:#059669; font-weight:700; font-size:0.82rem;">✅ Deliverability Shield Clean:</span>
+                <span style="color:#475569; font-size:0.8rem;"> No restricted spam triggers detected.</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        return {
+            "step": touch_step,
+            "label": touch_label,
+            "source_type": "premade",
+            "template_id": sel_tpl_id,
+            "subject": subj_val,
+            "custom_body": "",
+            "delay_value": int(d_val) if include_delay else 0,
+            "delay_unit": d_unit.lower() if include_delay else "days",
+            "save_as_template": False,
+            "new_template_name": ""
+        }
+    else:
+        # User writes email themselves
+        subj_val = st.text_input(
+            "Subject Line *",
+            value=default_subj,
+            help="Supports [Name], [Company], and {A|B} Spintax.",
+            key=f"camp_custom_subj_{touch_step}"
+        )
+
+        st.markdown("""
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:4px; font-size:0.8rem; color:#475569;">
+            <strong style="color:#083731;">Supported Variables:</strong>
+            <code>[Name]</code>
+            <code>[Company]</code>
+            <code>[Website]</code>
+            <code>[ASIN]</code>
+            <code>[Role]</code>
+            <span style="margin-left:8px; color:#64748B;">• Spintax: <code>{Quick note|Quick question|Following up}</code></span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        body_val = st.text_area(
+            f"Email Body Content ({touch_label}) *",
+            value=default_body,
+            height=180,
+            key=f"camp_custom_body_{touch_step}",
+            help="Write your custom email content here. Variables like [Name] and [Company] will be personalized per lead."
+        )
+
+        col_save_chk, col_save_name = st.columns([1.4, 2.6])
+        with col_save_chk:
+            save_tpl = st.checkbox("💾 Save as Reusable Template", key=f"camp_save_tpl_{touch_step}", help="Automatically save this copy to your Template Builder library")
+        with col_save_name:
+            new_tpl_name = ""
+            if save_tpl:
+                def_tpl_title = f"{touch_label} - {datetime.now().strftime('%b %d')}"
+                new_tpl_name = st.text_input("Template Name *", value=def_tpl_title, key=f"camp_new_name_{touch_step}")
+
+        preview_subj = parse_spintax(inject_variables(subj_val, sample_contact))
+        preview_body = resolve_template(body_val, sample_contact)
+        final_html = format_email_html(preview_body)
+        triggers = scan_all_negative_keywords(f"{preview_subj} {preview_body}", neg_keywords_setting)
+
+        with st.expander(f"👁️ Live Preview for {sample_contact.get('name', 'Alex')} ({touch_label})", expanded=True):
+            st.markdown(f"**Subject:** `{preview_subj}`")
+            st.markdown("**Body Preview:**")
+            render_html_preview(final_html, height=180)
+
+        if triggers:
+            trig_chips = ", ".join([f"`{t}`" for t in triggers])
+            st.warning(f"⚠️ {touch_label} contains restricted spam trigger(s): {trig_chips}. Drafts will be flagged for review.")
+        else:
+            st.markdown("""
+            <div style="background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.22); border-radius:8px; padding:6px 12px; margin:4px 0 10px;">
+                <span style="color:#059669; font-weight:700; font-size:0.82rem;">✅ Deliverability Shield Clean:</span>
+                <span style="color:#475569; font-size:0.8rem;"> No restricted spam triggers detected.</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        return {
+            "step": touch_step,
+            "label": touch_label,
+            "source_type": "custom",
+            "template_id": None,
+            "subject": subj_val,
+            "custom_body": body_val,
+            "delay_value": int(d_val) if include_delay else 0,
+            "delay_unit": d_unit.lower() if include_delay else "days",
+            "save_as_template": bool(save_tpl),
+            "new_template_name": new_tpl_name.strip() if save_tpl else ""
+        }
 
 
 def render_campaigns_tab(contacts_list=None, templates_list=None):
@@ -345,45 +528,46 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             else (matching_contacts[0] if matching_contacts else {"name": "Alex", "company": "Acme Corp", "email": "prospect@acme.com"})
         )
 
+        def_pitch_subj = "Quick observation for [Company]"
+        def_pitch_body = (
+            "Hi [Name],\n\n"
+            "I noticed [Company] and was really impressed by your recent growth.\n\n"
+            "We help companies like yours scale their outbound reach and generate consistent enterprise leads without landing in spam.\n\n"
+            "Do you have 10 minutes this Thursday or Friday for a brief call?\n\n"
+            "Best regards,"
+        )
+
+        def_fu1_subj = "Re: Quick observation for [Company]"
+        def_fu1_body = (
+            "Hi [Name],\n\n"
+            "Just following up on my previous note to see if you had a chance to review.\n\n"
+            "I know how busy things get—would you be open to a quick 5-minute chat next week to see if this could be relevant for [Company]?\n\n"
+            "Best,"
+        )
+
+        def_fu2_subj = "Final quick note for [Company]"
+        def_fu2_body = (
+            "Hi [Name],\n\n"
+            "I haven't heard back, so I assume scaling outreach isn't a priority for [Company] right now.\n\n"
+            "No worries at all! If your priorities change in the future, feel free to reach back out anytime.\n\n"
+            "Wishing you and [Company] continued success!"
+        )
+
         touch_configs = []
 
         if num_touches == 1:
             st.markdown("##### Touch 1: Initial Pitch")
-            c_t1_tpl, c_t1_subj = st.columns([1.2, 1.8])
-            with c_t1_tpl:
-                sel_tpl_1 = st.selectbox("Select Template *", options=tpl_keys, format_func=lambda tid: template_options[tid], key="camp_tpl_1")
-            with c_t1_subj:
-                subj_1 = st.text_input("Subject Line", value="Quick observation for [Company]", help="Supports [Name], [Company], and {A|B} Spintax.", key="camp_subj_1")
-
-            chosen_tpl_1 = get_template_by_id(sel_tpl_1)
-            if chosen_tpl_1:
-                preview_subj_1 = parse_spintax(inject_variables(subj_1.strip() or chosen_tpl_1["template_name"], sample_contact))
-                preview_body_1 = resolve_template(chosen_tpl_1["body_content"], sample_contact)
-                triggers_1 = scan_all_negative_keywords(f"{preview_subj_1} {preview_body_1}", neg_keywords_setting)
-                if triggers_1:
-                    trig_chips = ", ".join([f"`{t}`" for t in triggers_1])
-                    st.markdown(f"""
-                    <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:7px 12px; margin:4px 0 10px;">
-                        <span style="color:#DC2626; font-weight:700; font-size:0.83rem;">⚠️ Negative Keyword Shield Notice:</span>
-                        <span style="color:#475569; font-size:0.8rem;"> Template contains trigger(s) {trig_chips}. Drafts will be flagged in Review Queue.</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown("""
-                    <div style="background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.22); border-radius:8px; padding:6px 12px; margin:4px 0 10px;">
-                        <span style="color:#059669; font-weight:700; font-size:0.82rem;">✅ Deliverability Shield Clean:</span>
-                        <span style="color:#475569; font-size:0.8rem;"> No restricted spam triggers detected.</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            touch_configs.append({
-                "step": 1,
-                "label": "Touch 1 (Initial Pitch)",
-                "template_id": sel_tpl_1,
-                "subject": subj_1,
-                "delay_value": 0,
-                "delay_unit": "days"
-            })
+            cfg1 = render_touch_composer(
+                touch_step=1,
+                touch_label="Touch 1 (Initial Pitch)",
+                template_options=template_options,
+                sample_contact=sample_contact,
+                neg_keywords_setting=neg_keywords_setting,
+                default_subj=def_pitch_subj,
+                default_body=def_pitch_body,
+                include_delay=False
+            )
+            touch_configs.append(cfg1)
         else:
             tab_titles = ["Touch 1 (Initial Pitch)", "Touch 2 (Follow-Up 1)"]
             if num_touches == 3:
@@ -393,94 +577,50 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
             with touch_ui_tabs[0]:
                 st.caption("Initial outreach message to introduce your agency or service.")
-                c_t1_tpl, c_t1_subj = st.columns([1.2, 1.8])
-                with c_t1_tpl:
-                    sel_tpl_1 = st.selectbox("Select Template *", options=tpl_keys, format_func=lambda tid: template_options[tid], key="camp_tpl_1")
-                with c_t1_subj:
-                    subj_1 = st.text_input("Subject Line", value="Quick observation for [Company]", help="Supports [Name], [Company], and {A|B} Spintax.", key="camp_subj_1")
-
-                chosen_tpl_1 = get_template_by_id(sel_tpl_1)
-                if chosen_tpl_1:
-                    preview_subj_1 = parse_spintax(inject_variables(subj_1.strip() or chosen_tpl_1["template_name"], sample_contact))
-                    preview_body_1 = resolve_template(chosen_tpl_1["body_content"], sample_contact)
-                    triggers_1 = scan_all_negative_keywords(f"{preview_subj_1} {preview_body_1}", neg_keywords_setting)
-                    if triggers_1:
-                        trig_chips = ", ".join([f"`{t}`" for t in triggers_1])
-                        st.warning(f"Touch 1 contains negative keyword trigger(s): {trig_chips}")
-
-                touch_configs.append({
-                    "step": 1,
-                    "label": "Touch 1 (Initial Pitch)",
-                    "template_id": sel_tpl_1,
-                    "subject": subj_1,
-                    "delay_value": 0,
-                    "delay_unit": "days"
-                })
+                cfg1 = render_touch_composer(
+                    touch_step=1,
+                    touch_label="Touch 1 (Initial Pitch)",
+                    template_options=template_options,
+                    sample_contact=sample_contact,
+                    neg_keywords_setting=neg_keywords_setting,
+                    default_subj=def_pitch_subj,
+                    default_body=def_pitch_body,
+                    include_delay=False
+                )
+                touch_configs.append(cfg1)
 
             with touch_ui_tabs[1]:
                 st.caption("First follow-up email, automatically generated after the configured wait interval if the prospect does not reply to Touch 1.")
-                c_t2_val, c_t2_unit, c_t2_tpl, c_t2_subj = st.columns([0.7, 0.8, 1.1, 1.4])
-                with c_t2_val:
-                    t2_val = st.number_input("Wait Delay *", min_value=1, max_value=720, value=3, key="camp_t2_val", help="Wait interval after Touch 1 send before generating this follow-up.")
-                with c_t2_unit:
-                    t2_unit = st.selectbox("Delay Unit", options=["Days", "Hours"], index=0, key="camp_t2_unit")
-                with c_t2_tpl:
-                    idx_2 = 1 if len(tpl_keys) > 1 else 0
-                    sel_tpl_2 = st.selectbox("Select Template *", options=tpl_keys, index=idx_2, format_func=lambda tid: template_options[tid], key="camp_tpl_2")
-                with c_t2_subj:
-                    def_subj_2 = f"Re: {subj_1.strip()}" if subj_1.strip() else "Following up on [Company]"
-                    subj_2 = st.text_input("Subject Line", value=def_subj_2, key="camp_subj_2")
-
-                chosen_tpl_2 = get_template_by_id(sel_tpl_2)
-                if chosen_tpl_2:
-                    preview_subj_2 = parse_spintax(inject_variables(subj_2.strip() or chosen_tpl_2["template_name"], sample_contact))
-                    preview_body_2 = resolve_template(chosen_tpl_2["body_content"], sample_contact)
-                    triggers_2 = scan_all_negative_keywords(f"{preview_subj_2} {preview_body_2}", neg_keywords_setting)
-                    if triggers_2:
-                        trig_chips = ", ".join([f"`{t}`" for t in triggers_2])
-                        st.warning(f"Touch 2 contains negative keyword trigger(s): {trig_chips}")
-
-                touch_configs.append({
-                    "step": 2,
-                    "label": "Touch 2 (Follow-Up 1)",
-                    "template_id": sel_tpl_2,
-                    "subject": subj_2,
-                    "delay_value": int(t2_val),
-                    "delay_unit": t2_unit.lower()
-                })
+                cfg2 = render_touch_composer(
+                    touch_step=2,
+                    touch_label="Touch 2 (Follow-Up 1)",
+                    template_options=template_options,
+                    sample_contact=sample_contact,
+                    neg_keywords_setting=neg_keywords_setting,
+                    default_subj=def_fu1_subj,
+                    default_body=def_fu1_body,
+                    include_delay=True,
+                    default_delay_val=3,
+                    default_delay_unit="Days"
+                )
+                touch_configs.append(cfg2)
 
             if num_touches == 3:
                 with touch_ui_tabs[2]:
                     st.caption("Final follow-up or polite breakup email, automatically generated if no reply is received to Touch 2.")
-                    c_t3_val, c_t3_unit, c_t3_tpl, c_t3_subj = st.columns([0.7, 0.8, 1.1, 1.4])
-                    with c_t3_val:
-                        t3_val = st.number_input("Wait Delay *", min_value=1, max_value=720, value=4, key="camp_t3_val", help="Wait interval after Touch 2 send before generating this final follow-up.")
-                    with c_t3_unit:
-                        t3_unit = st.selectbox("Delay Unit", options=["Days", "Hours"], index=0, key="camp_t3_unit")
-                    with c_t3_tpl:
-                        idx_3 = 2 if len(tpl_keys) > 2 else (1 if len(tpl_keys) > 1 else 0)
-                        sel_tpl_3 = st.selectbox("Select Template *", options=tpl_keys, index=idx_3, format_func=lambda tid: template_options[tid], key="camp_tpl_3")
-                    with c_t3_subj:
-                        def_subj_3 = "Final quick note for [Company]"
-                        subj_3 = st.text_input("Subject Line", value=def_subj_3, key="camp_subj_3")
-
-                    chosen_tpl_3 = get_template_by_id(sel_tpl_3)
-                    if chosen_tpl_3:
-                        preview_subj_3 = parse_spintax(inject_variables(subj_3.strip() or chosen_tpl_3["template_name"], sample_contact))
-                        preview_body_3 = resolve_template(chosen_tpl_3["body_content"], sample_contact)
-                        triggers_3 = scan_all_negative_keywords(f"{preview_subj_3} {preview_body_3}", neg_keywords_setting)
-                        if triggers_3:
-                            trig_chips = ", ".join([f"`{t}`" for t in triggers_3])
-                            st.warning(f"Touch 3 contains negative keyword trigger(s): {trig_chips}")
-
-                    touch_configs.append({
-                        "step": 3,
-                        "label": "Touch 3 (Final Follow-Up)",
-                        "template_id": sel_tpl_3,
-                        "subject": subj_3,
-                        "delay_value": int(t3_val),
-                        "delay_unit": t3_unit.lower()
-                    })
+                    cfg3 = render_touch_composer(
+                        touch_step=3,
+                        touch_label="Touch 3 (Final Follow-Up)",
+                        template_options=template_options,
+                        sample_contact=sample_contact,
+                        neg_keywords_setting=neg_keywords_setting,
+                        default_subj=def_fu2_subj,
+                        default_body=def_fu2_body,
+                        include_delay=True,
+                        default_delay_val=4,
+                        default_delay_unit="Days"
+                    )
+                    touch_configs.append(cfg3)
 
         st.markdown("""
         <div style="background:rgba(8,55,49,0.04); border:1px solid rgba(8,55,49,0.12); border-radius:8px; padding:8px 12px; margin:8px 0 14px;">
@@ -788,6 +928,14 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 flagged_details = []
                 registered_rules = 0
 
+                # Save any custom email copy as reusable templates if requested by user
+                for cfg in touch_configs:
+                    if cfg.get("save_as_template") and cfg.get("custom_body") and cfg.get("new_template_name"):
+                        tpl_name = cfg["new_template_name"].strip()
+                        if tpl_name:
+                            created_tpl_id = create_template(tpl_name, cfg["custom_body"])
+                            cfg["template_id"] = created_tpl_id
+
                 # Compute distinct scheduled times for Touch 1 across all contacts
                 if selected_market_key != "LOCAL":
                     market_schedule_pairs = calculate_market_aware_schedule(
@@ -825,11 +973,16 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
                     t1_dt = scheduled_dts_touch1[idx]
                     t1_cfg = touch_configs[0]
-                    step1_tpl = get_template_by_id(t1_cfg["template_id"])
-                    raw_subj_1 = t1_cfg["subject"].strip() or (step1_tpl["template_name"] if step1_tpl else "Partnership Outreach")
+                    if t1_cfg.get("source_type") == "custom" or t1_cfg.get("custom_body"):
+                        raw_subj_1 = t1_cfg["subject"].strip() or "Quick observation for [Company]"
+                        raw_body_1 = t1_cfg["custom_body"]
+                    else:
+                        step1_tpl = get_template_by_id(t1_cfg["template_id"])
+                        raw_subj_1 = t1_cfg["subject"].strip() or (step1_tpl["template_name"] if step1_tpl else "Partnership Outreach")
+                        raw_body_1 = step1_tpl["body_content"] if step1_tpl else ""
 
                     # Resolve Spintax & Variables for Touch 1
-                    resolved_body_1 = resolve_template(step1_tpl["body_content"], contact) if step1_tpl else ""
+                    resolved_body_1 = resolve_template(raw_body_1, contact)
                     final_html_1 = format_email_html(resolved_body_1)
                     final_subj_1 = parse_spintax(inject_variables(raw_subj_1, contact))
 
@@ -884,8 +1037,9 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                             step_number=2,
                             delay_unit=t2_cfg["delay_unit"],
                             delay_value=t2_cfg["delay_value"],
-                            template_id=t2_cfg["template_id"],
+                            template_id=t2_cfg.get("template_id"),
                             custom_subject=t2_cfg["subject"],
+                            custom_body=t2_cfg.get("custom_body", ""),
                             trigger_email_id=t1_email_id,
                             target_timezone=m_tz,
                             target_country=m_country,
@@ -902,8 +1056,9 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                             step_number=3,
                             delay_unit=t3_cfg["delay_unit"],
                             delay_value=t3_cfg["delay_value"],
-                            template_id=t3_cfg["template_id"],
+                            template_id=t3_cfg.get("template_id"),
                             custom_subject=t3_cfg["subject"],
+                            custom_body=t3_cfg.get("custom_body", ""),
                             trigger_email_id=None,
                             target_timezone=m_tz,
                             target_country=m_country,

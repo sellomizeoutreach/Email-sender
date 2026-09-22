@@ -735,15 +735,24 @@ def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
             logger.info(f"[Sequence Engine] Cancelled Rule #{rid} for {c_email} (Contact status: {c_status}).")
             continue
 
-        tpl = get_template_by_id(rule["template_id"], db_path=target_db)
-        if not tpl:
-            logger.warning(f"[Sequence Engine] Rule #{rid}: Template ID #{rule['template_id']} not found.")
+        custom_body = (rule.get("custom_body") or "").strip()
+        if custom_body:
+            raw_body = custom_body
+        elif rule.get("template_id") and rule.get("template_id") > 0:
+            tpl = get_template_by_id(rule["template_id"], db_path=target_db)
+            if not tpl:
+                logger.warning(f"[Sequence Engine] Rule #{rid}: Template ID #{rule['template_id']} not found.")
+                mark_sequence_rule_status(rid, "Cancelled", db_path=target_db)
+                continue
+            raw_body = tpl["body_content"]
+        else:
+            logger.warning(f"[Sequence Engine] Rule #{rid}: Neither custom_body nor template_id configured.")
             mark_sequence_rule_status(rid, "Cancelled", db_path=target_db)
             continue
 
         raw_subj = rule.get("custom_subject") or f"Re: Follow up for {contact.get('company') or contact['name']}"
         resolved_subj = parse_spintax(inject_variables(raw_subj, contact))
-        resolved_body = resolve_template(tpl["body_content"], contact)
+        resolved_body = resolve_template(raw_body, contact)
         final_html = format_email_html(resolved_body)
 
         combined_text = f"{resolved_subj} {final_html}"
