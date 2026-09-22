@@ -24,6 +24,8 @@ from database import (
     clear_outbox_emails,
     get_approved_due_emails,
     update_email,
+    get_system_excluded_emails,
+    cleanup_internal_drafts,
     create_notification
 )
 from mx_checker import verify_email_domain_mx, get_cached_domain_mx
@@ -75,9 +77,14 @@ def render_review_tab():
             return
 
         neg_kw_setting = get_config("negative_keywords", "")
+        system_excluded_emails = get_system_excluded_emails()
 
         def is_clean_draft(email):
             if email.get("status") != "Pending":
+                return False
+            # Recipient matching BCC or sender accounts must never be considered clean prospect drafts
+            rec = (email.get("recipient") or "").strip().lower()
+            if rec in system_excluded_emails:
                 return False
             subj = email.get("subject") or ""
             body = email.get("email_html") or ""
@@ -97,6 +104,13 @@ def render_review_tab():
         flagged_count = len(flagged_drafts)
         approved_count = len(approved_drafts)
         sent_count = len(sent_drafts)
+
+        # Detect any pending or flagged drafts addressed to internal/BCC addresses
+        internal_pending_drafts = [
+            e for e in all_emails
+            if e.get("status") in ["Pending", "Flagged", "Action Required"]
+            and (e.get("recipient") or "").strip().lower() in system_excluded_emails
+        ]
 
         # --------------------------------------------------------------------------
         # 1-CLICK BULK APPROVALS BAR (Top of Review Queue)
@@ -126,6 +140,22 @@ def render_review_tab():
                 )
             else:
                 st.caption("✅ No pending clean drafts awaiting review.")
+
+        if internal_pending_drafts:
+            col_ib1, col_ib2 = st.columns([3, 1], vertical_alignment="center")
+            with col_ib1:
+                st.markdown(
+                    f"<div style='background:#FEF2F2; border:1px solid #FCA5A5; border-radius:8px; padding:8px 12px; margin:6px 0;'>"
+                    f"<span style='color:#991B1B; font-weight:700; font-size:0.84rem;'>🚨 {len(internal_pending_drafts)} Internal / BCC Draft(s) Detected in Queue</span> "
+                    f"<span style='color:#7F1D1D; font-size:0.78rem;'>(Addressed to {', '.join(set(d.get('recipient') for d in internal_pending_drafts))}). Outreach should not pitch internal/BCC accounts.</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            with col_ib2:
+                if st.button(f"🗑️ Discard Internal Drafts ({len(internal_pending_drafts)})", key="btn_purge_internal_drafts", use_container_width=True):
+                    purged_cnt = cleanup_internal_drafts()
+                    trigger_toast(f"Discarded {purged_cnt} internal/BCC draft(s)!", icon="🗑️")
+                    st.rerun()
 
         if approve_all_clean_btn and clean_count > 0:
             approved_num = 0
@@ -191,6 +221,7 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
         return
 
     neg_kw_setting = get_config("negative_keywords", "")
+    system_excluded_emails = get_system_excluded_emails()
     draft_id_map = {d["id"]: d for d in drafts_to_show}
     draft_ids = list(draft_id_map.keys())
 
@@ -313,8 +344,20 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
         else:
             seq_label = "One-Time Outreach"
 
-        # Prominent Alert Banner for Negative Keywords or Errors
-        if current_live_triggers:
+        # Check if recipient matches internal BCC or sender account
+        is_internal_recipient = (active_draft.get("recipient") or "").strip().lower() in system_excluded_emails
+
+        # Prominent Alert Banner for Internal/BCC, Negative Keywords or Errors
+        if is_internal_recipient:
+            st.markdown(f"""
+            <div style="background:#FEF2F2; border:1.5px solid #EF4444; border-radius:8px; padding:12px 16px; margin-bottom:12px;">
+                <div style="font-weight:700; color:#B91C1C; font-size:0.92rem;">🚨 Protected System Address: {active_draft.get('recipient')}</div>
+                <div style="font-size:0.8rem; color:#991B1B; margin-top:3px;">
+                    This draft is addressed to your configured <b>BCC monitor</b> or <b>sender mailbox</b>. System accounts receive blind copies of outbound emails to prospects, but should never receive cold outreach drafts themselves. Click <b>🗑️ Discard Draft</b> below to remove this draft.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        elif current_live_triggers:
             trig_badges = ", ".join([f'"{t}"' for t in current_live_triggers])
             st.markdown(f"""
             <div style="background:#FFFBEB; border:1.5px solid #F59E0B; border-radius:8px; padding:12px 16px; margin-bottom:12px;">
@@ -429,14 +472,16 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
                 "🚀 Approve & Schedule",
                 key=f"approve_{tab_key_prefix}_{draft_id}",
                 type="primary",
-                disabled=bool(current_live_triggers),
+                disabled=bool(current_live_triggers or is_internal_recipient),
                 use_container_width=True,
-                help="Remove restricted trigger keywords before approval." if current_live_triggers else "Schedule for automated dispatch."
+                help="Cannot dispatch outreach to internal BCC or sender account." if is_internal_recipient else ("Remove restricted trigger keywords before approval." if current_live_triggers else "Schedule for automated dispatch.")
             )
             if approve_btn:
                 rec_clean = updated_recipient.strip()
                 if not rec_clean:
                     st.error("Please enter a Target Recipient Email before approving.")
+                elif rec_clean.lower() in system_excluded_emails:
+                    st.error(f"🚫 Cannot approve: '{rec_clean}' is configured as an internal BCC or sender account. Outreach cannot be dispatched to internal addresses.")
                 else:
                     is_valid_app, app_reason, _ = verify_email_domain_mx(rec_clean)
                     if not is_valid_app:

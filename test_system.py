@@ -82,7 +82,9 @@ from database import (
     is_within_sending_window,
     get_next_valid_sending_datetime,
     bulk_delete_emails,
-    clear_outbox_emails
+    clear_outbox_emails,
+    get_system_excluded_emails,
+    cleanup_internal_drafts
 )
 from scheduler import process_due_sequence_rules
 from smtp_dispatcher import (
@@ -2342,6 +2344,34 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("Samantha", fu_email["email_html"])
         self.assertIn("Vance Innovations", fu_email["email_html"])
         self.assertEqual(fu_email["status"], "Pending")
+
+    def test_64_get_system_excluded_emails(self):
+        """Test that get_system_excluded_emails aggregates BCC, sender_email, and mailbox fleet accounts."""
+        set_config("bcc_email", "clicktoorderllc@gmail.com, ARCHIVE@mycompany.org", db_path=TEST_DB)
+        set_config("sender_email", "outreach-main@mycompany.org", db_path=TEST_DB)
+        add_smtp_account("Fleet Sender 1", "fleet1@mycompany.org", "pass", "smtp.host.com", 587, db_path=TEST_DB)
+
+        excluded = get_system_excluded_emails(db_path=TEST_DB)
+        self.assertIn("clicktoorderllc@gmail.com", excluded)
+        self.assertIn("archive@mycompany.org", excluded)
+        self.assertIn("outreach-main@mycompany.org", excluded)
+        self.assertIn("fleet1@mycompany.org", excluded)
+
+    def test_65_cleanup_internal_drafts(self):
+        """Test that cleanup_internal_drafts purges accidental drafts addressed to BCC or sender accounts."""
+        set_config("bcc_email", "clicktoorderllc@gmail.com", db_path=TEST_DB)
+
+        # 1. Create a draft to prospect and a draft accidentally created for BCC address
+        prospect_eid = create_email("<p>Pitch</p>", "Subject", "realprospect@brand.com", status="Pending", db_path=TEST_DB)
+        bcc_eid = create_email("<p>Pitch</p>", "Subject", "clicktoorderllc@gmail.com", status="Pending", db_path=TEST_DB)
+
+        # 2. Run cleanup_internal_drafts
+        deleted_cnt = cleanup_internal_drafts(db_path=TEST_DB)
+        self.assertEqual(deleted_cnt, 1)
+
+        # 3. Verify bcc_eid was deleted while prospect_eid remains intact
+        self.assertIsNone(get_email_by_id(bcc_eid, db_path=TEST_DB))
+        self.assertIsNotNone(get_email_by_id(prospect_eid, db_path=TEST_DB))
 
 if __name__ == "__main__":
     unittest.main()

@@ -524,14 +524,14 @@ def render_settings_tab():
                     "CRM Archival BCC Address (Optional)",
                     value=current_configs.get("bcc_email", ""),
                     placeholder="crm-inbox@yourdomain.com",
-                    help="Automatically adds a hidden BCC to every outgoing email for CRM tracking."
+                    help="Automatically adds a hidden BCC to every outgoing email for CRM tracking. Configured BCC addresses will NEVER receive standalone drafts and are automatically excluded from campaigns."
                 )
 
             if bcc_input.strip():
                 st.markdown(f"""
                 <div style="background:rgba(8,55,49,0.06); border:1px solid rgba(8,55,49,0.18); border-radius:6px; padding:6px 12px; margin:6px 0;">
                     <span style="font-weight:700; color:#083731; font-size:0.84rem;">📬 Active BCC Archive:</span>
-                    <span style="color:#083731; font-size:0.84rem;"> All outreach emails will silently copy <code>{bcc_input.strip()}</code>.</span>
+                    <span style="color:#083731; font-size:0.84rem;"> Outbound prospect emails will silently stealth-copy <code>{bcc_input.strip()}</code>. This address is automatically shielded and will <b>never</b> receive cold outreach drafts or campaigns.</span>
                 </div>
                 """, unsafe_allow_html=True)
             else:

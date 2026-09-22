@@ -21,6 +21,7 @@ from database import (
     bulk_update_contacts_details,
     bulk_delete_contacts,
     bulk_update_contact_grid,
+    get_system_excluded_emails,
     parse_variables_from_text,
     format_variables_as_lines
 )
@@ -198,6 +199,8 @@ def render_crm_tab(all_contacts=None):
     """Render Tab 1: Leads & Contacts CRM."""
     if all_contacts is None:
         all_contacts = get_contacts()
+
+    system_excluded_emails = get_system_excluded_emails()
 
     render_tab_header("👥 Leads & Contacts", "Contact command center: 15-column spreadsheet grid, custom variables dossier, CSV data center, and unified lead editing.")
 
@@ -1046,7 +1049,12 @@ def render_crm_tab(all_contacts=None):
                         st.caption(f"👤 Owner: {contact['owner']}")
 
                 with col_c2:
-                    st.markdown(f"📧 `{contact['email']}`")
+                    c_em = contact['email']
+                    is_int = (c_em or "").strip().lower() in system_excluded_emails
+                    if is_int:
+                        st.markdown(f"📧 `{c_em}` <span style='background:rgba(8,55,49,0.08); color:#083731; border:1px solid rgba(8,55,49,0.22); font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:8px;'>🛡️ Internal / BCC</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"📧 `{c_em}`")
                     st.markdown(f"🏢 {contact.get('company') or 'No Company'}")
                     p_status = contact.get("status") or "Not Contacted"
                     status_color = "#A78BFA" if p_status == "Replied" else ("#34D399" if p_status == "Contacted" else ("#60A5FA" if "Opened" in p_status else ("#F87171" if p_status == "Bounced" else "#94A3B8")))

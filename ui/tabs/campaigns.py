@@ -19,6 +19,7 @@ from database import (
     get_sequence_rules,
     create_template,
     get_smtp_accounts,
+    get_system_excluded_emails,
     create_notification,
     DB_FILE
 )
@@ -360,15 +361,26 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
     elif not templates_list:
         st.warning("You have no templates saved. Please create a template in the Template Builder tab first.")
     else:
-        # Base filter: Exclude Bounced, Closed Lost, and Do Not Contact unless specifically requested
+        # System exclusion: Filter out BCC addresses, sender addresses, and mailbox fleet accounts
+        system_excluded_emails = get_system_excluded_emails()
+
+        # Base filter: Exclude Bounced, Closed Lost, Do Not Contact, AND system internal/BCC emails
+        internal_excluded = [
+            c for c in contacts_list
+            if (c.get("email") or "").strip().lower() in system_excluded_emails
+        ]
         active_candidates = [
             c for c in contacts_list
-            if c.get("status") not in ["Bounced", "Do Not Contact", "Closed Lost"] and not c.get("is_bounced")
+            if c.get("status") not in ["Bounced", "Do Not Contact", "Closed Lost"]
+            and not c.get("is_bounced")
+            and (c.get("email") or "").strip().lower() not in system_excluded_emails
         ]
-        bounced_excluded_count = len(contacts_list) - len(active_candidates)
+        bounced_excluded_count = len(contacts_list) - len(active_candidates) - len(internal_excluded)
+        if bounced_excluded_count < 0:
+            bounced_excluded_count = 0
 
         if not active_candidates:
-            st.warning("All contacts are currently marked as Bounced, Closed Lost, or Do Not Contact. Add or reactivate leads in the Leads tab.")
+            st.warning("All contacts are currently marked as Bounced, Closed Lost, Do Not Contact, or Internal/BCC. Add or reactivate leads in the Leads tab.")
             return
 
         # ==============================================================================
@@ -377,6 +389,19 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         with st.container(border=True):
             st.markdown("### 📌 Step 1: Who & What (Audience & Message)")
             st.caption("Target your prospect audience and customize outreach sequence copy.")
+
+            if internal_excluded:
+                ex_samples = ", ".join(f"<code>{c.get('email')}</code>" for c in internal_excluded[:3])
+                if len(internal_excluded) > 3:
+                    ex_samples += f" (+{len(internal_excluded)-3} more)"
+                st.markdown(f"""
+                <div style="background:rgba(8,55,49,0.04); border:1px solid rgba(8,55,49,0.16); border-radius:8px; padding:7px 12px; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:1.05rem;">🛡️</span>
+                    <span style="font-size:0.81rem; color:#083731;">
+                        <b>Internal &amp; BCC Protection Shield Active:</b> {len(internal_excluded)} address(es) ({ex_samples}) automatically excluded from campaign audience to prevent sending cold outreach to your own team or BCC monitor.
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
 
             contact_id_map = {c["id"]: c for c in active_candidates}
             contact_id_keys = list(contact_id_map.keys())
@@ -1051,6 +1076,10 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     for idx, cid in enumerate(selected_contact_ids):
                         contact = get_contact_by_id(cid)
                         if not contact:
+                            continue
+
+                        contact_email_clean = (contact.get("email") or "").strip().lower()
+                        if contact_email_clean in system_excluded_emails:
                             continue
 
                         t1_dt = scheduled_dts_touch1[idx]

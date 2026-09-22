@@ -8,7 +8,7 @@ import sqlite3
 import os
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any, Union, Tuple, Set
 import re
 import logging
 
@@ -1526,6 +1526,66 @@ def clear_outbox_emails(status: Optional[str] = None, exclude_pending: bool = Tr
     conn.commit()
     conn.close()
     return max(0, deleted_count)
+
+def get_system_excluded_emails(db_path: str = DB_FILE) -> Set[str]:
+    """
+    Returns a unified set of lowercased email addresses that belong to internal systems:
+    - All configured BCC monitoring/archival addresses (comma-separated or single)
+    - The configured system sender_email
+    - All Mailbox Fleet sending accounts (active or inactive)
+    These addresses should NEVER receive cold outreach drafts or be targeted in campaigns.
+    """
+    excluded: Set[str] = set()
+    try:
+        bcc_raw = get_config("bcc_email", default="", db_path=db_path) or ""
+        for item in bcc_raw.split(","):
+            cleaned = item.strip().lower()
+            if cleaned and "@" in cleaned:
+                excluded.add(cleaned)
+    except Exception as e:
+        logger.warning(f"Error reading bcc_email in get_system_excluded_emails: {e}")
+
+    try:
+        sender = get_config("sender_email", default="", db_path=db_path) or ""
+        cleaned_sender = sender.strip().lower()
+        if cleaned_sender and "@" in cleaned_sender:
+            excluded.add(cleaned_sender)
+    except Exception as e:
+        logger.warning(f"Error reading sender_email in get_system_excluded_emails: {e}")
+
+    try:
+        accounts = get_smtp_accounts(active_only=False, db_path=db_path)
+        for acc in accounts:
+            m_email = (acc.get("email") or "").strip().lower()
+            if m_email and "@" in m_email:
+                excluded.add(m_email)
+    except Exception as e:
+        logger.warning(f"Error reading smtp accounts in get_system_excluded_emails: {e}")
+
+    return excluded
+
+def cleanup_internal_drafts(db_path: str = DB_FILE) -> int:
+    """
+    Discards/deletes pending or flagged drafts whose recipient matches any system excluded
+    address (configured BCC addresses or sender mailboxes) to clean up accidental queue pollution.
+    Returns the count of deleted drafts.
+    """
+    excluded = get_system_excluded_emails(db_path=db_path)
+    if not excluded:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, recipient FROM emails WHERE status IN ('Pending', 'Flagged', 'Action Required')")
+    rows = cursor.fetchall()
+    to_delete = []
+    for r in rows:
+        rec = (r["recipient"] or "").strip().lower()
+        if rec in excluded:
+            to_delete.append(r["id"])
+    conn.close()
+    if to_delete:
+        return bulk_delete_emails(to_delete, db_path=db_path)
+    return 0
 
 def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
     """
