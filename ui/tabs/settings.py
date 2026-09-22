@@ -33,7 +33,7 @@ from timezone_helper import (
     get_time_difference_summary,
     is_within_market_hours
 )
-from ui.components import render_tab_header, render_html_preview
+from ui.components import render_tab_header, render_html_preview, trigger_toast
 from ui.tabs.signature import DEFAULT_SIGNATURE_TEMPLATE
 
 
@@ -205,7 +205,7 @@ def render_settings_tab():
             set_config("sending_days", ", ".join(clean_days))
             set_config("sending_start_time", sel_start.strip())
             set_config("sending_end_time", sel_end.strip())
-            st.success("Sending schedule successfully updated and synchronized to background dispatcher.")
+            trigger_toast("Sending schedule successfully updated!", icon="🕒")
             st.rerun()
 
 
@@ -218,74 +218,62 @@ def render_settings_tab():
 
         curr_engine = current_configs.get("dispatch_method", "hostinger_smtp")
         engine_pick = st.radio(
-            "Primary Outbound Dispatch Engine",
+            "Outbound Delivery Engine",
             [
-                "Hostinger Direct SMTP (Autonomous Cloud & Background Dispatch)",
-                "Desktop Microsoft Outlook (Local MAPI Application)"
+                "Hostinger SMTP (Recommended & Active) — Dedicated Direct IP Relay",
+                "Local Outlook Desktop Engine — Native Desktop Automation via MAPI"
             ],
-            index=0 if curr_engine == "hostinger_smtp" else 1,
-            key="set_engine_pick",
-            help="Hostinger Direct SMTP sends autonomously in background via your configured mailbox pool. Outlook uses the local Windows Outlook client."
+            index=0 if "hostinger" in curr_engine.lower() else 1,
+            key="set_engine_radio"
         )
 
-        st.markdown("##### Human Pacing Intervals (Anti-Spam Delay)")
-        st.caption("Introduce randomized delays between consecutive prospect dispatches to mimic genuine human sending behavior and protect sender reputation.")
-
-        col_del1, col_del2, col_del3 = st.columns(3)
+        col_del1, col_del2, col_cad = st.columns(3)
         with col_del1:
             min_del = st.number_input(
-                "Minimum Delay (seconds)",
+                "Min Delay Between Sends (sec)",
                 min_value=5,
-                max_value=300,
-                value=int(current_configs.get("min_delay_seconds", "20")),
-                key="set_min_del",
-                help="Minimum gap between consecutive dispatches from the same or pooled mailboxes."
+                max_value=600,
+                value=int(current_configs.get("min_delay_seconds", 30)),
+                key="set_min_del"
             )
         with col_del2:
             max_del = st.number_input(
-                "Maximum Delay (seconds)",
+                "Max Delay Between Sends (sec)",
                 min_value=10,
-                max_value=600,
-                value=int(current_configs.get("max_delay_seconds", "45")),
-                key="set_max_del",
-                help="Maximum gap between consecutive dispatches."
+                max_value=900,
+                value=int(current_configs.get("max_delay_seconds", 90)),
+                key="set_max_del"
             )
-        with col_del3:
+        with col_cad:
             default_cadence_days = st.number_input(
-                "Default Follow-Up Delay (days)",
+                "Default Follow-Up Delay (Days)",
                 min_value=1,
-                max_value=30,
-                value=int(current_configs.get("followup_delay_days", "4")),
-                key="set_def_cadence_days",
-                help="Default cadence interval between sequence steps if not individually configured in campaigns."
+                max_value=60,
+                value=int(current_configs.get("followup_delay_days", 3)),
+                key="set_cad_days"
             )
 
-        st.markdown("##### Pre-Flight Deliverability Sanity Checks")
-        col_mx, col_blank = st.columns([1.5, 1.5])
+        col_mx, col_bcc = st.columns(2)
         with col_mx:
             enforce_mx = st.checkbox(
-                "Verify Domain MX Records before Sending",
-                value=(current_configs.get("enforce_mx_check", "true").lower() in ["true", "1", "yes"]),
+                "Enforce DNS MX Pre-Flight Check",
+                value=(current_configs.get("enforce_mx_check", "true").lower() == "true"),
                 key="set_enforce_mx",
-                help="Checks that prospect's email domain has active Mail Exchange (MX) records. Prevents hard bounces before attempting dispatch."
+                help="Automatically queries domain DNS MX records before queuing. Prevents sending to dead domains."
+            )
+        with col_bcc:
+            bcc_input = st.text_input(
+                "CRM Archival BCC Address (Optional)",
+                value=current_configs.get("bcc_email", ""),
+                placeholder="crm-inbox@yourdomain.com",
+                help="Automatically adds a hidden BCC to every outgoing email for CRM tracking."
             )
 
-        st.markdown("##### 📬 Outbound Compliance & CRM BCC Logging")
-        st.caption("Every outgoing email dispatched via Hostinger SMTP or Desktop Outlook will automatically send a hidden BCC copy to this address. Ideal for CRM audit logging (HubSpot, Salesforce, Pipedrive) or internal record keeping. Supports multiple comma-separated addresses.")
-
-        bcc_val = current_configs.get("bcc_email", "")
-        bcc_input = st.text_input(
-            "Global BCC Email Address(es)",
-            value=bcc_val,
-            placeholder="e.g. archive@sellomize.com, crm-logging@sellomize.com",
-            key="set_bcc_email",
-            help="Comma-separated addresses that will receive a hidden BCC copy of every outgoing dispatch."
-        )
         if bcc_input.strip():
             st.markdown(f"""
-            <div style="background:rgba(8,55,49,0.06); border:1px solid rgba(8,55,49,0.18); border-radius:6px; padding:6px 12px; margin:4px 0 10px;">
-                <span style="font-size:0.82rem; color:#083731; font-weight:700;">Active Outbound BCC:</span>
-                <span style="font-size:0.82rem; color:#0F172A; font-family:monospace;"> {bcc_input.strip()}</span>
+            <div style="background:rgba(8,55,49,0.06); border:1px solid rgba(8,55,49,0.18); border-radius:6px; padding:6px 12px; margin:6px 0;">
+                <span style="font-weight:700; color:#083731; font-size:0.84rem;">📬 Active BCC Archive:</span>
+                <span style="color:#083731; font-size:0.84rem;"> All outreach emails will silently copy <code>{bcc_input.strip()}</code>.</span>
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -299,7 +287,7 @@ def render_settings_tab():
             set_config("followup_delay_days", str(default_cadence_days))
             set_config("enforce_mx_check", "true" if enforce_mx else "false")
             set_config("bcc_email", bcc_input.strip())
-            st.success("Anti-spam, BCC, and outbound engine settings updated successfully.")
+            trigger_toast("Anti-spam & engine settings updated successfully.", icon="🛡️")
             st.rerun()
 
     # ==========================================================================
@@ -333,7 +321,7 @@ def render_settings_tab():
             if st.button("💾 Save Keyword Shield Rules", type="primary", use_container_width=True, key="btn_save_kw_shield"):
                 set_config("negative_keywords", set_neg_words.strip())
                 set_config("spam_blocklist", set_spam_words.strip())
-                st.success("Negative keyword shield rules saved successfully.")
+                trigger_toast("Negative keyword shield rules saved successfully.", icon="🛡️")
                 st.rerun()
         with col_reset_kw:
             if st.button("🔄 Reset to Recommended Defaults", use_container_width=True, key="btn_reset_kw_shield"):
@@ -341,7 +329,7 @@ def render_settings_tab():
                 default_spam = "guarantee, 100% free, act now, no catch, risk-free, winner, congratulations, make money fast"
                 set_config("negative_keywords", default_neg)
                 set_config("spam_blocklist", default_spam)
-                st.info("Reset shield rules to recommended defaults.")
+                trigger_toast("Reset shield rules to recommended defaults.", icon="🔄")
                 st.rerun()
 
     # ==========================================================================
@@ -419,7 +407,7 @@ def render_settings_tab():
                                 warmup_daily_increment=int(new_warmup_inc),
                                 warmup_target_limit=int(new_acc_limit)
                             )
-                            st.success(f"Mailbox '{new_acc_email}' connected successfully!")
+                            trigger_toast(f"Mailbox '{new_acc_email}' connected successfully!", icon="📬")
                             st.rerun()
                         else:
                             st.error(f"Connection verification failed: {test_msg}")
@@ -457,7 +445,7 @@ def render_settings_tab():
                     if st.button("🔌 Test SMTP", key=f"set_test_{acc_id}", use_container_width=True):
                         ok, msg = test_smtp_connection(acc["smtp_host"], acc["smtp_port"], acc["email"], acc["password"])
                         if ok:
-                            st.success("Verified!")
+                            trigger_toast("Mailbox connection verified!", icon="✅")
                         else:
                             st.error(f"Failed: {msg}")
                 with c_act2:
@@ -474,6 +462,7 @@ def render_settings_tab():
                         if st.button("Confirm Delete", key=f"set_conf_del_{acc_id}", use_container_width=True):
                             delete_smtp_account(acc_id)
                             st.session_state[f"confirm_del_{acc_id}"] = False
+                            trigger_toast("Mailbox deleted.", icon="🗑️")
                             st.rerun()
                     else:
                         if st.button("🗑️ Delete", key=f"set_del_{acc_id}", use_container_width=True):
@@ -500,7 +489,7 @@ def render_settings_tab():
                                 warmup_daily_increment=int(e_w_inc),
                                 warmup_target_limit=int(e_w_target)
                             )
-                            st.success("Mailbox updated successfully!")
+                            trigger_toast("Mailbox updated successfully!", icon="📬")
                             st.rerun()
 
     # ==========================================================================
@@ -524,14 +513,14 @@ def render_settings_tab():
                 if st.button("Load Sellomize Template", key="set_load_sig_btn", use_container_width=True):
                     st.session_state[sig_key] = DEFAULT_SIGNATURE_TEMPLATE
                     set_config("signature_html", DEFAULT_SIGNATURE_TEMPLATE)
-                    st.success("Loaded default Sellomize signature template.")
+                    trigger_toast("Loaded default signature template.", icon="📄")
                     st.rerun()
             with c_act2:
                 confirm_clr = st.checkbox("Confirm clear", key="set_conf_clear_sig")
                 if st.button("Clear Signature", key="set_clear_sig_btn", use_container_width=True, disabled=not confirm_clr):
                     st.session_state[sig_key] = ""
                     set_config("signature_html", "")
-                    st.info("Signature cleared.")
+                    trigger_toast("Signature cleared.", icon="🧹")
                     st.rerun()
 
             sig_code = st.text_area(
@@ -544,7 +533,7 @@ def render_settings_tab():
 
             if st.button("💾 Save Signature", type="primary", use_container_width=True, key="set_save_sig_btn"):
                 set_config("signature_html", sig_code.strip())
-                st.success("Corporate HTML signature saved successfully.")
+                trigger_toast("Corporate HTML signature saved successfully.", icon="✍️")
                 st.rerun()
 
         with col_sig_prv:
@@ -584,7 +573,7 @@ def render_settings_tab():
         with col_t1:
             if st.button("🧹 Prune Duplicate Notifications", use_container_width=True, key="btn_prune_dups"):
                 pruned = cleanup_duplicate_notifications()
-                st.success(f"Deduplication complete: Cleaned {pruned} redundant notification(s).")
+                trigger_toast(f"Cleaned {pruned} redundant notification(s).", icon="🧹")
                 st.rerun()
         with col_t2:
             if st.button("📬 Instant Inbox Scan", use_container_width=True, key="btn_sync_imap_now"):
@@ -592,7 +581,7 @@ def render_settings_tab():
                     try:
                         replies_found = scan_all_hostinger_inbox()
                         bounces_found = scan_all_hostinger_bounces()
-                        st.success(f"Scan complete: Processed {replies_found} new prospect reply(ies) and {bounces_found} bounce(s).")
+                        trigger_toast(f"Scan complete: {replies_found} new reply(ies), {bounces_found} bounce(s).", icon="📬")
                     except Exception as e:
                         st.error(f"IMAP scan failed: {e}")
                 st.rerun()
@@ -602,7 +591,7 @@ def render_settings_tab():
                 if st.button("Confirm Purge Sent", type="primary", use_container_width=True, key="btn_conf_purge_outbox_set"):
                     purged = clear_fn(status="Sent")
                     st.session_state["confirm_settings_purge_outbox"] = False
-                    st.success(f"Purged {purged} historical sent email(s).")
+                    trigger_toast(f"Purged {purged} historical sent email(s).", icon="🗑️")
                     st.rerun()
             else:
                 if st.button("🗑️ Purge Sent Outbox", use_container_width=True, key="btn_purge_outbox_set", help="Clear historical sent emails so they do not pile up in the database."):

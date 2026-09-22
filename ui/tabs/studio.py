@@ -15,7 +15,7 @@ from database import (
     get_config
 )
 from template_engine import audit_email_deliverability, resolve_template, scan_negative_keywords, scan_all_negative_keywords
-from ui.components import render_html_preview, render_tab_header
+from ui.components import render_html_preview, render_tab_header, trigger_toast
 
 
 def render_studio_tab(templates=None, contacts_list=None):
@@ -158,7 +158,7 @@ def render_studio_tab(templates=None, contacts_list=None):
                         template_name=new_tpl_name.strip(),
                         body_content=new_body_to_audit
                     )
-                    st.success(f"Template '{new_tpl_name}' saved successfully!")
+                    trigger_toast(f"Template '{new_tpl_name}' saved successfully!", icon="💾")
                     st.rerun()
 
         with col_new_prev:
@@ -229,7 +229,7 @@ def render_studio_tab(templates=None, contacts_list=None):
                             if st.button("Yes", key=f"del_yes_{tpl_id}", use_container_width=True):
                                 delete_template(tpl_id)
                                 st.session_state[f"confirm_del_tpl_{tpl_id}"] = False
-                                st.warning(f"Template #{tpl_id} deleted.")
+                                trigger_toast(f"Template #{tpl_id} deleted.", icon="🗑️")
                                 st.rerun()
                         with col_cd2:
                             if st.button("No", key=f"del_no_{tpl_id}", use_container_width=True):
@@ -310,7 +310,7 @@ def render_studio_tab(templates=None, contacts_list=None):
                                 else:
                                     update_template(tpl_id, edit_t_name.strip(), edit_body_to_audit)
                                     st.session_state["editing_tpl_id"] = None
-                                    st.success(f"Template '{edit_t_name}' successfully updated!")
+                                    trigger_toast(f"Template '{edit_t_name}' successfully updated!", icon="💾")
                                     st.rerun()
                         with col_canc_e:
                             if st.button("Cancel", use_container_width=True, key=f"canc_edit_tpl_btn_{tpl_id}"):

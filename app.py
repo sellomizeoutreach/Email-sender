@@ -27,7 +27,7 @@ from database import (
 )
 from tracker import start_tracking_server
 from ui.theme import apply_theme
-from ui.components import render_header
+from ui.components import render_header, render_notification_bell, trigger_toast
 from ui.tabs.crm import render_crm_tab
 from ui.tabs.studio import render_studio_tab
 from ui.tabs.campaigns import render_campaigns_tab
@@ -69,8 +69,17 @@ st.set_page_config(
 # Custom Styling (Sellomize Reach Modern SaaS Theme)
 apply_theme()
 
-# Branded Sellomize Reach Top Header Bar
-render_header()
+# Global Non-Blocking Toast Listener (Smooth Bottom-Right Animations)
+if "pending_toast" in st.session_state and st.session_state["pending_toast"]:
+    toast_info = st.session_state.pop("pending_toast")
+    st.toast(toast_info["msg"], icon=toast_info.get("icon", "✅"))
+
+# Branded Sellomize Reach Top Header Bar with Top Right Notification Bell Popover
+col_hdr_main, col_hdr_bell = st.columns([4.2, 1.0], vertical_alignment="center")
+with col_hdr_main:
+    render_header()
+with col_hdr_bell:
+    render_notification_bell()
 
 # Real-time Reply Notification Toaster
 if "seen_notification_ids" not in st.session_state:

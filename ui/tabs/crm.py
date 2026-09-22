@@ -30,7 +30,7 @@ from contacts_handler import (
     import_contacts_from_csv
 )
 from mx_checker import batch_verify_contacts_mx
-from ui.components import render_tab_header
+from ui.components import render_tab_header, trigger_toast
 
 
 @st.dialog("✏️ Edit & Manage Lead")
@@ -170,7 +170,7 @@ def render_edit_contact_dialog(contact: dict):
                     notes=e_notes.strip() if e_notes else None
                 )
                 st.session_state["crm_editing_id"] = None
-                st.success("Lead updated successfully!")
+                trigger_toast("Lead updated successfully!", icon="👤")
                 st.rerun()
 
     with col_act_del:
@@ -180,6 +180,7 @@ def render_edit_contact_dialog(contact: dict):
                 st.session_state["crm_selected_ids"].discard(c_id)
                 st.session_state["crm_editing_id"] = None
                 st.session_state[f"dlg_confirm_del_{c_id}"] = False
+                trigger_toast("Lead deleted successfully.", icon="🗑️")
                 st.rerun()
         else:
             if st.button("🗑️ Delete Lead", key=f"dlg_btn_del_{c_id}", use_container_width=True):
@@ -312,7 +313,7 @@ def render_crm_tab(all_contacts=None):
                             notes=c_notes.strip() if c_notes else None
                         )
                         action_msg = "added" if is_new else "updated (merged tags & details)"
-                        st.success(f"✅ Contact '{c_name}' successfully {action_msg} (ID #{cid})!")
+                        trigger_toast(f"Contact '{c_name}' successfully {action_msg} (ID #{cid})!", icon="✅")
                         st.rerun()
 
     with top_col2:
@@ -334,12 +335,10 @@ def render_crm_tab(all_contacts=None):
                             if import_stats["errors"]:
                                 for err in import_stats["errors"][:5]:
                                     st.error(err)
-                            st.success(
-                                f"🎉 Successfully imported {import_stats['total']} contact(s): "
-                                f"{import_stats['inserted']} new, {import_stats['updated']} updated!"
+                            trigger_toast(
+                                f"Imported {import_stats['total']} contacts: {import_stats['inserted']} new, {import_stats['updated']} updated!",
+                                icon="🎉"
                             )
-                            if import_stats.get("invalid_mx", 0) > 0:
-                                st.warning(f"⚠️ {import_stats['invalid_mx']} lead(s) failed MX check and were tagged 'Invalid MX'.")
                             st.rerun()
 
             with tab_exp:
@@ -473,7 +472,7 @@ def render_crm_tab(all_contacts=None):
                 if st.button("Apply Tags", type="primary", use_container_width=True, key="btn_apply_pop_tags"):
                     if tags_to_add:
                         bulk_add_tags_to_contacts(list(selected_ids), tags_to_add)
-                        st.success(f"Added {tags_to_add} to {s_count} lead(s)!")
+                        trigger_toast(f"Added {tags_to_add} to {s_count} lead(s)!", icon="🏷️")
                         st.rerun()
                     else:
                         st.warning("Please choose or enter a tag.")
@@ -488,7 +487,7 @@ def render_crm_tab(all_contacts=None):
                 if st.button("Update Stage", type="primary", use_container_width=True, key="btn_apply_pop_stage"):
                     for sid in selected_ids:
                         update_contact(contact_id=sid, status=new_stage)
-                    st.success(f"Updated {s_count} leads to '{new_stage}'!")
+                    trigger_toast(f"Updated {s_count} leads to '{new_stage}'!", icon="⚡")
                     st.rerun()
         with col_b3:
             if st.button("🌐 Verify MX", use_container_width=True, key="btn_bulk_mx_act", help="Verify DNS MX records for selected leads"):
@@ -496,9 +495,9 @@ def render_crm_tab(all_contacts=None):
                     selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
                     mx_res = batch_verify_contacts_mx(selected_contacts_list, update_db=True)
                     if mx_res["invalid_count"] > 0:
-                        st.warning(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification.")
+                        trigger_toast(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification.", icon="⚠️")
                     else:
-                        st.success(f"🎉 All {mx_res['valid_count']} selected leads have active MX records!")
+                        trigger_toast(f"🎉 All {mx_res['valid_count']} leads have active MX records!", icon="🌐")
                     st.rerun()
         with col_b4:
             selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
@@ -517,7 +516,7 @@ def render_crm_tab(all_contacts=None):
                 if st.button("Confirm Delete", type="primary", use_container_width=True, key="btn_conf_pop_del"):
                     del_num = bulk_delete_contacts(list(selected_ids))
                     st.session_state["crm_selected_ids"] = set()
-                    st.success(f"Deleted {del_num} contact(s).")
+                    trigger_toast(f"Deleted {del_num} contact(s).", icon="🗑️")
                     st.rerun()
 
     # ==============================================================================
@@ -599,7 +598,7 @@ def render_crm_tab(all_contacts=None):
                         delete_contact(chosen_indiv)
                         st.session_state["crm_selected_ids"].discard(chosen_indiv)
                         st.session_state[f"confirm_grid_del_{chosen_indiv}"] = False
-                        st.success(f"Deleted contact #{chosen_indiv}.")
+                        trigger_toast(f"Deleted contact #{chosen_indiv}.", icon="🗑️")
                         st.rerun()
                 else:
                     if st.button("🗑️ Delete", use_container_width=True, key=f"btn_del_indiv_grid_{chosen_indiv}", help="Delete this individual lead"):
@@ -637,7 +636,7 @@ def render_crm_tab(all_contacts=None):
                         bulk_delete_contacts(list(selected_ids))
                         st.session_state["crm_selected_ids"] = set()
                         st.session_state["confirm_multi_del_grid"] = False
-                        st.success(f"Deleted {s_count} contact(s).")
+                        trigger_toast(f"Deleted {s_count} contact(s).", icon="🗑️")
                         st.rerun()
                 else:
                     if st.button(f"🗑️ Delete {s_count} Selected", use_container_width=True, key="btn_multi_del_grid"):
@@ -802,7 +801,7 @@ def render_crm_tab(all_contacts=None):
                     if "Email Address" in r and isinstance(r["Email Address"], str):
                         r["Email Address"] = r["Email Address"].replace("mailto:", "").strip()
                 saved_count = bulk_update_contact_grid(records_to_save)
-                st.success(f"✅ Successfully saved changes to {saved_count} contact(s)!")
+                trigger_toast(f"Saved changes to {saved_count} contact(s)!", icon="💾")
                 st.rerun()
         with col_reset_grid:
             if has_unsaved_edits:
@@ -820,7 +819,7 @@ def render_crm_tab(all_contacts=None):
                 if st.button(f"🗑️ Delete {s_count} Selected Leads", use_container_width=True, key="btn_bot_del_sel_grid"):
                     bulk_delete_contacts(list(selected_ids))
                     st.session_state["crm_selected_ids"] = set()
-                    st.success(f"Deleted {s_count} contact(s).")
+                    trigger_toast(f"Deleted {s_count} contact(s).", icon="🗑️")
                     st.rerun()
 
     else:
@@ -935,7 +934,7 @@ def render_crm_tab(all_contacts=None):
                                 delete_contact(c_id)
                                 st.session_state["crm_selected_ids"].discard(c_id)
                                 st.session_state[f"confirm_del_c_{c_id}"] = False
-                                st.warning(f"Contact #{c_id} deleted.")
+                                trigger_toast(f"Contact #{c_id} deleted.", icon="🗑️")
                                 st.rerun()
                         else:
                             if st.button("🗑️", key=f"del_contact_{c_id}", use_container_width=True, help="Delete this contact"):

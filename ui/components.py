@@ -7,8 +7,108 @@ import base64
 import html
 import os
 import streamlit as st
-from database import get_unread_notifications_count
+from database import (
+    get_unread_notifications_count,
+    get_notifications,
+    mark_all_notifications_as_read,
+    get_bounced_contacts,
+    get_replied_contacts,
+    get_emails
+)
 from template_engine import sanitize_email_html
+
+
+def trigger_toast(msg: str, icon: str = "✅"):
+    """
+    Queue or display an animated non-blocking toast notification.
+    Slides in smoothly at bottom-right on next rerun or current run.
+    """
+    st.session_state["pending_toast"] = {"msg": msg, "icon": icon}
+
+
+def render_notification_bell():
+    """
+    Renders the global notification bell popover in the top right header.
+    Icon & Badge: 🔔 Notifications (X) where X is the count of unread alerts.
+    Feed: Scrollable list of recent system events with [Clear All] button.
+    """
+    unread_count = get_unread_notifications_count()
+    bounced_leads = get_bounced_contacts()
+    flagged_emails = [e for e in get_emails() if e.get("status") in ["Flagged", "Account Mismatch", "Error"]]
+    replied_leads = get_replied_contacts()
+
+    # Dynamic alert tally
+    alert_count = unread_count
+    if not st.session_state.get("notifications_cleared"):
+        alert_count += (1 if bounced_leads else 0) + (1 if flagged_emails else 0)
+
+    bell_label = f"🔔 Notifications ({alert_count})" if alert_count > 0 else "🔔 Notifications"
+
+    with st.popover(bell_label, use_container_width=True):
+        c_head, c_clear = st.columns([1.8, 1.2], vertical_alignment="center")
+        with c_head:
+            st.markdown("<strong style='font-size:0.95rem; color:#083731;'>System Alerts</strong>", unsafe_allow_html=True)
+        with c_clear:
+            if st.button("Clear All", key="btn_clear_pop_notifs", use_container_width=True):
+                mark_all_notifications_as_read()
+                st.session_state["notifications_cleared"] = True
+                trigger_toast("All notifications cleared.", icon="🧹")
+                st.rerun()
+
+        st.markdown("<div style='height: 1px; background:#E2E8F0; margin: 6px 0 10px;'></div>", unsafe_allow_html=True)
+
+        with st.container(height=300):
+            events = []
+
+            # Dynamic system events if not cleared
+            if not st.session_state.get("notifications_cleared"):
+                if bounced_leads:
+                    events.append({
+                        "icon": "🔴",
+                        "title": f"{len(bounced_leads)} Hard Bounce(s) Detected",
+                        "desc": "Quarantined in Deliverability tab to protect sender reputation.",
+                        "time": "Active"
+                    })
+                if flagged_emails:
+                    events.append({
+                        "icon": "⚠️",
+                        "title": f"{len(flagged_emails)} Draft(s) Flagged by Spam Shield",
+                        "desc": "Action required in Review Queue before scheduled dispatch.",
+                        "time": "Active"
+                    })
+                if replied_leads:
+                    events.append({
+                        "icon": "💬",
+                        "title": f"{len(replied_leads)} Prospect Reply/Replies Received",
+                        "desc": "Automated sequence follow-ups safely paused.",
+                        "time": "Recent"
+                    })
+
+            # Database notification feed
+            db_notifs = get_notifications(limit=20)
+            for n in db_notifs:
+                n_type = n.get("type", "system")
+                icon = "💬" if n_type == "reply" else ("✅" if n_type == "campaign" else ("🔴" if n_type == "bounce" else "🔔"))
+                events.append({
+                    "icon": icon,
+                    "title": n.get("title", "System Notification"),
+                    "desc": n.get("message", ""),
+                    "time": (n.get("created_at") or "")[:16]
+                })
+
+            if not events:
+                st.caption("No new notifications. Everything is up to date!")
+            else:
+                for ev in events:
+                    st.markdown(f"""
+                    <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:8px 12px; margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-weight:700; font-size:0.84rem; color:#0F172A;">{ev['icon']} {ev['title']}</span>
+                            <span style="font-size:0.72rem; color:#94A3B8;">{ev['time']}</span>
+                        </div>
+                        <div style="font-size:0.78rem; color:#475569; margin-top:2px; line-height:1.35;">{ev['desc']}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 
 def get_logo_base64() -> str:

@@ -27,7 +27,7 @@ from database import (
 from mx_checker import verify_email_domain_mx, get_cached_domain_mx
 from template_engine import audit_email_deliverability, scan_all_negative_keywords
 from timezone_helper import get_zoneinfo
-from ui.components import render_html_preview
+from ui.components import render_html_preview, trigger_toast
 
 
 def render_review_tab():
@@ -188,7 +188,7 @@ def render_review_tab():
                                             subject=subj
                                         )
                                         approved_count += 1
-                            st.success(f"Approved {approved_count} draft(s) for scheduled dispatch!")
+                            trigger_toast(f"Approved {approved_count} draft(s) for scheduled dispatch!", icon="⚡")
                             st.rerun()
 
                 if selected_draft_ids:
@@ -375,7 +375,7 @@ def render_review_tab():
                                     email_html=updated_body,
                                     subject=updated_subject.strip()
                                 )
-                                st.success(f"Draft #{draft_id} marked as 'Approved' for dispatch at {scheduled_datetime_str}!")
+                                trigger_toast(f"Draft #{draft_id} approved for dispatch!", icon="🚀")
                                 st.rerun()
 
                 with col_act2:
@@ -395,7 +395,7 @@ def render_review_tab():
                             email_html=updated_body,
                             scheduled_time=scheduled_datetime_str
                         )
-                        st.success(f"Edits saved for Draft #{draft_id}.")
+                        trigger_toast(f"Edits saved for Draft #{draft_id}.", icon="✏️")
                         st.rerun()
 
                 with col_act3:
@@ -405,7 +405,7 @@ def render_review_tab():
                             if st.button("Confirm", key=f"conf_del_d_{draft_id}", use_container_width=True):
                                 delete_email(draft_id)
                                 st.session_state[f"confirm_del_draft_{draft_id}"] = False
-                                st.warning(f"Draft #{draft_id} discarded.")
+                                trigger_toast(f"Draft #{draft_id} discarded.", icon="🗑️")
                                 st.rerun()
                         with col_dc2:
                             if st.button("Cancel", key=f"canc_del_d_{draft_id}", use_container_width=True):

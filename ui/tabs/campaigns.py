@@ -19,6 +19,7 @@ from database import (
     get_sequence_rules,
     create_template,
     get_smtp_accounts,
+    create_notification,
     DB_FILE
 )
 from scheduler import (
@@ -43,7 +44,7 @@ from template_engine import (
     scan_negative_keywords,
     scan_all_negative_keywords
 )
-from ui.components import render_tab_header, render_html_preview
+from ui.components import render_tab_header, render_html_preview, trigger_toast
 
 
 def sync_sending_window_to_db(preset: str, days: list, start: str, end: str, db_path: str = DB_FILE):
@@ -851,201 +852,213 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             )
             if not has_recipients:
                 st.caption("Select contacts to generate.")
-            else:
-                # 1. Synchronize sending schedule directly to system_config in SQLite
-                sync_sending_window_to_db(preset_choice, camp_days, camp_start, camp_end)
-
-                # 2. Persist user's configured follow-up sequence interval
-                if num_touches >= 2:
-                    set_config("followup_delay_days", str(int(touch_configs[1]["delay_value"])))
-                    batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
-                else:
-                    batch_seq_id = ""
-
-                neg_keywords_setting = get_config("negative_keywords", "")
-
+            elif generate_campaign_btn:
                 total_contacts = len(selected_contact_ids)
-                st.info(f"Generating outreach for {total_contacts} contact(s)...")
-                progress_bar = st.progress(0)
+                with st.spinner(f"Generating outreach for {total_contacts} contact(s)..."):
+                    # 1. Synchronize sending schedule directly to system_config in SQLite
+                    sync_sending_window_to_db(preset_choice, camp_days, camp_start, camp_end)
 
-                created_pending = 0
-                created_flagged = 0
-                flagged_details = []
-                registered_rules = 0
-
-                # Save any custom email copy as reusable templates if requested by user
-                for cfg in touch_configs:
-                    if cfg.get("save_as_template") and cfg.get("custom_body") and cfg.get("new_template_name"):
-                        tpl_name = cfg["new_template_name"].strip()
-                        if tpl_name:
-                            created_tpl_id = create_template(tpl_name, cfg["custom_body"])
-                            cfg["template_id"] = created_tpl_id
-
-                # Compute distinct scheduled times for Touch 1 across all contacts
-                if selected_market_key != "LOCAL":
-                    market_schedule_pairs = calculate_market_aware_schedule(
-                        total_contacts=total_contacts,
-                        market_key_or_tz=selected_market_key,
-                        stagger_mode=stagger_mode_arg,
-                        span_hours=float(span_hours),
-                        spacing_minutes=float(spacing_minutes),
-                        days=camp_days,
-                        start_time=camp_start,
-                        end_time=camp_end,
-                        use_jitter=use_jitter
-                    )
-                    scheduled_dts_touch1 = [p[1] for p in market_schedule_pairs]
-                else:
-                    scheduled_dts_touch1 = calculate_staggered_schedule(
-                        total_contacts=total_contacts,
-                        stagger_mode=stagger_mode_arg,
-                        base_dt=datetime.now(),
-                        span_hours=float(span_hours),
-                        spacing_minutes=float(spacing_minutes),
-                        sending_days=camp_days,
-                        start_time_str=camp_start,
-                        end_time_str=camp_end,
-                        use_jitter=use_jitter
-                    )
-
-                m_tz = m_info.get("timezone", "LOCAL")
-                m_country = m_info.get("country", "")
-
-                for idx, cid in enumerate(selected_contact_ids):
-                    contact = get_contact_by_id(cid)
-                    if not contact:
-                        continue
-
-                    t1_dt = scheduled_dts_touch1[idx]
-                    t1_cfg = touch_configs[0]
-                    if t1_cfg.get("source_type") == "custom" or t1_cfg.get("custom_body"):
-                        raw_subj_1 = t1_cfg["subject"].strip() or "Quick observation for [Company]"
-                        raw_body_1 = t1_cfg["custom_body"]
-                    else:
-                        step1_tpl = get_template_by_id(t1_cfg["template_id"])
-                        raw_subj_1 = t1_cfg["subject"].strip() or (step1_tpl["template_name"] if step1_tpl else "Partnership Outreach")
-                        raw_body_1 = step1_tpl["body_content"] if step1_tpl else ""
-
-                    # Resolve Spintax & Variables for Touch 1
-                    resolved_body_1 = resolve_template(raw_body_1, contact)
-                    final_html_1 = format_email_html(resolved_body_1)
-                    final_subj_1 = parse_spintax(inject_variables(raw_subj_1, contact))
-
-                    # Negative keyword scanner for Touch 1
-                    combined_text_1 = f"{final_subj_1} {final_html_1}"
-                    triggers_1 = scan_all_negative_keywords(combined_text_1, neg_keywords_setting)
-
-                    if triggers_1:
-                        status = "Flagged"
-                        trig_str = ", ".join([f"'{t}'" for t in triggers_1])
-                        notes = f"Touch 1/{num_touches}: Flagged for trigger keyword(s): {trig_str}" if num_touches > 1 else f"Flagged for trigger keyword(s): {trig_str}"
-                        created_flagged += 1
-                        flagged_details.append({
-                            "recipient": contact["email"],
-                            "touch": "Touch 1 (Initial Pitch)",
-                            "triggers": triggers_1
-                        })
-                    else:
-                        status = "Pending"
-                        if num_touches > 1:
-                            notes = f"Sequence Touch 1/{num_touches}"
-                        elif total_contacts == 1:
-                            notes = "One-Time Outreach Email"
-                        else:
-                            notes = "Marketing Campaign Email"
-                        created_pending += 1
-
-                    sched_time_str_1 = t1_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-                    # Create Touch 1 Email in emails table
-                    t1_email_id = create_email(
-                        email_html=final_html_1,
-                        subject=final_subj_1,
-                        recipient=contact["email"],
-                        status=status,
-                        revision_notes=notes,
-                        scheduled_time=sched_time_str_1,
-                        sequence_step=1,
-                        sequence_id=batch_seq_id,
-                        target_timezone=m_tz,
-                        target_country=m_country,
-                        market_key=selected_market_key
-                    )
-
-                    # If multi-touch, register subsequent sequence rules to auto-generate upon send
+                    # 2. Persist user's configured follow-up sequence interval
                     if num_touches >= 2:
-                        t2_cfg = touch_configs[1]
-                        create_sequence_rule(
+                        set_config("followup_delay_days", str(int(touch_configs[1]["delay_value"])))
+                        batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
+                    else:
+                        batch_seq_id = ""
+
+                    neg_keywords_setting = get_config("negative_keywords", "")
+
+                    progress_bar = st.progress(0)
+
+                    created_pending = 0
+                    created_flagged = 0
+                    flagged_details = []
+                    registered_rules = 0
+
+                    # Save any custom email copy as reusable templates if requested by user
+                    for cfg in touch_configs:
+                        if cfg.get("save_as_template") and cfg.get("custom_body") and cfg.get("new_template_name"):
+                            tpl_name = cfg["new_template_name"].strip()
+                            if tpl_name:
+                                created_tpl_id = create_template(tpl_name, cfg["custom_body"])
+                                cfg["template_id"] = created_tpl_id
+
+                    # Compute distinct scheduled times for Touch 1 across all contacts
+                    if selected_market_key != "LOCAL":
+                        market_schedule_pairs = calculate_market_aware_schedule(
+                            total_contacts=total_contacts,
+                            market_key_or_tz=selected_market_key,
+                            stagger_mode=stagger_mode_arg,
+                            span_hours=float(span_hours),
+                            spacing_minutes=float(spacing_minutes),
+                            days=camp_days,
+                            start_time=camp_start,
+                            end_time=camp_end,
+                            use_jitter=use_jitter
+                        )
+                        scheduled_dts_touch1 = [p[1] for p in market_schedule_pairs]
+                    else:
+                        scheduled_dts_touch1 = calculate_staggered_schedule(
+                            total_contacts=total_contacts,
+                            stagger_mode=stagger_mode_arg,
+                            base_dt=datetime.now(),
+                            span_hours=float(span_hours),
+                            spacing_minutes=float(spacing_minutes),
+                            sending_days=camp_days,
+                            start_time_str=camp_start,
+                            end_time_str=camp_end,
+                            use_jitter=use_jitter
+                        )
+
+                    m_tz = m_info.get("timezone", "LOCAL")
+                    m_country = m_info.get("country", "")
+
+                    for idx, cid in enumerate(selected_contact_ids):
+                        contact = get_contact_by_id(cid)
+                        if not contact:
+                            continue
+
+                        t1_dt = scheduled_dts_touch1[idx]
+                        t1_cfg = touch_configs[0]
+                        if t1_cfg.get("source_type") == "custom" or t1_cfg.get("custom_body"):
+                            raw_subj_1 = t1_cfg["subject"].strip() or "Quick observation for [Company]"
+                            raw_body_1 = t1_cfg["custom_body"]
+                        else:
+                            step1_tpl = get_template_by_id(t1_cfg["template_id"])
+                            raw_subj_1 = t1_cfg["subject"].strip() or (step1_tpl["template_name"] if step1_tpl else "Partnership Outreach")
+                            raw_body_1 = step1_tpl["body_content"] if step1_tpl else ""
+
+                        # Resolve Spintax & Variables for Touch 1
+                        resolved_body_1 = resolve_template(raw_body_1, contact)
+                        final_html_1 = format_email_html(resolved_body_1)
+                        final_subj_1 = parse_spintax(inject_variables(raw_subj_1, contact))
+
+                        # Negative keyword scanner for Touch 1
+                        combined_text_1 = f"{final_subj_1} {final_html_1}"
+                        triggers_1 = scan_all_negative_keywords(combined_text_1, neg_keywords_setting)
+
+                        if triggers_1:
+                            status = "Flagged"
+                            trig_str = ", ".join([f"'{t}'" for t in triggers_1])
+                            notes = f"Touch 1/{num_touches}: Flagged for trigger keyword(s): {trig_str}" if num_touches > 1 else f"Flagged for trigger keyword(s): {trig_str}"
+                            created_flagged += 1
+                            flagged_details.append({
+                                "recipient": contact["email"],
+                                "touch": "Touch 1 (Initial Pitch)",
+                                "triggers": triggers_1
+                            })
+                        else:
+                            status = "Pending"
+                            if num_touches > 1:
+                                notes = f"Sequence Touch 1/{num_touches}"
+                            elif total_contacts == 1:
+                                notes = "One-Time Outreach Email"
+                            else:
+                                notes = "Marketing Campaign Email"
+                            created_pending += 1
+
+                        sched_time_str_1 = t1_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+                        # Create Touch 1 Email in emails table
+                        t1_email_id = create_email(
+                            email_html=final_html_1,
+                            subject=final_subj_1,
+                            recipient=contact["email"],
+                            status=status,
+                            revision_notes=notes,
+                            scheduled_time=sched_time_str_1,
+                            sequence_step=1,
                             sequence_id=batch_seq_id,
-                            contact_id=contact["id"],
-                            contact_email=contact["email"],
-                            step_number=2,
-                            delay_unit=t2_cfg["delay_unit"],
-                            delay_value=t2_cfg["delay_value"],
-                            template_id=t2_cfg.get("template_id"),
-                            custom_subject=t2_cfg["subject"],
-                            custom_body=t2_cfg.get("custom_body", ""),
-                            trigger_email_id=t1_email_id,
                             target_timezone=m_tz,
                             target_country=m_country,
                             market_key=selected_market_key
                         )
-                        registered_rules += 1
 
-                    if num_touches == 3:
-                        t3_cfg = touch_configs[2]
-                        create_sequence_rule(
-                            sequence_id=batch_seq_id,
-                            contact_id=contact["id"],
-                            contact_email=contact["email"],
-                            step_number=3,
-                            delay_unit=t3_cfg["delay_unit"],
-                            delay_value=t3_cfg["delay_value"],
-                            template_id=t3_cfg.get("template_id"),
-                            custom_subject=t3_cfg["subject"],
-                            custom_body=t3_cfg.get("custom_body", ""),
-                            trigger_email_id=None,
-                            target_timezone=m_tz,
-                            target_country=m_country,
-                            market_key=selected_market_key
+                        # If multi-touch, register subsequent sequence rules to auto-generate upon send
+                        if num_touches >= 2:
+                            t2_cfg = touch_configs[1]
+                            create_sequence_rule(
+                                sequence_id=batch_seq_id,
+                                contact_id=contact["id"],
+                                contact_email=contact["email"],
+                                step_number=2,
+                                delay_unit=t2_cfg["delay_unit"],
+                                delay_value=t2_cfg["delay_value"],
+                                template_id=t2_cfg.get("template_id"),
+                                custom_subject=t2_cfg["subject"],
+                                custom_body=t2_cfg.get("custom_body", ""),
+                                trigger_email_id=t1_email_id,
+                                target_timezone=m_tz,
+                                target_country=m_country,
+                                market_key=selected_market_key
+                            )
+                            registered_rules += 1
+
+                        if num_touches == 3:
+                            t3_cfg = touch_configs[2]
+                            create_sequence_rule(
+                                sequence_id=batch_seq_id,
+                                contact_id=contact["id"],
+                                contact_email=contact["email"],
+                                step_number=3,
+                                delay_unit=t3_cfg["delay_unit"],
+                                delay_value=t3_cfg["delay_value"],
+                                template_id=t3_cfg.get("template_id"),
+                                custom_subject=t3_cfg["subject"],
+                                custom_body=t3_cfg.get("custom_body", ""),
+                                trigger_email_id=None,
+                                target_timezone=m_tz,
+                                target_country=m_country,
+                                market_key=selected_market_key
+                            )
+                            registered_rules += 1
+
+                        progress_bar.progress((idx + 1) / total_contacts)
+
+                    first_res_dt = scheduled_dts_touch1[0]
+                    last_res_dt = scheduled_dts_touch1[-1]
+
+                    if num_touches > 1:
+                        trigger_toast(f"Sequence Setup Complete: {created_pending} draft(s) queued!", icon="🚀")
+                        create_notification(
+                            type="campaign",
+                            title="Campaign Sequence Generated",
+                            message=f"Created {created_pending} Touch 1 draft(s) and {registered_rules} follow-up rule(s)."
                         )
-                        registered_rules += 1
-
-                    progress_bar.progress((idx + 1) / total_contacts)
-
-                first_res_dt = scheduled_dts_touch1[0]
-                last_res_dt = scheduled_dts_touch1[-1]
-
-                if num_touches > 1:
-                    st.success(f"Sequence Setup Complete: Created {created_pending} Pending Touch 1 draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}, and registered {registered_rules} automated follow-up sequence rule(s).")
-                    st.markdown(f"""
-                    <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
-                        <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Automated Follow-Up Sequence Active</div>
-                        <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
-                            Touch 1 drafts are now ready in the <strong>🛡️ Review Queue &amp; Triage</strong> tab.
-                            Once Touch 1 is dispatched, our background engine automatically starts the delay timer ({touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']}).
-                            If the prospect does not reply, the system will <strong>automatically generate the follow-up draft</strong> using your selected template!
+                        st.success(f"Sequence Setup Complete: Created {created_pending} Pending Touch 1 draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}, and registered {registered_rules} automated follow-up sequence rule(s).")
+                        st.markdown(f"""
+                        <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
+                            <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Automated Follow-Up Sequence Active</div>
+                            <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
+                                Touch 1 drafts are now ready in the <strong>🛡️ Review Queue &amp; Triage</strong> tab.
+                                Once Touch 1 is dispatched, our background engine automatically starts the delay timer ({touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']}).
+                                If the prospect does not reply, the system will <strong>automatically generate the follow-up draft</strong> using your selected template!
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.success(f"Outreach Generation Complete: Created {created_pending} Pending draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
-                    st.markdown("""
-                    <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
-                        <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Outreach Email Drafts Ready for Review</div>
-                        <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
-                            Drafts are securely queued in the <strong>🛡️ Review Queue &amp; Triage</strong> tab for approval.
+                        """, unsafe_allow_html=True)
+                    else:
+                        trigger_toast(f"Campaign generated: {created_pending} draft(s) queued!", icon="🚀")
+                        create_notification(
+                            type="campaign",
+                            title="Campaign Generated",
+                            message=f"Queued {created_pending} draft(s) for {total_contacts} lead(s)."
+                        )
+                        st.success(f"Outreach Generation Complete: Created {created_pending} Pending draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
+                        st.markdown("""
+                        <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
+                            <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Outreach Email Drafts Ready for Review</div>
+                            <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
+                                Drafts are securely queued in the <strong>🛡️ Review Queue &amp; Triage</strong> tab for approval.
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
 
-                if created_flagged > 0:
-                    st.warning(f"{created_flagged} draft(s) were flagged by the Negative Keyword Shield:")
-                    for fd in flagged_details[:8]:
-                        trig_badges = ", ".join([f"`{t}`" for t in fd["triggers"]])
-                        st.markdown(f"- **{fd['recipient']}** ({fd['touch']}): Contains restricted trigger keyword(s) {trig_badges}")
-                    if len(flagged_details) > 8:
-                        st.caption(f"...and {len(flagged_details) - 8} more.")
+                    if created_flagged > 0:
+                        st.warning(f"{created_flagged} draft(s) were flagged by the Negative Keyword Shield:")
+                        for fd in flagged_details[:8]:
+                            trig_badges = ", ".join([f"`{t}`" for t in fd["triggers"]])
+                            st.markdown(f"- **{fd['recipient']}** ({fd['touch']}): Contains restricted trigger keyword(s) {trig_badges}")
+                        if len(flagged_details) > 8:
+                            st.caption(f"...and {len(flagged_details) - 8} more.")
 
         # Active Automated Follow-Up Pipeline Monitor
         all_rules = get_sequence_rules()

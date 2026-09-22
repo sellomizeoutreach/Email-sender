@@ -995,6 +995,35 @@ SELLOMIZE_THEME_CSS = """<style>
         }
     }
 
+    /* Smooth button hovers and scale effects */
+    .stButton button {
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+    .stButton button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+    }
+    /* Smooth fade-in for tabs and expanders */
+    div[data-testid="stExpander"], div[data-testid="stTab"] {
+        animation: fadeIn 0.4s ease-in-out;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Notification Bell Popover Styling */
+    div[data-testid="stPopover"] > button {
+        border-radius: 12px !important;
+        font-weight: 700 !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        border: 1px solid rgba(8, 55, 49, 0.2) !important;
+    }
+    div[data-testid="stPopover"] > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(8, 55, 49, 0.15) !important;
+    }
+
 </style>"""
 
 def apply_theme():
