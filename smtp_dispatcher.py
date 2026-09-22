@@ -148,7 +148,10 @@ def send_smtp_email(
         bcc_clean = sanitize_header(bcc_email)
         if bcc_clean:
             msg["Bcc"] = bcc_clean
-            destinations.append(bcc_clean)
+            for bcc_single in bcc_clean.split(","):
+                b_s = bcc_single.strip()
+                if b_s and b_s not in destinations:
+                    destinations.append(b_s)
 
     context = ssl.create_default_context()
 

@@ -23,6 +23,7 @@ from database import (
 )
 from mx_checker import verify_email_domain_mx, get_cached_domain_mx
 from template_engine import audit_email_deliverability, scan_all_negative_keywords
+from timezone_helper import get_zoneinfo
 from ui.components import render_html_preview, render_tab_header
 
 
@@ -245,6 +246,31 @@ def render_review_tab():
                             sched_time = st.time_input("Time (Local)", value=default_time, key=sched_time_key)
 
                         scheduled_datetime_str = f"{sched_date.strftime('%Y-%m-%d')} {sched_time.strftime('%H:%M:%S')}"
+
+                        m_tz = draft.get("target_timezone")
+                        m_country = draft.get("target_country")
+                        bcc_conf = get_config("bcc_email", "")
+
+                        market_badge_html = ""
+                        if m_tz and m_tz.upper() != "LOCAL":
+                            zi = get_zoneinfo(m_tz)
+                            if zi and sched_date and sched_time:
+                                try:
+                                    host_local_dt = datetime.combine(sched_date, sched_time).astimezone()
+                                    prospect_local_dt = host_local_dt.astimezone(zi)
+                                    prospect_time_str = prospect_local_dt.strftime("%a, %b %d at %I:%M %p %Z")
+                                    market_badge_html = f"<div>🌍 <strong>Destination Market:</strong> {m_country or 'International'} ({m_tz}) • Arrives in prospect inbox: <strong>{prospect_time_str}</strong></div>"
+                                except Exception:
+                                    market_badge_html = f"<div>🌍 <strong>Destination Market:</strong> {m_country or 'International'} ({m_tz})</div>"
+
+                        bcc_badge_html = f"<div>📬 <strong>Outbound BCC:</strong> <span style='font-family:monospace;'>{bcc_conf}</span></div>" if bcc_conf else "<div>📬 <strong>Outbound BCC:</strong> None configured</div>"
+
+                        st.markdown(f"""
+                        <div style="background:rgba(8,55,49,0.05); border:1px solid rgba(8,55,49,0.15); border-radius:6px; padding:6px 12px; font-size:0.8rem; color:#083731; margin:6px 0 10px;">
+                            {market_badge_html}
+                            {bcc_badge_html}
+                        </div>
+                        """, unsafe_allow_html=True)
 
                         editor_mode = st.radio(
                             "View Mode",

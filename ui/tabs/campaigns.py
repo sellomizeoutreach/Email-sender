@@ -25,6 +25,14 @@ from scheduler import (
     analyze_schedule_overflow,
     WEEKDAY_NAMES
 )
+from timezone_helper import (
+    TARGET_MARKETS,
+    get_market_info,
+    get_market_current_time,
+    get_time_difference_summary,
+    calculate_market_aware_schedule,
+    is_within_market_hours
+)
 from template_engine import (
     resolve_template,
     format_email_html,
@@ -481,10 +489,51 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         </div>
         """, unsafe_allow_html=True)
 
-        # 3. SENDING WINDOW & BATCH DISPATCH PACING (Single Visible Panel, Single Source of Truth)
+        # 3. DESTINATION MARKET, SENDING WINDOW & DISPATCH PACING
         st.markdown("---")
-        st.markdown("### Campaign Sending Window & Cadence Setup")
-        st.caption("Define the allowed delivery hours and pacing interval. Settings configured here synchronize directly to the system dispatch engine.")
+        st.markdown("### Campaign Destination Market, Sending Window & Cadence Setup")
+        st.caption("Configure target country working hours, dispatch pacing intervals, and compliance logging.")
+
+        # Target Market Selector
+        st.markdown("#### 1. Where are your prospects located? (Target Country & Timezone)")
+        db_default_market = get_config("default_market", "CA_EAST")
+        market_keys = list(TARGET_MARKETS.keys())
+        def_m_idx = market_keys.index(db_default_market) if db_default_market in market_keys else 0
+
+        col_tm1, col_tm2 = st.columns([1.8, 1.2])
+        with col_tm1:
+            selected_market_key = st.selectbox(
+                "Destination Market & Country *",
+                options=market_keys,
+                index=def_m_idx,
+                format_func=lambda k: TARGET_MARKETS[k]["label"],
+                key="camp_target_market_select",
+                help="Select target country. Send times will automatically adapt to the recipient's local business hours without time-drift."
+            )
+        with col_tm2:
+            m_info = TARGET_MARKETS[selected_market_key]
+            m_now = get_market_current_time(selected_market_key)
+            diff_str = get_time_difference_summary(selected_market_key)
+            is_m_open, _ = is_within_market_hours(selected_market_key)
+            status_badge = "<span style='background:#16A34A; color:white; font-size:0.72rem; font-weight:800; padding:2px 7px; border-radius:10px;'>MARKET OPEN</span>" if is_m_open else "<span style='background:#CA8A04; color:white; font-size:0.72rem; font-weight:800; padding:2px 7px; border-radius:10px;'>MARKET CLOSED</span>"
+
+            st.markdown(f"""
+            <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.18); border-radius:8px; padding:9px 12px; margin-top:5px;">
+                <div style="font-size:0.75rem; color:#64748B; font-weight:700;">PROSPECT LOCAL TIME {status_badge}</div>
+                <div style="font-weight:800; color:#083731; font-size:1.0rem;">{m_now.strftime('%I:%M %p')} <span style="font-size:0.75rem; color:#64748B;">{m_now.strftime('%Z')}</span></div>
+                <div style="font-size:0.78rem; color:#475569;">{diff_str}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        bcc_conf = get_config("bcc_email", "")
+        if bcc_conf:
+            st.markdown(f"""
+            <div style="background:rgba(8,55,49,0.05); border:1px solid rgba(8,55,49,0.15); border-radius:6px; padding:6px 12px; margin:6px 0 12px;">
+                <span style="font-size:0.8rem; color:#083731; font-weight:700;">📬 Outbound Compliance BCC Active:</span>
+                <span style="font-size:0.8rem; color:#0F172A; font-family:monospace;"> {bcc_conf}</span>
+                <span style="font-size:0.75rem; color:#64748B; margin-left:8px;">(Configured in Settings)</span>
+            </div>
+            """, unsafe_allow_html=True)
 
         # Read current SQLite DB settings for default radio index
         db_enforce = (get_config("enforce_sending_window", "true") or "true").strip().lower() in ["true", "1", "yes"]
@@ -500,11 +549,11 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         else:
             default_preset_idx = 2
 
-        # Section 1: Sending Window
-        st.markdown("#### 1. When can emails go out? (Sending Window)")
+        # Section 2: Sending Window
+        st.markdown("#### 2. Allowed Working Hours (In Target Market)")
         preset_choice = st.radio(
             "Select Active Sending Schedule",
-            ["Business Days (Mon - Fri, 09:00 - 18:00)", "24/7 Continuous (All 7 Days)", "Custom Schedule"],
+            ["Business Days (Mon - Fri, 09:00 - 17:00 Target Time)", "24/7 Continuous (All 7 Days)", "Custom Schedule"],
             index=default_preset_idx,
             horizontal=True,
             key="camp_sched_preset"
@@ -512,9 +561,9 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
         if preset_choice.startswith("Business Days"):
             camp_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-            camp_start = "09:00"
-            camp_end = "18:00"
-            st.caption("Sending restricted strictly to Monday through Friday from 09:00 to 18:00.")
+            camp_start = m_info.get("default_start", "09:00")
+            camp_end = m_info.get("default_end", "17:00")
+            st.caption(f"Sending restricted strictly to Monday through Friday from {camp_start} to {camp_end} in {m_info.get('country', 'target market')}.")
         elif preset_choice.startswith("24/7 Continuous"):
             camp_days = list(WEEKDAY_NAMES)
             camp_start = "00:00"
@@ -539,8 +588,8 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             st.caption("This schedule is also automatically synchronized to the background dispatch engine whenever you generate a campaign.")
 
         st.markdown("---")
-        # Section 2: Batch Dispatch Pacing
-        st.markdown("#### 2. How fast should this batch send? (Batch Dispatch Pacing)")
+        # Section 3: Batch Dispatch Pacing
+        st.markdown("#### 3. How fast should this batch send? (Batch Dispatch Pacing)")
         stagger_strategy = st.radio(
             "Select Dispatch Pacing Strategy",
             [
@@ -603,17 +652,34 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         st.caption("Batch send times are scheduled using the dispatch pacing below (not the future follow-up interval).")
         n_sel = len(selected_contact_ids)
         if n_sel > 0:
-            preview_schedule = calculate_staggered_schedule(
-                total_contacts=n_sel,
-                stagger_mode=stagger_mode_arg,
-                base_dt=datetime.now(),
-                span_hours=float(span_hours),
-                spacing_minutes=float(spacing_minutes),
-                sending_days=camp_days,
-                start_time_str=camp_start,
-                end_time_str=camp_end,
-                use_jitter=False
-            )
+            if selected_market_key != "LOCAL":
+                market_schedule_pairs = calculate_market_aware_schedule(
+                    total_contacts=n_sel,
+                    market_key_or_tz=selected_market_key,
+                    stagger_mode=stagger_mode_arg,
+                    span_hours=float(span_hours),
+                    spacing_minutes=float(spacing_minutes),
+                    days=camp_days,
+                    start_time=camp_start,
+                    end_time=camp_end,
+                    use_jitter=False
+                )
+                preview_schedule = [p[1] for p in market_schedule_pairs]
+                market_preview = [p[0] for p in market_schedule_pairs]
+            else:
+                preview_schedule = calculate_staggered_schedule(
+                    total_contacts=n_sel,
+                    stagger_mode=stagger_mode_arg,
+                    base_dt=datetime.now(),
+                    span_hours=float(span_hours),
+                    spacing_minutes=float(spacing_minutes),
+                    sending_days=camp_days,
+                    start_time_str=camp_start,
+                    end_time_str=camp_end,
+                    use_jitter=False
+                )
+                market_preview = preview_schedule
+
             analysis = analyze_schedule_overflow(
                 scheduled_dts=preview_schedule,
                 end_time_str=camp_end,
@@ -622,9 +688,20 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
             col_prev1, col_prev2 = st.columns(2)
             with col_prev1:
-                st.markdown(f"**Touch 1 First Send:** `{analysis['first_dt'].strftime('%a, %b %d at %H:%M')}`")
+                st.markdown(f"**Touch 1 First Send:**")
+                if selected_market_key != "LOCAL":
+                    st.markdown(f"• Prospect Local: `{market_preview[0].strftime('%a, %b %d at %I:%M %p %Z')}`")
+                    st.markdown(f"• Host PC Send: `{preview_schedule[0].strftime('%a, %b %d at %I:%M %p')}`")
+                else:
+                    st.markdown(f"`{preview_schedule[0].strftime('%a, %b %d at %H:%M')}`")
+
             with col_prev2:
-                st.markdown(f"**Touch 1 Final Send:** `{analysis['last_dt'].strftime('%a, %b %d at %H:%M')}`")
+                st.markdown(f"**Touch 1 Final Send:**")
+                if selected_market_key != "LOCAL":
+                    st.markdown(f"• Prospect Local: `{market_preview[-1].strftime('%a, %b %d at %I:%M %p %Z')}`")
+                    st.markdown(f"• Host PC Send: `{preview_schedule[-1].strftime('%a, %b %d at %I:%M %p')}`")
+                else:
+                    st.markdown(f"`{preview_schedule[-1].strftime('%a, %b %d at %H:%M')}`")
 
             if num_touches >= 2:
                 t2_val = touch_configs[1]["delay_value"]
@@ -712,17 +789,34 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 registered_rules = 0
 
                 # Compute distinct scheduled times for Touch 1 across all contacts
-                scheduled_dts_touch1 = calculate_staggered_schedule(
-                    total_contacts=total_contacts,
-                    stagger_mode=stagger_mode_arg,
-                    base_dt=datetime.now(),
-                    span_hours=float(span_hours),
-                    spacing_minutes=float(spacing_minutes),
-                    sending_days=camp_days,
-                    start_time_str=camp_start,
-                    end_time_str=camp_end,
-                    use_jitter=use_jitter
-                )
+                if selected_market_key != "LOCAL":
+                    market_schedule_pairs = calculate_market_aware_schedule(
+                        total_contacts=total_contacts,
+                        market_key_or_tz=selected_market_key,
+                        stagger_mode=stagger_mode_arg,
+                        span_hours=float(span_hours),
+                        spacing_minutes=float(spacing_minutes),
+                        days=camp_days,
+                        start_time=camp_start,
+                        end_time=camp_end,
+                        use_jitter=use_jitter
+                    )
+                    scheduled_dts_touch1 = [p[1] for p in market_schedule_pairs]
+                else:
+                    scheduled_dts_touch1 = calculate_staggered_schedule(
+                        total_contacts=total_contacts,
+                        stagger_mode=stagger_mode_arg,
+                        base_dt=datetime.now(),
+                        span_hours=float(span_hours),
+                        spacing_minutes=float(spacing_minutes),
+                        sending_days=camp_days,
+                        start_time_str=camp_start,
+                        end_time_str=camp_end,
+                        use_jitter=use_jitter
+                    )
+
+                m_tz = m_info.get("timezone", "LOCAL")
+                m_country = m_info.get("country", "")
 
                 for idx, cid in enumerate(selected_contact_ids):
                     contact = get_contact_by_id(cid)
@@ -774,7 +868,10 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                         revision_notes=notes,
                         scheduled_time=sched_time_str_1,
                         sequence_step=1,
-                        sequence_id=batch_seq_id
+                        sequence_id=batch_seq_id,
+                        target_timezone=m_tz,
+                        target_country=m_country,
+                        market_key=selected_market_key
                     )
 
                     # If multi-touch, register subsequent sequence rules to auto-generate upon send
@@ -789,7 +886,10 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                             delay_value=t2_cfg["delay_value"],
                             template_id=t2_cfg["template_id"],
                             custom_subject=t2_cfg["subject"],
-                            trigger_email_id=t1_email_id
+                            trigger_email_id=t1_email_id,
+                            target_timezone=m_tz,
+                            target_country=m_country,
+                            market_key=selected_market_key
                         )
                         registered_rules += 1
 
@@ -804,7 +904,10 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                             delay_value=t3_cfg["delay_value"],
                             template_id=t3_cfg["template_id"],
                             custom_subject=t3_cfg["subject"],
-                            trigger_email_id=None
+                            trigger_email_id=None,
+                            target_timezone=m_tz,
+                            target_country=m_country,
+                            market_key=selected_market_key
                         )
                         registered_rules += 1
 

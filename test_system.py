@@ -116,7 +116,8 @@ from scheduler import (
     dispatch_email_outlook,
     dispatch_email,
     calculate_staggered_schedule,
-    analyze_schedule_overflow
+    analyze_schedule_overflow,
+    is_within_sending_window
 )
 from mx_checker import (
     verify_email_domain_mx,
@@ -124,6 +125,15 @@ from mx_checker import (
     clear_mx_cache,
     get_cached_domain_count,
     get_domain_from_email
+)
+from timezone_helper import (
+    TARGET_MARKETS,
+    get_market_info,
+    get_market_current_time,
+    get_time_difference_summary,
+    is_within_market_hours,
+    calculate_market_aware_schedule,
+    get_zoneinfo
 )
 
 TEST_DB = "test_email_system.db"
@@ -1231,6 +1241,8 @@ class TestEmailAutomationSystem(unittest.TestCase):
         set_config("sending_days", f"{today_name},Monday,Tuesday,Wednesday,Thursday,Friday", db_path=TEST_DB)
         set_config("sending_start_time", "00:00", db_path=TEST_DB)
         set_config("sending_end_time", "23:59", db_path=TEST_DB)
+        set_config("min_delay_seconds", "0.01", db_path=TEST_DB)
+        set_config("max_delay_seconds", "0.02", db_path=TEST_DB)
 
         # 3. Run scheduler cycle
         processed = run_scheduler_cycle(dry_run=False, db_path=TEST_DB)
@@ -2077,6 +2089,162 @@ class TestEmailAutomationSystem(unittest.TestCase):
         # Running process_due_sequence_rules should produce 0 emails
         gen = process_due_sequence_rules(db_path=TEST_DB)
         self.assertEqual(gen, 0)
+
+    def test_59_country_timezone_scheduling_and_conversion(self):
+        """Test country-wise market presets, live market clocks, and dual-clock scheduling."""
+        # 1. Preset markets availability
+        self.assertIn("CA_EAST", TARGET_MARKETS)
+        self.assertIn("CA_WEST", TARGET_MARKETS)
+        self.assertIn("AU_EAST", TARGET_MARKETS)
+        self.assertIn("US_EAST", TARGET_MARKETS)
+        self.assertIn("UK", TARGET_MARKETS)
+        self.assertIn("EU_CENTRAL", TARGET_MARKETS)
+
+        ca_east = TARGET_MARKETS["CA_EAST"]
+        self.assertEqual(ca_east["country"], "Canada")
+        self.assertEqual(ca_east["timezone"], "America/Toronto")
+
+        # 2. Live market clock conversion
+        ca_now = get_market_current_time("CA_EAST")
+        self.assertIsNotNone(ca_now.tzinfo)
+        diff_summary = get_time_difference_summary("CA_EAST")
+        self.assertIsInstance(diff_summary, str)
+        self.assertTrue(len(diff_summary) > 0)
+
+        # 3. Market hours evaluation
+        from zoneinfo import ZoneInfo
+        # Test Monday 11:00 AM Toronto time -> inside market hours
+        zi_toronto = ZoneInfo("America/Toronto")
+        mon_11am = datetime(2026, 9, 21, 11, 0, 0, tzinfo=zi_toronto)
+        is_open, reason = is_within_market_hours("CA_EAST", reference_dt=mon_11am)
+        self.assertTrue(is_open)
+        self.assertIn("Inside", reason)
+
+        # Test Sunday 11:00 AM Toronto time -> outside market hours (weekend)
+        sun_11am = datetime(2026, 9, 20, 11, 0, 0, tzinfo=zi_toronto)
+        is_open_sun, reason_sun = is_within_market_hours("CA_EAST", reference_dt=sun_11am)
+        self.assertFalse(is_open_sun)
+        self.assertIn("outside business days", reason_sun)
+
+        # Test Monday 23:00 (11 PM) Toronto time -> outside daily working hours
+        mon_11pm = datetime(2026, 9, 21, 23, 0, 0, tzinfo=zi_toronto)
+        is_open_night, reason_night = is_within_market_hours("CA_EAST", reference_dt=mon_11pm)
+        self.assertFalse(is_open_night)
+        self.assertIn("cutoff", reason_night)
+
+        # 4. Market-aware schedule calculation (dual-clock pairs)
+        pairs = calculate_market_aware_schedule(
+            total_contacts=3,
+            market_key_or_tz="CA_EAST",
+            stagger_mode="fixed_interval",
+            spacing_minutes=10.0,
+            days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            start_time="09:00",
+            end_time="17:00"
+        )
+        self.assertEqual(len(pairs), 3)
+        for m_dt, h_dt in pairs:
+            # Market dt must have America/Toronto timezone
+            self.assertEqual(str(m_dt.tzinfo), "America/Toronto")
+            # Must fall inside business window
+            self.assertGreaterEqual(m_dt.hour * 60 + m_dt.minute, 9 * 60)
+            self.assertLess(m_dt.hour * 60 + m_dt.minute, 17 * 60)
+            # Host dt must have host timezone
+            self.assertIsNotNone(h_dt.tzinfo)
+
+    def test_60_bcc_multi_recipient_sanitization_and_dispatch(self):
+        """Test multi-recipient BCC address configuration, comma-splitting, and SMTP destination routing."""
+        from smtp_dispatcher import send_smtp_email
+
+        mock_smtp_account = {
+            "id": 1,
+            "email": "outreach@agency.com",
+            "smtp_host": "smtp.hostinger.com",
+            "smtp_port": 465,
+            "password": "testpassword",
+            "ssl_type": "SSL",
+            "display_name": "Agency Outreach"
+        }
+
+        with patch("smtp_dispatcher.smtplib.SMTP_SSL") as mock_ssl:
+            mock_server = MagicMock()
+            mock_ssl.return_value.__enter__.return_value = mock_server
+
+            # Dispatch with multi-recipient BCC
+            success, msg = send_smtp_email(
+                smtp_account=mock_smtp_account,
+                recipient="prospect@company.com",
+                subject="Market Expansion",
+                html_content="<p>Test Body</p>",
+                bcc_email="archive@sellomize.com, crm-sync@hubspot.com, audit@internal.org"
+            )
+
+            self.assertTrue(success)
+            # Verify send_message was called and destinations includes recipient + all 3 BCC addresses individually!
+            self.assertTrue(mock_server.send_message.called)
+            call_kwargs = mock_server.send_message.call_args[1]
+            destinations = call_kwargs.get("to_addrs", [])
+            self.assertIn("prospect@company.com", destinations)
+            self.assertIn("archive@sellomize.com", destinations)
+            self.assertIn("crm-sync@hubspot.com", destinations)
+            self.assertIn("audit@internal.org", destinations)
+            self.assertEqual(len(destinations), 4)
+
+    def test_61_scheduler_adaptive_multi_country_window(self):
+        """Test scheduler adaptive_multi_country mode evaluating individual email destination timezones."""
+        from zoneinfo import ZoneInfo
+        set_config("schedule_mode", "adaptive_multi_country", db_path=TEST_DB)
+        set_config("enforce_sending_window", "true", db_path=TEST_DB)
+
+        # 1. Email destined for Canada
+        eid = create_email(
+            email_html="<p>Canada pitch</p>",
+            subject="Pitch for Toronto",
+            recipient="client@torontobrand.ca",
+            status="Approved",
+            target_timezone="America/Toronto",
+            target_country="Canada",
+            market_key="CA_EAST",
+            db_path=TEST_DB
+        )
+        email_rec = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(email_rec["target_timezone"], "America/Toronto")
+        self.assertEqual(email_rec["target_country"], "Canada")
+        self.assertEqual(email_rec["market_key"], "CA_EAST")
+
+        # Evaluate at Monday 10:00 AM Toronto time
+        zi_toronto = ZoneInfo("America/Toronto")
+        test_dt_open = datetime(2026, 9, 21, 10, 0, 0, tzinfo=zi_toronto)
+        ok_open, reason_open = is_within_sending_window(check_dt=test_dt_open, db_path=TEST_DB, email_record=email_rec)
+        self.assertTrue(ok_open)
+
+        # Evaluate at Monday 22:00 (10 PM) Toronto time
+        test_dt_closed = datetime(2026, 9, 21, 22, 0, 0, tzinfo=zi_toronto)
+        ok_closed, reason_closed = is_within_sending_window(check_dt=test_dt_closed, db_path=TEST_DB, email_record=email_rec)
+        self.assertFalse(ok_closed)
+        self.assertIn("cutoff", reason_closed)
+
+        # 3. Create sequence rule with target timezone and verify persistence
+        cid = create_contact(name="Liam Smith", email="liam@sydneyventures.com.au", db_path=TEST_DB)
+        tpl_id = create_template("Sydney Follow-up", "Hi Liam", db_path=TEST_DB)
+        rid = create_sequence_rule(
+            sequence_id="seq_au_test",
+            contact_id=cid,
+            contact_email="liam@sydneyventures.com.au",
+            step_number=2,
+            delay_unit="days",
+            delay_value=2,
+            template_id=tpl_id,
+            target_timezone="Australia/Sydney",
+            target_country="Australia",
+            market_key="AU_EAST",
+            db_path=TEST_DB
+        )
+        rules = get_sequence_rules(db_path=TEST_DB)
+        au_rule = next(r for r in rules if r["id"] == rid)
+        self.assertEqual(au_rule["target_timezone"], "Australia/Sydney")
+        self.assertEqual(au_rule["target_country"], "Australia")
+        self.assertEqual(au_rule["market_key"], "AU_EAST")
 
 if __name__ == "__main__":
     unittest.main()

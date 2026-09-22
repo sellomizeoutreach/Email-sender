@@ -52,6 +52,13 @@ from tracker import (
     start_tracking_server
 )
 from mx_checker import verify_email_domain_mx
+from timezone_helper import (
+    is_within_market_hours,
+    get_market_info,
+    calculate_market_aware_schedule,
+    TARGET_MARKETS
+)
+
 
 # Configure logging with both console and sellomize.log file handler
 handlers = [logging.StreamHandler(sys.stdout)]
@@ -72,18 +79,42 @@ WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturd
 
 def is_within_sending_window(
     check_dt: Optional[datetime] = None,
-    db_path: str = DB_FILE
+    db_path: str = DB_FILE,
+    email_record: Optional[Dict[str, Any]] = None
 ) -> Tuple[bool, str]:
     """
     Evaluate whether a given datetime (or current local time) falls inside the
     configured campaign sending window and allowed business days.
+    If schedule_mode is 'adaptive_multi_country' and an email_record is provided
+    with target_timezone, it validates against the target market's business hours.
     Returns (True, message) if dispatch is allowed, or (False, reason) if paused.
     """
+    sched_mode = (get_config("schedule_mode", "adaptive_multi_country", db_path=db_path) or "adaptive_multi_country").strip()
+    if sched_mode == "continuous":
+        return True, "Continuous 24/7 delivery enabled"
+
     enforce_str = get_config("enforce_sending_window", "true", db_path=db_path) or "true"
     enforce = enforce_str.strip().lower() in ["true", "1", "yes", "on"]
     if not enforce:
         return True, "Sending window enforcement disabled (24/7 delivery allowed)"
 
+    # Adaptive multi-country evaluation:
+    if sched_mode == "adaptive_multi_country" and email_record and email_record.get("target_timezone") and email_record["target_timezone"].upper() != "LOCAL":
+        m_tz = email_record["target_timezone"]
+        m_key = email_record.get("market_key") or m_tz
+        m_info = get_market_info(m_key)
+        m_days = m_info.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
+        m_start = m_info.get("default_start", "09:00")
+        m_end = m_info.get("default_end", "17:00")
+        return is_within_market_hours(
+            market_key_or_tz=m_tz,
+            days=m_days,
+            start_time=m_start,
+            end_time=m_end,
+            reference_dt=check_dt
+        )
+
+    # Local office hours check (default or when email has LOCAL/no timezone)
     dt = check_dt or datetime.now().astimezone()
     if dt.tzinfo is None:
         dt = dt.astimezone()
@@ -730,8 +761,23 @@ def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
             email_status = "Pending"
             notes = f"Sequence Step {step_num} (Auto-generated after {delay_val} {delay_unit} delay)"
 
-        next_dt = get_next_valid_sending_datetime(delay_minutes=0, db_path=target_db)
-        sched_time_str = next_dt.strftime("%Y-%m-%d %H:%M:%S")
+        m_tz = rule.get("target_timezone")
+        m_key = rule.get("market_key") or m_tz
+        m_country = rule.get("target_country")
+        if m_tz and m_tz.upper() != "LOCAL":
+            pairs = calculate_market_aware_schedule(
+                total_contacts=1,
+                market_key_or_tz=m_key,
+                stagger_mode="send_now"
+            )
+            if pairs:
+                sched_time_str = pairs[0][1].strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                next_dt = get_next_valid_sending_datetime(delay_minutes=0, db_path=target_db)
+                sched_time_str = next_dt.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            next_dt = get_next_valid_sending_datetime(delay_minutes=0, db_path=target_db)
+            sched_time_str = next_dt.strftime("%Y-%m-%d %H:%M:%S")
 
         new_eid = create_email(
             email_html=final_html,
@@ -742,6 +788,9 @@ def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
             revision_notes=notes,
             sequence_step=step_num,
             sequence_id=rule.get("sequence_id", ""),
+            target_timezone=m_tz,
+            target_country=m_country,
+            market_key=m_key,
             db_path=target_db
         )
 
@@ -784,11 +833,13 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     except Exception as seq_err:
         logger.warning(f"Error processing due sequence rules: {seq_err}")
 
-    # 2. Check sending window
-    in_window, window_msg = is_within_sending_window(db_path=target_db)
-    if not in_window and not dry_run:
-        logger.info(f"[Scheduler] Dispatch paused: {window_msg}.")
-        return 0
+    # 2. Check sending window (global / office hours mode)
+    sched_mode = (get_config("schedule_mode", "adaptive_multi_country", db_path=target_db) or "adaptive_multi_country").strip()
+    if sched_mode != "adaptive_multi_country":
+        in_window, window_msg = is_within_sending_window(db_path=target_db)
+        if not in_window and not dry_run:
+            logger.info(f"[Scheduler] Dispatch paused: {window_msg}.")
+            return 0
 
     now_local_str = get_local_system_time_str()
     due_emails = get_approved_due_emails(now_local_str, db_path=target_db)
@@ -806,21 +857,33 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
 
         logger.info(f"Found {count} approved email(s) due at {now_local_str}. Dispatch Engine: '{dispatch_method}'.")
 
+        dispatched_count = 0
         for idx, email_rec in enumerate(due_emails):
+            # Evaluate individual recipient's market window if adaptive mode
+            email_in_window, email_window_msg = is_within_sending_window(
+                email_record=email_rec,
+                db_path=target_db
+            )
+            if not email_in_window and not dry_run:
+                logger.info(f"[Scheduler] Postponing Email ID #{email_rec['id']} for '{email_rec.get('recipient')}': {email_window_msg}")
+                continue
+
             if dispatch_method == "hostinger_smtp":
                 dispatch_email_hostinger(email_rec, dry_run=dry_run, db_path=target_db)
             else:
                 dispatch_email_outlook(email_rec, dry_run=dry_run, db_path=target_db)
+
+            dispatched_count += 1
 
             # Apply randomized anti-spam delay between emails if more than one
             if idx < count - 1 and not dry_run:
                 delay = random.uniform(min_delay, max_delay)
                 logger.info(f"Enforcing human-like anti-spam delay of {delay:.1f}s before next email...")
                 time.sleep(delay)
+        return dispatched_count
     else:
         logger.debug(f"Heartbeat: No due approved emails at Local Time {now_local_str}.")
-
-    return count
+        return 0
 
 def start_scheduler_loop(interval: int = 60, stop_event=None):
     """

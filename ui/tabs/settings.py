@@ -25,6 +25,13 @@ from database import (
     get_log_file_path
 )
 from smtp_dispatcher import test_smtp_connection, scan_all_hostinger_inbox, scan_all_hostinger_bounces
+from timezone_helper import (
+    TARGET_MARKETS,
+    get_market_info,
+    get_market_current_time,
+    get_time_difference_summary,
+    is_within_market_hours
+)
 from ui.components import render_tab_header, render_html_preview
 from ui.tabs.signature import DEFAULT_SIGNATURE_TEMPLATE
 
@@ -63,48 +70,107 @@ def render_settings_tab():
     # TAB 1: SENDING SCHEDULE & WINDOW
     # ==========================================================================
     with settings_tabs[0]:
-        st.markdown("### ⏰ Sending Window & Delivery Schedule")
-        st.caption("Control the exact days and hours during which the automated dispatcher is authorized to send emails.")
+        st.markdown("### ⏰ Sending Window & Timezone-Aware Delivery Engine")
+        st.caption("Control the working hours, destination country schedules, and allowed delivery days for automated background dispatch.")
 
+        db_schedule_mode = (current_configs.get("schedule_mode", "adaptive_multi_country") or "adaptive_multi_country").strip()
+        db_default_market = (current_configs.get("default_market", "CA_EAST") or "CA_EAST").strip()
         db_enforce = (current_configs.get("enforce_sending_window", "true") or "true").strip().lower() in ["true", "1", "yes"]
         db_days_raw = current_configs.get("sending_days", "Monday, Tuesday, Wednesday, Thursday, Friday") or "Monday, Tuesday, Wednesday, Thursday, Friday"
         db_days_list = [d.strip() for d in db_days_raw.split(",") if d.strip()]
         db_start = (current_configs.get("sending_start_time", "09:00") or "09:00").strip()
         db_end = (current_configs.get("sending_end_time", "18:00") or "18:00").strip()
 
-        if not db_enforce or (db_start == "00:00" and db_end in ["23:59", "24:00"] and len(db_days_list) >= 7):
-            preset_idx = 1
-        elif set(db_days_list) == {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"} and db_start == "09:00" and db_end == "18:00":
+        preset_options = [
+            "🌍 Adaptive Multi-Country Dispatch (Timezone-Aware)",
+            "🏢 Single Office Hours Window (Mon - Fri, Host PC Hours)",
+            "⚡ 24/7 Continuous (All 7 Days, Around the Clock)",
+            "🛠️ Custom Schedule"
+        ]
+
+        if db_schedule_mode == "adaptive_multi_country":
             preset_idx = 0
-        else:
+        elif db_schedule_mode == "continuous" or not db_enforce or (db_start == "00:00" and db_end in ["23:59", "24:00"] and len(db_days_list) >= 7):
             preset_idx = 2
+        elif set(db_days_list) == {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"} and db_start == "09:00" and db_end == "18:00":
+            preset_idx = 1
+        else:
+            preset_idx = 3
 
         sched_preset = st.radio(
             "Schedule Mode",
-            [
-                "Business Days (Mon - Fri, 09:00 - 18:00)",
-                "24/7 Continuous (All 7 Days, Around the Clock)",
-                "Custom Schedule"
-            ],
+            preset_options,
             index=preset_idx,
-            horizontal=True,
             key="set_sched_preset"
         )
 
-        if sched_preset.startswith("Business Days"):
+        market_keys = list(TARGET_MARKETS.keys())
+        def_m_idx = market_keys.index(db_default_market) if db_default_market in market_keys else 0
+
+        if sched_preset.startswith("🌍 Adaptive Multi-Country"):
+            sel_mode = "adaptive_multi_country"
+            sel_enforce = True
+            sel_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+            sel_start = "09:00"
+            sel_end = "18:00"
+
+            st.markdown("""
+            <div style="background:#F0FDF4; border:1.5px solid #16A34A; border-radius:8px; padding:12px 16px; margin:10px 0 14px;">
+                <div style="font-weight:800; color:#15803D; font-size:0.92rem;">🌍 Autonomous Country-Wise Pacing Enabled</div>
+                <div style="color:#166534; font-size:0.83rem; margin-top:4px; line-height:1.45;">
+                    The background dispatch engine operates 24/7, continuously matching each email's delivery to its specific destination country's working hours (09:00 - 17:00).
+                    Emails destined for <strong>Canada</strong> send during Canadian business hours; <strong>Australia</strong> sends during Australian hours, without blocking each other or stopping when your Host PC is off hours.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_m1, col_m2 = st.columns([1.8, 1.2])
+            with col_m1:
+                sel_default_market = st.selectbox(
+                    "Default Target Country & Market Timezone",
+                    options=market_keys,
+                    index=def_m_idx,
+                    format_func=lambda k: TARGET_MARKETS[k]["label"],
+                    key="set_def_market_select",
+                    help="Default market applied to new campaigns if not individually customized."
+                )
+            with col_m2:
+                m_info = TARGET_MARKETS[sel_default_market]
+                m_now = get_market_current_time(sel_default_market)
+                diff_summary = get_time_difference_summary(sel_default_market)
+                is_m_open, m_open_reason = is_within_market_hours(sel_default_market)
+                m_badge_color = "#16A34A" if is_m_open else "#CA8A04"
+                m_badge_status = "OPEN" if is_m_open else "CLOSED"
+
+                st.markdown(f"""
+                <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.18); border-radius:8px; padding:10px 14px; margin-top:6px;">
+                    <div style="font-size:0.75rem; color:#64748B; font-weight:700;">LIVE TARGET CLOCK</div>
+                    <div style="font-weight:800; color:#083731; font-size:1.05rem;">{m_now.strftime('%I:%M %p')} <span style="font-size:0.8rem; color:#64748B;">{m_now.strftime('%Z')}</span></div>
+                    <div style="font-size:0.8rem; color:#475569; margin-top:2px;">{diff_summary}</div>
+                    <div style="display:inline-block; font-size:0.72rem; font-weight:800; color:#FFFFFF; background:{m_badge_color}; padding:2px 8px; border-radius:10px; margin-top:4px;">{m_badge_status}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        elif sched_preset.startswith("🏢 Single Office Hours"):
+            sel_mode = "office_hours"
             sel_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
             sel_start = "09:00"
             sel_end = "18:00"
             sel_enforce = True
-            st.info("Emails will only be sent Monday through Friday between 09:00 AM and 06:00 PM local time.")
-        elif sched_preset.startswith("24/7 Continuous"):
+            sel_default_market = db_default_market
+            st.info("Emails will only be sent Monday through Friday between 09:00 AM and 06:00 PM Host PC local time.")
+        elif sched_preset.startswith("⚡ 24/7 Continuous"):
+            sel_mode = "continuous"
             sel_days = list(WEEKDAY_NAMES)
             sel_start = "00:00"
             sel_end = "23:59"
             sel_enforce = False
+            sel_default_market = db_default_market
             st.info("Continuous delivery: Emails will be dispatched at any time, 24 hours a day, 7 days a week.")
         else:
+            sel_mode = "office_hours"
             sel_enforce = True
+            sel_default_market = db_default_market
             col_cs1, col_cs2, col_cs3 = st.columns([2, 1, 1])
             with col_cs1:
                 sel_days = st.multiselect(
@@ -120,7 +186,7 @@ def render_settings_tab():
 
         is_open, window_msg = is_within_sending_window()
         status_color = "#059669" if is_open else "#DC2626"
-        status_label = "WINDOW OPEN (ACTIVE DISPATCH)" if is_open else "WINDOW PAUSED (OUTSIDE SENDING HOURS)"
+        status_label = "DISPATCH ENGINE ONLINE & ACTIVE" if is_open else "WINDOW PAUSED (OUTSIDE SENDING HOURS)"
 
         st.markdown(f"""
         <div style="background:#FFFFFF; border:1.5px solid {status_color}; border-radius:8px; padding:12px 16px; margin:14px 0 18px;">
@@ -132,12 +198,15 @@ def render_settings_tab():
 
         if st.button("💾 Save Sending Schedule", type="primary", key="btn_save_settings_sched"):
             clean_days = [d for d in sel_days if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+            set_config("schedule_mode", sel_mode)
+            set_config("default_market", sel_default_market)
             set_config("enforce_sending_window", "true" if sel_enforce else "false")
             set_config("sending_days", ", ".join(clean_days))
             set_config("sending_start_time", sel_start.strip())
             set_config("sending_end_time", sel_end.strip())
             st.success("Sending schedule successfully updated and synchronized to background dispatcher.")
             st.rerun()
+
 
     # ==========================================================================
     # TAB 2: ANTI-SPAM & DISPATCH ENGINE
@@ -200,6 +269,27 @@ def render_settings_tab():
                 help="Checks that prospect's email domain has active Mail Exchange (MX) records. Prevents hard bounces before attempting dispatch."
             )
 
+        st.markdown("##### 📬 Outbound Compliance & CRM BCC Logging")
+        st.caption("Every outgoing email dispatched via Hostinger SMTP or Desktop Outlook will automatically send a hidden BCC copy to this address. Ideal for CRM audit logging (HubSpot, Salesforce, Pipedrive) or internal record keeping. Supports multiple comma-separated addresses.")
+
+        bcc_val = current_configs.get("bcc_email", "")
+        bcc_input = st.text_input(
+            "Global BCC Email Address(es)",
+            value=bcc_val,
+            placeholder="e.g. archive@sellomize.com, crm-logging@sellomize.com",
+            key="set_bcc_email",
+            help="Comma-separated addresses that will receive a hidden BCC copy of every outgoing dispatch."
+        )
+        if bcc_input.strip():
+            st.markdown(f"""
+            <div style="background:rgba(8,55,49,0.06); border:1px solid rgba(8,55,49,0.18); border-radius:6px; padding:6px 12px; margin:4px 0 10px;">
+                <span style="font-size:0.82rem; color:#083731; font-weight:700;">Active Outbound BCC:</span>
+                <span style="font-size:0.82rem; color:#0F172A; font-family:monospace;"> {bcc_input.strip()}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.caption("ℹ️ No BCC address currently configured. Outbound emails will only be sent directly to the prospect.")
+
         if st.button("💾 Save Anti-Spam & Engine Settings", type="primary", key="btn_save_engine_settings"):
             chosen_method = "hostinger_smtp" if "Hostinger" in engine_pick else "outlook"
             set_config("dispatch_method", chosen_method)
@@ -207,7 +297,8 @@ def render_settings_tab():
             set_config("max_delay_seconds", str(max_del))
             set_config("followup_delay_days", str(default_cadence_days))
             set_config("enforce_mx_check", "true" if enforce_mx else "false")
-            st.success("Anti-spam and engine settings updated successfully.")
+            set_config("bcc_email", bcc_input.strip())
+            st.success("Anti-spam, BCC, and outbound engine settings updated successfully.")
             st.rerun()
 
     # ==========================================================================

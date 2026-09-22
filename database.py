@@ -288,7 +288,10 @@ def init_db(db_path: str = DB_FILE):
         ("click_count", "INTEGER DEFAULT 0"),
         ("last_clicked_url", "TEXT DEFAULT ''"),
         ("sequence_step", "INTEGER DEFAULT 1"),
-        ("sequence_id", "TEXT DEFAULT ''")
+        ("sequence_id", "TEXT DEFAULT ''"),
+        ("target_timezone", "TEXT DEFAULT ''"),
+        ("target_country", "TEXT DEFAULT ''"),
+        ("market_key", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in email_migrations:
         try:
@@ -392,6 +395,20 @@ def init_db(db_path: str = DB_FILE):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_status_due ON sequence_rules(status, due_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_email ON sequence_rules(contact_email)")
 
+    # Schema migration: sequence_rules timezone and market columns
+    seq_rule_migrations = [
+        ("target_timezone", "TEXT DEFAULT ''"),
+        ("target_country", "TEXT DEFAULT ''"),
+        ("market_key", "TEXT DEFAULT ''")
+    ]
+    for col_name, col_def in seq_rule_migrations:
+        try:
+            valid_col = validate_identifier(col_name)
+            cursor.execute(f"ALTER TABLE sequence_rules ADD COLUMN {valid_col} {col_def}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.warning(f"OperationalError during sequence_rules migration for {col_name}: {e}")
+
     # Automatically prune historical duplicate notifications if any exist
     try:
         cursor.execute("""
@@ -411,6 +428,8 @@ def init_db(db_path: str = DB_FILE):
         "max_delay_seconds": "45",
         "sender_email": "",
         "bcc_email": "",
+        "schedule_mode": "adaptive_multi_country",
+        "default_market": "CA_EAST",
         "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
         "signature_html": "<p>Best regards,<br><strong>Listing Audit Team</strong><br><a href='https://example.com'>example.com</a></p>",
         "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
@@ -1302,15 +1321,28 @@ def create_email(
     revision_notes: Optional[str] = None,
     sequence_step: int = 1,
     sequence_id: str = "",
+    target_timezone: str = "",
+    target_country: str = "",
+    market_key: str = "",
     db_path: str = DB_FILE
 ) -> int:
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO emails (subject, recipient, email_html, status, scheduled_time, variation_num, revision_notes, sequence_step, sequence_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (subject, recipient, email_html, status, scheduled_time, variation_num, revision_notes, sequence_step, sequence_id, now_iso, now_iso))
+        INSERT INTO emails (
+            subject, recipient, email_html, status, scheduled_time,
+            variation_num, revision_notes, sequence_step, sequence_id,
+            target_timezone, target_country, market_key,
+            created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        subject, recipient, email_html, status, scheduled_time,
+        variation_num, revision_notes, sequence_step, sequence_id,
+        target_timezone.strip(), target_country.strip(), market_key.strip(),
+        now_iso, now_iso
+    ))
     email_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -1926,6 +1958,9 @@ def create_sequence_rule(
     template_id: int,
     custom_subject: str = "",
     trigger_email_id: Optional[int] = None,
+    target_timezone: str = "",
+    target_country: str = "",
+    market_key: str = "",
     db_path: str = DB_FILE
 ) -> int:
     """Register an automated follow-up sequence rule for a contact."""
@@ -1936,12 +1971,14 @@ def create_sequence_rule(
         INSERT INTO sequence_rules (
             sequence_id, contact_id, contact_email, step_number,
             delay_unit, delay_value, template_id, custom_subject,
-            trigger_email_id, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting_Trigger', ?)
+            trigger_email_id, target_timezone, target_country, market_key,
+            status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting_Trigger', ?)
     """, (
         sequence_id, contact_id, contact_email.strip().lower(), step_number,
         delay_unit.lower(), int(delay_value), template_id, custom_subject.strip(),
-        trigger_email_id, now_iso
+        trigger_email_id, target_timezone.strip(), target_country.strip(), market_key.strip(),
+        now_iso
     ))
     rid = cursor.lastrowid
     conn.commit()
