@@ -165,7 +165,8 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 "followup2": "Follow-Up 2+ (Emailed 2+ times)",
                 "opened": "Opened Previous Email",
                 "clicked": "Clicked a Link",
-                "due": "Due for Follow-Up Today"
+                "due": "Due for Follow-Up Today",
+                "replied": "Replied / Engaged Leads (Previously Responded)"
             }
 
             all_distinct_tags = get_all_distinct_tags()
@@ -220,6 +221,11 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 stage_filtered = [
                     c for c in active_candidates
                     if (c.get("next_follow_up") and c.get("next_follow_up") <= today_str)
+                ]
+            elif selected_stage_key == "replied":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if (c.get("status") == "Replied" or "Replied" in (c.get("tags") or "") or "Replied" in (c.get("tags_list") or []))
                 ]
             else:
                 stage_filtered = active_candidates
@@ -473,7 +479,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         st.markdown("""
         <div style="background:rgba(8,55,49,0.04); border:1px solid rgba(8,55,49,0.12); border-radius:8px; padding:8px 12px; margin:8px 0 14px;">
             <span style="font-size:0.82rem; color:#083731; font-weight:700;">🛡️ Intelligent Reply Guard Active:</span>
-            <span style="font-size:0.8rem; color:#475569;"> When a prospect replies, all subsequent scheduled sequence follow-ups for that contact are automatically cancelled.</span>
+            <span style="font-size:0.8rem; color:#475569;"> When a prospect replies, subsequent automated follow-ups (Touch 2 &amp; 3) are automatically cancelled. One-time emails, single 1-to-1 outreach, and marketing campaigns are always preserved.</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -684,8 +690,10 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 # 2. Persist user's configured follow-up sequence interval
                 if num_touches >= 2:
                     set_config("followup_delay_days", str(int(touch_configs[1]["delay_days"])))
+                    batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
+                else:
+                    batch_seq_id = ""
 
-                batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
                 neg_keywords_setting = get_config("negative_keywords", "")
 
                 total_expected = len(selected_contact_ids) * num_touches
@@ -735,16 +743,24 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                         if triggers:
                             status = "Flagged"
                             trig_str = ", ".join([f"'{t}'" for t in triggers])
-                            notes = f"Touch {step_num}/{num_touches}: Flagged for trigger keyword(s): {trig_str}"
+                            if num_touches > 1:
+                                notes = f"Touch {step_num}/{num_touches}: Flagged for trigger keyword(s): {trig_str}"
+                            else:
+                                notes = f"Flagged for trigger keyword(s): {trig_str}"
                             created_flagged += 1
                             flagged_details.append({
                                 "recipient": contact["email"],
-                                "touch": f"Touch {step_num}",
+                                "touch": f"Touch {step_num}" if num_touches > 1 else "One-Time Mail",
                                 "triggers": triggers
                             })
                         else:
                             status = "Pending"
-                            notes = f"Sequence Touch {step_num}/{num_touches}"
+                            if num_touches > 1:
+                                notes = f"Sequence Touch {step_num}/{num_touches}"
+                            elif len(selected_contact_ids) == 1:
+                                notes = "One-Time Outreach Email"
+                            else:
+                                notes = "Marketing Campaign Email"
                             created_pending += 1
 
                         if step_num == 1:

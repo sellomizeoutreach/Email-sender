@@ -1663,10 +1663,14 @@ def record_email_reply(
             WHERE id = ?
         """, (today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
 
-    # 2. Auto-cancel all pending / approved / flagged outbox emails for this contact
+    # 2. Auto-cancel queued sequence follow-up touches (sequence_step > 1) for this contact.
+    # One-time emails (sequence_step <= 1, single outreach, or marketing campaigns) are preserved
+    # so users can freely send single 1-to-1 emails or marketing campaign blasts after a reply.
     cursor.execute("""
         SELECT id FROM emails
-        WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved', 'Flagged')
+        WHERE LOWER(TRIM(recipient)) = ? 
+          AND status IN ('Pending', 'Approved', 'Flagged')
+          AND sequence_step > 1
     """, (clean_email,))
     pending_emails = cursor.fetchall()
     cancelled_ids = [r["id"] for r in pending_emails]
@@ -1675,15 +1679,17 @@ def record_email_reply(
         cursor.execute("""
             UPDATE emails SET
                 status = 'Cancelled',
-                error_message = 'Auto-cancelled: Prospect replied to outreach'
-            WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved', 'Flagged')
+                error_message = 'Auto-cancelled: Prospect replied to outreach (sequence follow-up cancelled; one-time mails preserved)'
+            WHERE LOWER(TRIM(recipient)) = ? 
+              AND status IN ('Pending', 'Approved', 'Flagged')
+              AND sequence_step > 1
         """, (clean_email,))
 
     # 3. Record persistent in-app reply notification
     disp_name = contact_names[0] if contact_names else clean_email
     notif_title = f"💬 New Reply from {disp_name}"
     subj_part = f" ('{reply_subject[:45]}')" if reply_subject else ""
-    canc_part = f" — {len(cancelled_ids)} queued follow-up(s) auto-cancelled." if cancelled_ids else "."
+    canc_part = f" — {len(cancelled_ids)} scheduled sequence follow-up(s) auto-cancelled (one-time mails preserved)." if cancelled_ids else " (one-time emails preserved)."
     notif_body = f"Prospect {clean_email} responded to outreach{subj_part}{canc_part}"
     cursor.execute("""
         INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)

@@ -173,7 +173,13 @@ def render_review_tab():
                 else:
                     prefix = "🚨 FLAGGED"
             seq_step = draft.get("sequence_step") or 1
-            seq_badge = f" [Touch {seq_step}]" if (seq_step and (seq_step > 1 or draft.get("sequence_id"))) else ""
+            has_seq_id = bool(draft.get("sequence_id"))
+            if seq_step > 1:
+                seq_badge = f" [Sequence Touch {seq_step}]"
+            elif has_seq_id:
+                seq_badge = f" [Sequence Touch 1]"
+            else:
+                seq_badge = f" [One-Time Mail]"
             container_title = f"{prefix} #{draft_id}{seq_badge} (🛡️ {draft_audit['score']}/100) - {current_subject} -> {draft.get('recipient')}"
 
             col_chk, col_exp = st.columns([0.05, 0.95], vertical_alignment="top")
@@ -183,22 +189,20 @@ def render_review_tab():
                     f"Select draft #{draft_id}",
                     key=f"sel_draft_{draft_id}",
                     label_visibility="collapsed",
-                    disabled=bool(current_live_triggers),
-                    help="Check to approve and send this email. Uncheck to hold or skip."
+                    help=f"Select draft #{draft_id} for batch actions"
                 )
 
             with col_exp:
                 with st.expander(container_title, expanded=is_flagged):
-                    if draft.get("created_at"):
-                        st.markdown(f"<div class='timestamp-right'>Created: {draft['created_at'][:19]}</div>", unsafe_allow_html=True)
-                    if draft.get("sequence_step") and draft.get("sequence_step") > 1:
-                        st.caption(f"⚡ **Sequence Cadence Step {draft['sequence_step']}**: Scheduled for dispatch at `{draft.get('scheduled_time')}`. Auto-cancels if recipient replies.")
-
                     # DUAL-PANE SPLIT PREVIEW WORKSPACE
                     col_editor, col_preview = st.columns([1, 1], gap="medium")
 
                     with col_editor:
                         st.markdown("##### ✏️ Draft Copy & Recipient")
+                        if seq_step > 1:
+                            st.caption("⚡ **Sequence Follow-Up Touch**: Protected by Intelligent Reply Guard (auto-cancels if prospect replies before dispatch).")
+                        else:
+                            st.caption("🛡️ **One-Time / Direct Mail**: Protected against auto-cancellation. Safe for single 1-to-1 outreach and marketing campaigns.")
                         updated_subject = st.text_input("Subject Line", value=draft["subject"], key=subject_key)
 
                         col_r1, col_r2 = st.columns([1.8, 1.2])

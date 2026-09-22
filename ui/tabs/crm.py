@@ -117,6 +117,14 @@ def render_edit_contact_dialog(contact: dict):
                 help="One variable per line (e.g. Category: Skincare or Location: NYC). No JSON syntax required!"
             )
 
+    col_outreach_quick, _ = st.columns([2, 1])
+    with col_outreach_quick:
+        if st.button("✉️ Draft 1-to-1 Email / Sequence", key=f"dlg_btn_outreach_{c_id}", help="Pre-select this lead in Sequences & Campaigns"):
+            st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
+            st.session_state["camp_single_contact_picker"] = c_id
+            st.session_state["crm_editing_id"] = None
+            st.rerun()
+
     st.markdown("<hr style='margin: 14px 0 16px; opacity: 0.2;'>", unsafe_allow_html=True)
 
     # Unified Action Toolbar inside Dialog: Update, Delete, and Cancel together
@@ -731,9 +739,15 @@ def render_crm_tab(all_contacts=None):
                             unsafe_allow_html=True
                         )
 
-                    col_btn_edit, col_btn_del = st.columns([2.5, 1])
+                    col_btn_mail, col_btn_edit, col_btn_del = st.columns([1, 2.2, 0.8])
+                    with col_btn_mail:
+                        if st.button("✉️", key=f"mail_btn_{c_id}", use_container_width=True, help=f"Draft 1-to-1 email or sequence for {contact['name']}"):
+                            st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
+                            st.session_state["camp_single_contact_picker"] = c_id
+                            st.rerun()
+
                     with col_btn_edit:
-                        if st.button("✏️ Edit & Manage", key=f"edit_btn_{c_id}", use_container_width=True):
+                        if st.button("✏️ Edit", key=f"edit_btn_{c_id}", use_container_width=True):
                             st.session_state["crm_editing_id"] = c_id
                             st.rerun()
 

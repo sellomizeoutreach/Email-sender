@@ -910,6 +910,7 @@ class TestEmailAutomationSystem(unittest.TestCase):
             recipient="alex@mercerretail.com",
             status="Approved",
             scheduled_time="2026-09-22 10:00:00",
+            sequence_step=2,
             db_path=TEST_DB
         )
         e3 = create_email(
@@ -918,6 +919,18 @@ class TestEmailAutomationSystem(unittest.TestCase):
             recipient="alex@mercerretail.com",
             status="Pending",
             scheduled_time="2026-09-26 10:00:00",
+            sequence_step=3,
+            db_path=TEST_DB
+        )
+
+        # Also queue a one-time mail (sequence_step=1) to verify it is NOT cancelled on reply!
+        e_onetime = create_email(
+            email_html="<p>One-Time Special Proposal</p>",
+            subject="Exclusive Partner Invite",
+            recipient="alex@mercerretail.com",
+            status="Pending",
+            scheduled_time="2026-09-27 10:00:00",
+            sequence_step=1,
             db_path=TEST_DB
         )
 
@@ -928,6 +941,7 @@ class TestEmailAutomationSystem(unittest.TestCase):
             recipient="other@brand.com",
             status="Approved",
             scheduled_time="2026-09-22 10:00:00",
+            sequence_step=2,
             db_path=TEST_DB
         )
 
@@ -944,6 +958,11 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertEqual(reply_res["cancelled_drafts_count"], 2)
         self.assertIn(e2, reply_res["cancelled_email_ids"])
         self.assertIn(e3, reply_res["cancelled_email_ids"])
+        self.assertNotIn(e_onetime, reply_res["cancelled_email_ids"])
+
+        # Check that one-time mail remains Pending
+        rec_onetime = get_email_by_id(e_onetime, db_path=TEST_DB)
+        self.assertEqual(rec_onetime["status"], "Pending")
 
         # 5. Check contact record: status must be 'Replied', note appended, tag added
         c_after = get_contact_by_id(cid, db_path=TEST_DB)
@@ -1787,13 +1806,18 @@ class TestEmailAutomationSystem(unittest.TestCase):
         )
 
         self.assertTrue(reply_res["contact_found"])
-        self.assertEqual(reply_res["cancelled_drafts_count"], 3)
-        self.assertIn(t1, reply_res["cancelled_email_ids"])
+        # Only sequence follow-ups (Touch 2 and 3) must be auto-cancelled (2 drafts).
+        # One-time emails (Touch 1 / single mails) are preserved!
+        self.assertEqual(reply_res["cancelled_drafts_count"], 2)
+        self.assertNotIn(t1, reply_res["cancelled_email_ids"])
         self.assertIn(t2, reply_res["cancelled_email_ids"])
         self.assertIn(t3, reply_res["cancelled_email_ids"])
 
-        # Check all touches are Cancelled
-        for tid in [t1, t2, t3]:
+        # Check Touch 1 remains Approved (preserved), while Touch 2 & 3 are Cancelled
+        rec1 = get_email_by_id(t1, db_path=TEST_DB)
+        self.assertEqual(rec1["status"], "Approved")
+
+        for tid in [t2, t3]:
             rec = get_email_by_id(tid, db_path=TEST_DB)
             self.assertEqual(rec["status"], "Cancelled")
             self.assertIn("Auto-cancelled", rec.get("error_message", ""))
@@ -1837,6 +1861,62 @@ class TestEmailAutomationSystem(unittest.TestCase):
 
         # Delete notification
         delete_notification(nid, db_path=TEST_DB)
+
+    def test_54_can_send_single_and_marketing_emails_after_reply(self):
+        """Test that after a contact has replied, one-time 1-to-1 and marketing emails can be scheduled and sent without cancellation."""
+        engaged_email = "engaged_vip@brandpartners.com"
+        cid = create_contact(name="Elena Vance", email=engaged_email, company="Vance Media", db_path=TEST_DB)
+
+        # 1. Simulate prior outreach and reply
+        record_email_reply(
+            sender_email=engaged_email,
+            reply_subject="I loved your proposal!",
+            db_path=TEST_DB
+        )
+        c_status = get_contact_by_id(cid, db_path=TEST_DB)["status"]
+        self.assertEqual(c_status, "Replied")
+
+        # 2. Queue a single 1-to-1 follow-up email (one-time mail: sequence_step=1)
+        single_mail_id = create_email(
+            email_html="<p>Here is the custom proposal doc you asked for.</p>",
+            subject="Re: Custom Proposal for Vance Media",
+            recipient=engaged_email,
+            status="Approved",
+            sequence_step=1,
+            db_path=TEST_DB
+        )
+
+        # 3. Queue a marketing campaign email (one-time mail: sequence_step=1)
+        marketing_mail_id = create_email(
+            email_html="<p>Special Webinar: Scaling Q4 Brand Revenue</p>",
+            subject="Invitation: VIP Brand Scaling Workshop",
+            recipient=engaged_email,
+            status="Pending",
+            sequence_step=1,
+            db_path=TEST_DB
+        )
+
+        # 4. Simulate an incoming reply detection or check
+        reply_check = record_email_reply(
+            sender_email=engaged_email,
+            reply_subject="Just confirming Thursday meeting",
+            db_path=TEST_DB
+        )
+
+        # Neither the single mail nor the marketing campaign should be cancelled!
+        self.assertEqual(reply_check["cancelled_drafts_count"], 0)
+        self.assertNotIn(single_mail_id, reply_check["cancelled_email_ids"])
+        self.assertNotIn(marketing_mail_id, reply_check["cancelled_email_ids"])
+
+        m1 = get_email_by_id(single_mail_id, db_path=TEST_DB)
+        m2 = get_email_by_id(marketing_mail_id, db_path=TEST_DB)
+        self.assertEqual(m1["status"], "Approved")
+        self.assertEqual(m2["status"], "Pending")
+
+        # 5. Advance followup or dispatch: contact status remains Replied
+        advance_contact_followup(engaged_email, delay_days=3, db_path=TEST_DB)
+        c_final = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_final["status"], "Replied")
 
 if __name__ == "__main__":
     unittest.main()
