@@ -78,36 +78,32 @@ def render_header():
     unread_notifs = get_unread_notifications_count()
     if unread_notifs > 0:
         badge_lbl = f"{unread_notifs} NEW REPLY" if unread_notifs == 1 else f"{unread_notifs} NEW REPLIES"
-        notif_badge_html = f"""
-        <div style="background:#FD4D1B; color:#FFFFFF; border:1.5px solid #FF8059; padding:5px 13px; border-radius:20px; font-size:0.75rem; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; box-shadow:0 0 12px rgba(253,77,27,0.5); display:inline-flex; align-items:center; gap:6px;">
-            <span>🔔</span>
-            <span>{badge_lbl}</span>
-        </div>
-        """
+        notif_badge_html = f'<div style="background:#FD4D1B; color:#FFFFFF; border:1.5px solid #FF8059; padding:5px 13px; border-radius:20px; font-size:0.75rem; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; box-shadow:0 0 12px rgba(253,77,27,0.5); display:inline-flex; align-items:center; gap:6px;"><span>🔔</span><span>{badge_lbl}</span></div>'
     else:
         notif_badge_html = ""
 
-    st.markdown(f"""
-<div class="sellomize-header-container">
-    <div class="sellomize-header-left">
-        {logo_html}
-        <div>
-            <div class="sellomize-brand-title">SELLOMIZE <span class="sellomize-highlight">REACH</span></div>
-            <div class="sellomize-brand-subtitle">Desktop Outbound Engine & Multi-Account Outreach Suite</div>
-        </div>
-    </div>
-    <div class="sellomize-header-right">
-        {notif_badge_html}
-        <div class="system-status-pill">
-            <span class="status-indicator-dot"></span>
-            <span>ENGINE ONLINE</span>
-        </div>
-        <div class="sellomize-header-badge">
-            <span>Agency Edition</span>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    header_html = (
+        f'<div class="sellomize-header-container">'
+        f'<div class="sellomize-header-left">'
+        f'{logo_html}'
+        f'<div>'
+        f'<div class="sellomize-brand-title">SELLOMIZE <span class="sellomize-highlight">REACH</span></div>'
+        f'<div class="sellomize-brand-subtitle">Desktop Outbound Engine & Multi-Account Outreach Suite</div>'
+        f'</div>'
+        f'</div>'
+        f'<div class="sellomize-header-right">'
+        f'{notif_badge_html}'
+        f'<div class="system-status-pill">'
+        f'<span class="status-indicator-dot"></span>'
+        f'<span>ENGINE ONLINE</span>'
+        f'</div>'
+        f'<div class="sellomize-header-badge">'
+        f'<span>Agency Edition</span>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+    )
+    st.markdown(header_html, unsafe_allow_html=True)
 
 
 def render_tab_header(title: str, subtitle: str = ""):
@@ -120,20 +116,21 @@ def render_tab_header(title: str, subtitle: str = ""):
 
     subtitle_html = f"<div style='font-size:0.83rem; color:#64748B; font-weight:500; margin-top:2px;'>{subtitle}</div>" if subtitle else ""
 
-    st.markdown(f"""
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px; margin-top:2px;">
-        {logo_tag}
-        <div>
-            <div style="font-size:1.32rem; font-weight:800; color:#083731; letter-spacing:-0.3px; line-height:1.2;">{title}</div>
-            {subtitle_html}
-        </div>
-    </div>
-    <div style="height:1px; background:linear-gradient(90deg, rgba(8,55,49,0.12), transparent); margin:8px 0 16px;"></div>
-    """, unsafe_allow_html=True)
+    tab_header_html = (
+        f'<div style="display:flex; align-items:center; gap:12px; margin-bottom:4px; margin-top:2px;">'
+        f'{logo_tag}'
+        f'<div>'
+        f'<div style="font-size:1.35rem; font-weight:800; color:#083731; letter-spacing:-0.3px;">{title}</div>'
+        f'{subtitle_html}'
+        f'</div>'
+        f'</div>'
+        f'<div style="height:1px; background:linear-gradient(90deg, rgba(8,55,49,0.12), transparent); margin:8px 0 16px;"></div>'
+    )
+    st.markdown(tab_header_html, unsafe_allow_html=True)
 
 
 def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, flagged_count: int):
-    """Render live statistics banner and outreach metrics grid with small-sample discipline."""
+    """Render live statistics banner with real verifiable outreach metrics (no untrackable pixels)."""
     flagged_card_class = "stat-card-alert" if flagged_count > 0 else ""
     flagged_val_class = "stat-val-alert" if flagged_count > 0 else ""
     flagged_sub_class = "stat-sub-alert" if flagged_count > 0 else "stat-sub-clean"
@@ -141,18 +138,11 @@ def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, 
 
     total_sent = int(analytics.get("total_sent", 0))
     total_bounced = int(analytics.get("total_bounced", 0))
-    total_opened = int(analytics.get("total_opened", 0))
     total_replied = int(analytics.get("total_replied", 0))
-    open_rate = float(analytics.get("open_rate", 0.0))
     reply_rate = float(analytics.get("reply_rate", 0.0))
     bounce_rate = float(analytics.get("bounce_rate", 0.0))
 
-    # Small-sample statistical discipline (< 20 sends is too small for meaningful percentages)
-    if total_sent < 20:
-        open_val = f"{total_opened} / {total_sent}" if total_sent > 0 else "0"
-        open_sub = "Need 20+ sends for rate" if total_sent > 0 else "No sends yet"
-        open_style = "color: #64748B;"
-
+    if total_sent < 10:
         reply_val = f"{total_replied}"
         reply_sub = f"{total_replied} / {total_sent} sent" if total_sent > 0 else "0 sent"
         reply_style = "color: #083731;"
@@ -161,77 +151,54 @@ def render_stat_banner(analytics: dict, all_contacts: list, pending_count: int, 
         bounced_val_class = ""
         bounced_val = f"{total_bounced}"
         bounced_sub = f"{total_bounced} / {total_sent} sent" if total_sent > 0 else "0 sent"
+        delivery_health_label = "100% Clean" if total_bounced == 0 else f"{total_bounced} Bounced"
     else:
-        open_val = f"{open_rate:.1f}%"
-        open_sub = f"{total_opened} Opened Pixel"
-        if open_rate == 0.0:
-            open_style = "color: #64748B;"
-        elif open_rate >= 15.0:
-            open_style = "color: #059669;"
-        else:
-            open_style = "color: #083731;"
-
         reply_val = f"{total_replied}"
         reply_sub = f"{reply_rate:.1f}% Reply Rate"
-        reply_style = "color: #083731;"
+        reply_style = "color: #059669;" if reply_rate >= 10.0 else "color: #083731;"
 
         is_bounce_crisis = (bounce_rate >= 5.0 and total_bounced >= 2)
         bounced_card_class = "stat-card-alert" if is_bounce_crisis else ""
         bounced_val_class = "stat-val-alert" if is_bounce_crisis else ""
         bounced_val = f"{total_bounced}"
         bounced_sub = f"{bounce_rate:.1f}% Bounce Rate"
+        clean_deliv_rate = max(0.0, 100.0 - bounce_rate)
+        delivery_health_label = f"{clean_deliv_rate:.1f}% Delivery"
 
-    st.markdown(f"""
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-header">
-            <span class="stat-label">Saved Leads</span>
-        </div>
-        <div class="stat-value">{len(all_contacts)}</div>
-        <div class="stat-sub">{analytics.get("contacted_count", 0)} Contacted</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-header">
-            <span class="stat-label">Pending Review</span>
-        </div>
-        <div class="stat-value">{pending_count}</div>
-        <div class="stat-sub">Awaiting Approval</div>
-    </div>
-    <div class="stat-card {flagged_card_class}">
-        <div class="stat-header">
-            <span class="stat-label">Flagged Drafts</span>
-        </div>
-        <div class="stat-value {flagged_val_class}">{flagged_count}</div>
-        <div class="stat-sub {flagged_sub_class}">{flagged_sub_text}</div>
-    </div>
-    <div class="stat-card stat-card-highlight">
-        <div class="stat-header">
-            <span class="stat-label">Total Sent</span>
-        </div>
-        <div class="stat-value stat-val-glow">{total_sent}</div>
-        <div class="stat-sub">Hostinger & Outlook</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-header">
-            <span class="stat-label">Open Rate</span>
-        </div>
-        <div class="stat-value" style="{open_style}">{open_val}</div>
-        <div class="stat-sub">{open_sub}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-header">
-            <span class="stat-label">Replies</span>
-        </div>
-        <div class="stat-value" style="{reply_style}">{reply_val}</div>
-        <div class="stat-sub">{reply_sub}</div>
-    </div>
-    <div class="stat-card {bounced_card_class}">
-        <div class="stat-header">
-            <span class="stat-label">Bounces</span>
-        </div>
-        <div class="stat-value {bounced_val_class}">{bounced_val}</div>
-        <div class="stat-sub">{bounced_sub}</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    contacted_count = analytics.get("contacted_count", 0)
 
+    banner_html = (
+        f'<div class="stats-grid">'
+        f'<div class="stat-card">'
+        f'<div class="stat-header"><span class="stat-label">Saved Leads</span></div>'
+        f'<div class="stat-value">{len(all_contacts)}</div>'
+        f'<div class="stat-sub">{contacted_count} Contacted</div>'
+        f'</div>'
+        f'<div class="stat-card">'
+        f'<div class="stat-header"><span class="stat-label">Pending Review</span></div>'
+        f'<div class="stat-value">{pending_count}</div>'
+        f'<div class="stat-sub">Awaiting Approval</div>'
+        f'</div>'
+        f'<div class="stat-card {flagged_card_class}">'
+        f'<div class="stat-header"><span class="stat-label">Flagged Drafts</span></div>'
+        f'<div class="stat-value {flagged_val_class}">{flagged_count}</div>'
+        f'<div class="stat-sub {flagged_sub_class}">{flagged_sub_text}</div>'
+        f'</div>'
+        f'<div class="stat-card stat-card-highlight">'
+        f'<div class="stat-header"><span class="stat-label">Total Sent</span></div>'
+        f'<div class="stat-value stat-val-glow">{total_sent}</div>'
+        f'<div class="stat-sub">Hostinger Outbound</div>'
+        f'</div>'
+        f'<div class="stat-card">'
+        f'<div class="stat-header"><span class="stat-label">Prospect Replies</span></div>'
+        f'<div class="stat-value" style="{reply_style}">{reply_val}</div>'
+        f'<div class="stat-sub">{reply_sub}</div>'
+        f'</div>'
+        f'<div class="stat-card {bounced_card_class}">'
+        f'<div class="stat-header"><span class="stat-label">Deliverability Health</span></div>'
+        f'<div class="stat-value {bounced_val_class}">{delivery_health_label}</div>'
+        f'<div class="stat-sub">{bounced_sub}</div>'
+        f'</div>'
+        f'</div>'
+    )
+    st.markdown(banner_html, unsafe_allow_html=True)

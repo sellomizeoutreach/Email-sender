@@ -261,6 +261,8 @@ def scan_hostinger_inbox(
     from database import (
         record_email_bounce,
         record_email_reply,
+        is_inbox_message_processed,
+        mark_inbox_message_processed,
         get_connection,
         DB_FILE
     )
@@ -330,10 +332,20 @@ def scan_hostinger_inbox(
             from_raw = header_msg.get("From", "")
             subject = header_msg.get("Subject", "")
             date_str = header_msg.get("Date", "")
+            raw_msg_id = (header_msg.get("Message-ID") or "").strip()
 
             # Extract clean email address from From header
             _, parsed_email = email.utils.parseaddr(from_raw)
             clean_from = parsed_email.strip().lower()
+
+            # Compute stable message identifier to prevent duplicate processing
+            if raw_msg_id:
+                msg_token = raw_msg_id
+            else:
+                msg_token = f"{user}:{clean_from}:{subject[:40]}:{date_str}"
+
+            if is_inbox_message_processed(msg_token, target_db):
+                continue
 
             # Check if this is an NDR bounce
             is_bounce_notice = (
@@ -355,6 +367,7 @@ def scan_hostinger_inbox(
                             "reason": reason,
                             "mailbox": user
                         })
+                mark_inbox_message_processed(msg_token, sender_email=clean_from, subject=subject, mailbox=user, db_path=target_db)
                 continue
 
             # Check if this is an incoming reply from a known CRM lead
@@ -372,6 +385,7 @@ def scan_hostinger_inbox(
                     "cancelled_followups": reply_info.get("cancelled_drafts_count", 0)
                 })
                 logger.info(f"[Reply Detector] Detected reply from {clean_from}! Subject: '{subject}'. Auto-cancelled {reply_info.get('cancelled_drafts_count', 0)} follow-up draft(s).")
+                mark_inbox_message_processed(msg_token, sender_email=clean_from, subject=subject, mailbox=user, db_path=target_db)
 
         logger.info(f"Scanned {len(recent_ids)} message header(s) for {user}; detected {len(result['bounces'])} bounce(s), {len(result['replies'])} reply/replies.")
     except Exception as e:

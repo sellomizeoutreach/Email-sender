@@ -659,13 +659,132 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
 # Backward compatibility alias
 dispatch_email = dispatch_email_outlook
 
+def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
+    """
+    Check for sequence rules whose delay timer has expired since the outreach email was sent.
+    If the contact hasn't replied, automatically generates the follow-up email draft with
+    the specified template and variables, scheduled for the earliest valid sending window slot.
+    """
+    target_db = db_path or DB_FILE
+    from database import (
+        get_due_sequence_rules,
+        mark_sequence_rule_status,
+        get_contact_by_email,
+        get_contact_by_id,
+        get_template_by_id,
+        create_email,
+        create_notification,
+        create_sequence_rule,
+        link_sequence_rule_trigger,
+        get_config
+    )
+    from template_engine import resolve_template, format_email_html, parse_spintax, inject_variables, scan_all_negative_keywords
+
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    due_rules = get_due_sequence_rules(current_time_iso=now_iso, db_path=target_db)
+    generated_count = 0
+
+    neg_keywords_setting = get_config("negative_keywords", "", db_path=target_db)
+
+    for rule in due_rules:
+        rid = rule["id"]
+        c_email = (rule.get("contact_email") or "").strip().lower()
+        contact = get_contact_by_email(c_email, db_path=target_db)
+        if not contact and rule.get("contact_id"):
+            contact = get_contact_by_id(rule["contact_id"], db_path=target_db)
+
+        if not contact:
+            mark_sequence_rule_status(rid, "Cancelled", db_path=target_db)
+            continue
+
+        c_status = contact.get("status") or ""
+        # Check if prospect replied or bounced or opted out
+        if c_status in ["Replied", "Bounced", "Do Not Contact", "Closed Won", "Closed Lost"] or "Replied" in (contact.get("tags") or ""):
+            mark_sequence_rule_status(rid, "Cancelled", db_path=target_db)
+            logger.info(f"[Sequence Engine] Cancelled Rule #{rid} for {c_email} (Contact status: {c_status}).")
+            continue
+
+        tpl = get_template_by_id(rule["template_id"], db_path=target_db)
+        if not tpl:
+            logger.warning(f"[Sequence Engine] Rule #{rid}: Template ID #{rule['template_id']} not found.")
+            mark_sequence_rule_status(rid, "Cancelled", db_path=target_db)
+            continue
+
+        raw_subj = rule.get("custom_subject") or f"Re: Follow up for {contact.get('company') or contact['name']}"
+        resolved_subj = parse_spintax(inject_variables(raw_subj, contact))
+        resolved_body = resolve_template(tpl["body_content"], contact)
+        final_html = format_email_html(resolved_body)
+
+        combined_text = f"{resolved_subj} {final_html}"
+        triggers = scan_all_negative_keywords(combined_text, neg_keywords_setting)
+
+        step_num = rule.get("step_number", 2)
+        delay_val = rule.get("delay_value", 3)
+        delay_unit = rule.get("delay_unit", "days")
+
+        if triggers:
+            email_status = "Flagged"
+            trig_str = ", ".join([f"'{t}'" for t in triggers])
+            notes = f"Sequence Step {step_num}: Flagged for trigger keyword(s): {trig_str}"
+        else:
+            email_status = "Pending"
+            notes = f"Sequence Step {step_num} (Auto-generated after {delay_val} {delay_unit} delay)"
+
+        next_dt = get_next_valid_sending_datetime(delay_minutes=0, db_path=target_db)
+        sched_time_str = next_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        new_eid = create_email(
+            email_html=final_html,
+            subject=resolved_subj,
+            recipient=c_email,
+            status=email_status,
+            scheduled_time=sched_time_str,
+            revision_notes=notes,
+            sequence_step=step_num,
+            sequence_id=rule.get("sequence_id", ""),
+            db_path=target_db
+        )
+
+        mark_sequence_rule_status(rid, "Generated", db_path=target_db)
+        generated_count += 1
+
+        # If Step 2 was just generated, link new_eid as trigger for Step 3 rule
+        if step_num == 2 and rule.get("sequence_id"):
+            link_sequence_rule_trigger(
+                sequence_id=rule["sequence_id"],
+                contact_email=c_email,
+                step_number=3,
+                trigger_email_id=new_eid,
+                db_path=target_db
+            )
+
+        create_notification(
+            type="system",
+            title=f"⚡ Auto-Generated Follow-Up for {contact['name']}",
+            message=f"Created Step {step_num} follow-up draft ('{resolved_subj}') for {c_email} after {delay_val} {delay_unit} send delay.",
+            contact_email=c_email,
+            db_path=target_db
+        )
+        logger.info(f"[Sequence Engine] Auto-generated follow-up draft #{new_eid} for {c_email} (Step {step_num}).")
+
+    return generated_count
+
 def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) -> int:
     """
     Check database for due approved emails and dispatch them.
     Explicitly enforces comparison against Local System Time (YYYY-MM-DD HH:MM:SS)
     and validates whether current time falls within allowed business sending days & hours.
+    Also processes automated follow-up sequence rules whose send delay has elapsed.
     """
     target_db = db_path or DB_FILE
+
+    # 1. Process automated follow-up sequence rules waiting on send delays
+    try:
+        process_due_sequence_rules(db_path=target_db)
+    except Exception as seq_err:
+        logger.warning(f"Error processing due sequence rules: {seq_err}")
+
+    # 2. Check sending window
     in_window, window_msg = is_within_sending_window(db_path=target_db)
     if not in_window and not dry_run:
         logger.info(f"[Scheduler] Dispatch paused: {window_msg}.")

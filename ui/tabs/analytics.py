@@ -16,7 +16,6 @@ from database import (
     get_emails
 )
 from smtp_dispatcher import scan_all_hostinger_inbox
-from tracker import is_port_in_use, start_tracking_server, get_tracking_base_url
 from ui.components import render_stat_banner, render_tab_header
 
 
@@ -27,7 +26,7 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
     if all_emails is None:
         all_emails = get_emails()
 
-    render_tab_header("📊 Outreach Analytics & Performance", "Real-time email performance telemetry, 1x1 transparent pixel open tracking, and Hostinger IMAP bounce detection.")
+    render_tab_header("📊 Outreach Analytics & Performance", "Real-time email performance telemetry, confirmed prospect replies, Hostinger IMAP bounce quarantine, and dispatch ledger.")
 
     analytics_live = get_outreach_analytics()
     bounced_leads = get_bounced_contacts()
@@ -112,69 +111,29 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
 
     st.markdown("---")
 
-    # Section 4: Open Tracking Diagnostics & Server Status
-    st.markdown("### 👁️ 1x1 Pixel Open Tracking Telemetry")
-    st.caption("Sellomize Reach embeds an invisible transparent 1x1 PNG tracking pixel into HTML emails. When opened by the recipient, it logs the open event, increments open count, and updates lead status to 'Opened / Interested'.")
-
-    server_running = is_port_in_use(8502)
-    if server_running:
-        st.markdown("""
-        <div style="display:inline-flex; align-items:center; gap:8px; background:rgba(16,185,129,0.12); border:1px solid #10B981; border-radius:20px; padding:6px 16px; margin-bottom:12px;">
-            <span style="color:#10B981; font-weight:700; font-size:0.9rem;">🟢 Tracking Active</span>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        col_trk_off1, col_trk_off2 = st.columns([2, 1.5])
-        with col_trk_off1:
-            st.markdown("""
-            <div style="display:inline-flex; align-items:center; gap:8px; background:rgba(239,68,68,0.12); border:1px solid #EF4444; border-radius:20px; padding:6px 16px; margin-bottom:12px;">
-                <span style="color:#EF4444; font-weight:700; font-size:0.9rem;">🔴 Tracking Offline</span>
-            </div>
-            """, unsafe_allow_html=True)
-        with col_trk_off2:
-            if st.button("Start Tracking Server", key="start_trk_srv"):
-                start_tracking_server(port=8502)
-                st.rerun()
-
-    with st.expander("⚙️ Advanced Tracking Settings", expanded=False):
-        st.caption("Internal telemetry service listens on local port `8502`.")
-        curr_base_url = get_tracking_base_url()
-        new_base_url = st.text_input(
-            "Tracking Server Public / Base URL",
-            value=curr_base_url,
-            help="For external recipients to report opens and clicks, enter your public domain, static IP, or ngrok tunnel URL (e.g. https://track.sellomize.com or https://abc.ngrok.app)."
-        )
-        an_click_track = st.checkbox(
-            "Enable Link Click Tracking (Requires public tracking domain)",
-            value=(get_config("enable_click_tracking", "false") or "false").lower() in ["true", "1", "yes"],
-            help="When disabled or when using localhost, links in emails remain direct (e.g. https://sellomize.com) so prospects can always open them without connection errors.",
-            key="an_chk_click_track"
-        )
-        if st.button("💾 Save Tracking Settings", key="btn_save_trk_url"):
-            set_config("tracking_base_url", new_base_url.strip())
-            set_config("enable_click_tracking", "true" if an_click_track else "false")
-            st.success("Tracking settings saved!")
-            st.rerun()
-
-    # Section 5: Sent Emails with Open Tracking Status
-    st.markdown("#### 📬 Sent Messages Delivery & Read Receipts")
+    # Section 4: Sent Outreach Ledger & Delivery Health
+    st.markdown("#### 📬 Sent Outreach Ledger & Delivery Health")
     sent_emails = [e for e in all_emails if e.get("status") == "Sent"]
     if not sent_emails:
-        st.info("No sent emails recorded yet. Approved emails will show here with their live open receipts.")
+        st.info("No sent emails recorded yet. Dispatched outreach messages will appear here.")
     else:
         sent_rows = []
         for se in sent_emails:
-            opened_txt = f"✅ Opened ({se.get('open_count', 0)}x at {se.get('opened_at')})" if se.get("opened_at") else "⏳ Unopened"
-            clicked_txt = f"🔗 Clicked ({se.get('click_count', 0)}x)" if se.get("click_count", 0) > 0 else "—"
             bounce_txt = f"⚠️ Bounced: {se.get('bounce_reason')}" if se.get("is_bounced") else "Healthy"
+            recip = se.get("recipient", "")
+            has_replied = any(r.get("email", "").lower() == recip.lower() for r in replied_leads)
+            reply_status_txt = "✅ Confirmed Reply" if has_replied else "Pending Response"
+            step_txt = f"Touch {se.get('sequence_step', 1)}"
+
             sent_rows.append({
-                "ID": se["id"],
-                "Recipient": se.get("recipient"),
+                "ID": f"#{se['id']}",
+                "Recipient": recip,
+                "Sequence Step": step_txt,
                 "Subject": se.get("subject"),
                 "Dispatched Via": se.get("sent_via") or "Hostinger SMTP",
-                "Sent At": se.get("sent_at") or se.get("scheduled_time") or "",
-                "Open Status": opened_txt,
-                "Click Status": clicked_txt,
+                "Sent Timestamp": se.get("sent_at") or se.get("scheduled_time") or "",
+                "Prospect Response": reply_status_txt,
                 "Delivery Health": bounce_txt
             })
         st.dataframe(pd.DataFrame(sent_rows), use_container_width=True, hide_index=True)
+

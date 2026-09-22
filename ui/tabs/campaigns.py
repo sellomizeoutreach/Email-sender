@@ -15,6 +15,8 @@ from database import (
     get_template_by_id,
     get_contact_by_id,
     create_email,
+    create_sequence_rule,
+    get_sequence_rules,
     DB_FILE
 )
 from scheduler import (
@@ -161,10 +163,8 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             stage_options = {
                 "all": "All Contacts",
                 "new": "New Leads (Never emailed)",
-                "followup1": "Follow-Up 1 (Emailed once)",
-                "followup2": "Follow-Up 2+ (Emailed 2+ times)",
-                "opened": "Opened Previous Email",
-                "clicked": "Clicked a Link",
+                "followup1": "Contacted (Touch 1 Sent)",
+                "followup2": "Follow-Up Sent (2+ Touches)",
                 "due": "Due for Follow-Up Today",
                 "replied": "Replied / Engaged Leads (Previously Responded)"
             }
@@ -206,16 +206,6 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 stage_filtered = [
                     c for c in active_candidates
                     if (c.get("follow_ups_sent", 0) >= 2 or c.get("status") == "Follow-Up Sent")
-                ]
-            elif selected_stage_key == "opened":
-                stage_filtered = [
-                    c for c in active_candidates
-                    if ("Opened" in (c.get("status") or "") or "Interested" in (c.get("status") or ""))
-                ]
-            elif selected_stage_key == "clicked":
-                stage_filtered = [
-                    c for c in active_candidates
-                    if ("Clicked" in (c.get("tags") or "") or "Clicked" in (c.get("status") or "") or "Clicked" in (c.get("notes") or ""))
                 ]
             elif selected_stage_key == "due":
                 stage_filtered = [
@@ -383,7 +373,8 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 "label": "Touch 1 (Initial Pitch)",
                 "template_id": sel_tpl_1,
                 "subject": subj_1,
-                "delay_days": 0
+                "delay_value": 0,
+                "delay_unit": "days"
             })
         else:
             tab_titles = ["Touch 1 (Initial Pitch)", "Touch 2 (Follow-Up 1)"]
@@ -414,14 +405,17 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     "label": "Touch 1 (Initial Pitch)",
                     "template_id": sel_tpl_1,
                     "subject": subj_1,
-                    "delay_days": 0
+                    "delay_value": 0,
+                    "delay_unit": "days"
                 })
 
             with touch_ui_tabs[1]:
-                st.caption("First follow-up email, sent if the prospect has not replied to Touch 1.")
-                c_t2_del, c_t2_tpl, c_t2_subj = st.columns([1, 1.2, 1.8])
-                with c_t2_del:
-                    t2_delay = st.number_input("Days after Touch 1", min_value=1, max_value=30, value=3, key="camp_t2_delay", help="Wait interval before sending this follow-up.")
+                st.caption("First follow-up email, automatically generated after the configured wait interval if the prospect does not reply to Touch 1.")
+                c_t2_val, c_t2_unit, c_t2_tpl, c_t2_subj = st.columns([0.7, 0.8, 1.1, 1.4])
+                with c_t2_val:
+                    t2_val = st.number_input("Wait Delay *", min_value=1, max_value=720, value=3, key="camp_t2_val", help="Wait interval after Touch 1 send before generating this follow-up.")
+                with c_t2_unit:
+                    t2_unit = st.selectbox("Delay Unit", options=["Days", "Hours"], index=0, key="camp_t2_unit")
                 with c_t2_tpl:
                     idx_2 = 1 if len(tpl_keys) > 1 else 0
                     sel_tpl_2 = st.selectbox("Select Template *", options=tpl_keys, index=idx_2, format_func=lambda tid: template_options[tid], key="camp_tpl_2")
@@ -443,15 +437,18 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     "label": "Touch 2 (Follow-Up 1)",
                     "template_id": sel_tpl_2,
                     "subject": subj_2,
-                    "delay_days": int(t2_delay)
+                    "delay_value": int(t2_val),
+                    "delay_unit": t2_unit.lower()
                 })
 
             if num_touches == 3:
                 with touch_ui_tabs[2]:
-                    st.caption("Final follow-up or polite breakup email, sent if no reply to Touch 1 or 2.")
-                    c_t3_del, c_t3_tpl, c_t3_subj = st.columns([1, 1.2, 1.8])
-                    with c_t3_del:
-                        t3_delay = st.number_input("Days after Touch 2", min_value=1, max_value=30, value=4, key="camp_t3_delay", help="Wait interval after Touch 2 before sending this final follow-up.")
+                    st.caption("Final follow-up or polite breakup email, automatically generated if no reply is received to Touch 2.")
+                    c_t3_val, c_t3_unit, c_t3_tpl, c_t3_subj = st.columns([0.7, 0.8, 1.1, 1.4])
+                    with c_t3_val:
+                        t3_val = st.number_input("Wait Delay *", min_value=1, max_value=720, value=4, key="camp_t3_val", help="Wait interval after Touch 2 send before generating this final follow-up.")
+                    with c_t3_unit:
+                        t3_unit = st.selectbox("Delay Unit", options=["Days", "Hours"], index=0, key="camp_t3_unit")
                     with c_t3_tpl:
                         idx_3 = 2 if len(tpl_keys) > 2 else (1 if len(tpl_keys) > 1 else 0)
                         sel_tpl_3 = st.selectbox("Select Template *", options=tpl_keys, index=idx_3, format_func=lambda tid: template_options[tid], key="camp_tpl_3")
@@ -473,7 +470,8 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                         "label": "Touch 3 (Final Follow-Up)",
                         "template_id": sel_tpl_3,
                         "subject": subj_3,
-                        "delay_days": int(t3_delay)
+                        "delay_value": int(t3_val),
+                        "delay_unit": t3_unit.lower()
                     })
 
         st.markdown("""
@@ -629,25 +627,33 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 st.markdown(f"**Touch 1 Final Send:** `{analysis['last_dt'].strftime('%a, %b %d at %H:%M')}`")
 
             if num_touches >= 2:
+                t2_val = touch_configs[1]["delay_value"]
+                t2_unit = touch_configs[1]["delay_unit"]
+                t2_delta = timedelta(hours=t2_val) if "hour" in t2_unit else timedelta(days=t2_val)
                 t2_est = get_next_valid_sending_datetime(
-                    base_dt=analysis['first_dt'] + timedelta(days=touch_configs[1]["delay_days"]),
+                    base_dt=analysis['first_dt'] + t2_delta,
                     sending_days=camp_days,
                     start_time_str=camp_start,
                     end_time_str=camp_end
                 )
-                st.markdown(f"**Touch 2 Follow-Up 1 Starts:** `{t2_est.strftime('%a, %b %d at %H:%M')}` (+{touch_configs[1]['delay_days']} days)")
+                st.markdown(f"**Touch 2 Follow-Up 1 Starts:** `{t2_est.strftime('%a, %b %d at %H:%M')}` (+{t2_val} {t2_unit} after Touch 1 dispatch)")
 
             if num_touches == 3:
+                t3_val = touch_configs[2]["delay_value"]
+                t3_unit = touch_configs[2]["delay_unit"]
+                t3_delta = timedelta(hours=t3_val) if "hour" in t3_unit else timedelta(days=t3_val)
                 t3_est = get_next_valid_sending_datetime(
-                    base_dt=t2_est + timedelta(days=touch_configs[2]["delay_days"]),
+                    base_dt=t2_est + t3_delta,
                     sending_days=camp_days,
                     start_time_str=camp_start,
                     end_time_str=camp_end
                 )
-                st.markdown(f"**Touch 3 Final Touch Starts:** `{t3_est.strftime('%a, %b %d at %H:%M')}` (+{touch_configs[2]['delay_days']} days after Touch 2)")
+                st.markdown(f"**Touch 3 Final Touch Starts:** `{t3_est.strftime('%a, %b %d at %H:%M')}` (+{t3_val} {t3_unit} after Touch 2 dispatch)")
 
-            total_drafts_preview = n_sel * num_touches
-            st.info(f"⚡ Multi-Touch Cadence: {n_sel} contact(s) × {num_touches} touch(es) = **{total_drafts_preview} total sequence draft(s)** will be generated and queued.")
+            if num_touches > 1:
+                st.info(f"⚡ Dynamic Send-Triggered Cadence: **{n_sel} Touch 1 outreach draft(s)** will be created immediately in Review Queue. **{n_sel * (num_touches - 1)} automated follow-up rule(s)** will be registered. When Touch 1 is sent, the system automatically starts the delay timer and generates the personalized follow-up with the selected template if no reply has been received.")
+            else:
+                st.info(f"⚡ Single-Touch Outreach: **{n_sel} draft(s)** will be created and queued in Review Queue.")
 
             if analysis["fits_today"]:
                 st.success(analysis["summary_message"])
@@ -689,24 +695,25 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
 
                 # 2. Persist user's configured follow-up sequence interval
                 if num_touches >= 2:
-                    set_config("followup_delay_days", str(int(touch_configs[1]["delay_days"])))
+                    set_config("followup_delay_days", str(int(touch_configs[1]["delay_value"])))
                     batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
                 else:
                     batch_seq_id = ""
 
                 neg_keywords_setting = get_config("negative_keywords", "")
 
-                total_expected = len(selected_contact_ids) * num_touches
-                st.info(f"Generating {num_touches}-touch sequence drafts for {len(selected_contact_ids)} contact(s) ({total_expected} total drafts)...")
+                total_contacts = len(selected_contact_ids)
+                st.info(f"Generating outreach for {total_contacts} contact(s)...")
                 progress_bar = st.progress(0)
 
                 created_pending = 0
                 created_flagged = 0
                 flagged_details = []
+                registered_rules = 0
 
                 # Compute distinct scheduled times for Touch 1 across all contacts
                 scheduled_dts_touch1 = calculate_staggered_schedule(
-                    total_contacts=len(selected_contact_ids),
+                    total_contacts=total_contacts,
                     stagger_mode=stagger_mode_arg,
                     base_dt=datetime.now(),
                     span_hours=float(span_hours),
@@ -717,84 +724,118 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     use_jitter=use_jitter
                 )
 
-                processed_count = 0
                 for idx, cid in enumerate(selected_contact_ids):
                     contact = get_contact_by_id(cid)
                     if not contact:
                         continue
 
                     t1_dt = scheduled_dts_touch1[idx]
-                    prev_touch_dt = t1_dt
+                    t1_cfg = touch_configs[0]
+                    step1_tpl = get_template_by_id(t1_cfg["template_id"])
+                    raw_subj_1 = t1_cfg["subject"].strip() or (step1_tpl["template_name"] if step1_tpl else "Partnership Outreach")
 
-                    for t_idx, cfg in enumerate(touch_configs):
-                        step_num = cfg["step"]
-                        step_tpl = get_template_by_id(cfg["template_id"])
-                        raw_subj = cfg["subject"].strip() or step_tpl["template_name"]
+                    # Resolve Spintax & Variables for Touch 1
+                    resolved_body_1 = resolve_template(step1_tpl["body_content"], contact) if step1_tpl else ""
+                    final_html_1 = format_email_html(resolved_body_1)
+                    final_subj_1 = parse_spintax(inject_variables(raw_subj_1, contact))
 
-                        # Resolve Spintax & Variables
-                        resolved_body = resolve_template(step_tpl["body_content"], contact)
-                        final_html = format_email_html(resolved_body)
-                        final_subj = parse_spintax(inject_variables(raw_subj, contact))
+                    # Negative keyword scanner for Touch 1
+                    combined_text_1 = f"{final_subj_1} {final_html_1}"
+                    triggers_1 = scan_all_negative_keywords(combined_text_1, neg_keywords_setting)
 
-                        # Negative keyword scanner
-                        combined_text = f"{final_subj} {final_html}"
-                        triggers = scan_all_negative_keywords(combined_text, neg_keywords_setting)
-
-                        if triggers:
-                            status = "Flagged"
-                            trig_str = ", ".join([f"'{t}'" for t in triggers])
-                            if num_touches > 1:
-                                notes = f"Touch {step_num}/{num_touches}: Flagged for trigger keyword(s): {trig_str}"
-                            else:
-                                notes = f"Flagged for trigger keyword(s): {trig_str}"
-                            created_flagged += 1
-                            flagged_details.append({
-                                "recipient": contact["email"],
-                                "touch": f"Touch {step_num}" if num_touches > 1 else "One-Time Mail",
-                                "triggers": triggers
-                            })
+                    if triggers_1:
+                        status = "Flagged"
+                        trig_str = ", ".join([f"'{t}'" for t in triggers_1])
+                        notes = f"Touch 1/{num_touches}: Flagged for trigger keyword(s): {trig_str}" if num_touches > 1 else f"Flagged for trigger keyword(s): {trig_str}"
+                        created_flagged += 1
+                        flagged_details.append({
+                            "recipient": contact["email"],
+                            "touch": "Touch 1 (Initial Pitch)",
+                            "triggers": triggers_1
+                        })
+                    else:
+                        status = "Pending"
+                        if num_touches > 1:
+                            notes = f"Sequence Touch 1/{num_touches}"
+                        elif total_contacts == 1:
+                            notes = "One-Time Outreach Email"
                         else:
-                            status = "Pending"
-                            if num_touches > 1:
-                                notes = f"Sequence Touch {step_num}/{num_touches}"
-                            elif len(selected_contact_ids) == 1:
-                                notes = "One-Time Outreach Email"
-                            else:
-                                notes = "Marketing Campaign Email"
-                            created_pending += 1
+                            notes = "Marketing Campaign Email"
+                        created_pending += 1
 
-                        if step_num == 1:
-                            touch_dt = t1_dt
-                        else:
-                            delay_d = cfg["delay_days"]
-                            cand_dt = prev_touch_dt + timedelta(days=delay_d)
-                            touch_dt = get_next_valid_sending_datetime(
-                                base_dt=cand_dt,
-                                sending_days=camp_days,
-                                start_time_str=camp_start,
-                                end_time_str=camp_end
-                            )
-                            prev_touch_dt = touch_dt
+                    sched_time_str_1 = t1_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                        scheduled_time_str = touch_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    # Create Touch 1 Email in emails table
+                    t1_email_id = create_email(
+                        email_html=final_html_1,
+                        subject=final_subj_1,
+                        recipient=contact["email"],
+                        status=status,
+                        revision_notes=notes,
+                        scheduled_time=sched_time_str_1,
+                        sequence_step=1,
+                        sequence_id=batch_seq_id
+                    )
 
-                        create_email(
-                            email_html=final_html,
-                            subject=final_subj,
-                            recipient=contact["email"],
-                            status=status,
-                            revision_notes=notes,
-                            scheduled_time=scheduled_time_str,
-                            sequence_step=step_num,
-                            sequence_id=batch_seq_id
+                    # If multi-touch, register subsequent sequence rules to auto-generate upon send
+                    if num_touches >= 2:
+                        t2_cfg = touch_configs[1]
+                        create_sequence_rule(
+                            sequence_id=batch_seq_id,
+                            contact_id=contact["id"],
+                            contact_email=contact["email"],
+                            step_number=2,
+                            delay_unit=t2_cfg["delay_unit"],
+                            delay_value=t2_cfg["delay_value"],
+                            template_id=t2_cfg["template_id"],
+                            custom_subject=t2_cfg["subject"],
+                            trigger_email_id=t1_email_id
                         )
+                        registered_rules += 1
 
-                        processed_count += 1
-                        progress_bar.progress(processed_count / total_expected)
+                    if num_touches == 3:
+                        t3_cfg = touch_configs[2]
+                        create_sequence_rule(
+                            sequence_id=batch_seq_id,
+                            contact_id=contact["id"],
+                            contact_email=contact["email"],
+                            step_number=3,
+                            delay_unit=t3_cfg["delay_unit"],
+                            delay_value=t3_cfg["delay_value"],
+                            template_id=t3_cfg["template_id"],
+                            custom_subject=t3_cfg["subject"],
+                            trigger_email_id=None
+                        )
+                        registered_rules += 1
+
+                    progress_bar.progress((idx + 1) / total_contacts)
 
                 first_res_dt = scheduled_dts_touch1[0]
                 last_res_dt = scheduled_dts_touch1[-1]
-                st.success(f"Sequence Generation Complete: Created {created_pending} Pending draft(s) and {created_flagged} Flagged draft(s) across {num_touches} touch(es). Touch 1 scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
+
+                if num_touches > 1:
+                    st.success(f"Sequence Setup Complete: Created {created_pending} Pending Touch 1 draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}, and registered {registered_rules} automated follow-up sequence rule(s).")
+                    st.markdown(f"""
+                    <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
+                        <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Automated Follow-Up Sequence Active</div>
+                        <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
+                            Touch 1 drafts are now ready in the <strong>🛡️ Review Queue &amp; Triage</strong> tab.
+                            Once Touch 1 is dispatched, our background engine automatically starts the delay timer ({touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']}).
+                            If the prospect does not reply, the system will <strong>automatically generate the follow-up draft</strong> using your selected template!
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.success(f"Outreach Generation Complete: Created {created_pending} Pending draft(s) (and {created_flagged} Flagged) scheduled between {first_res_dt.strftime('%A %H:%M')} and {last_res_dt.strftime('%A, %b %d at %H:%M')}.")
+                    st.markdown("""
+                    <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
+                        <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 Outreach Email Drafts Ready for Review</div>
+                        <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
+                            Drafts are securely queued in the <strong>🛡️ Review Queue &amp; Triage</strong> tab for approval.
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
                 if created_flagged > 0:
                     st.warning(f"{created_flagged} draft(s) were flagged by the Negative Keyword Shield:")
                     for fd in flagged_details[:8]:
@@ -803,13 +844,27 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     if len(flagged_details) > 8:
                         st.caption(f"...and {len(flagged_details) - 8} more.")
 
-                st.markdown(f"""
-                <div style="background:#EFF6FF; border:1.5px solid #3B82F6; border-radius:10px; padding:14px 18px; margin:14px 0;">
-                    <div style="font-weight:800; color:#1D4ED8; font-size:0.95rem;">🚀 {num_touches}-Touch Sequence Ready for Review &amp; Approval</div>
-                    <div style="color:#1E3A8A; font-size:0.85rem; margin-top:4px; line-height:1.4;">
-                        All {total_expected} sequence drafts are securely registered in your outreach queue.
-                        Switch to the <strong>🛡️ Review Queue &amp; Triage</strong> tab to review and approve drafts for automated dispatch.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+        # Active Automated Follow-Up Pipeline Monitor
+        all_rules = get_sequence_rules()
+        if all_rules:
+            active_rules = [r for r in all_rules if r.get("status") in ["Waiting_Trigger", "Scheduled"]]
+            with st.expander(f"🔄 Automated Follow-Up Pipeline Monitor ({len(active_rules)} Active / {len(all_rules)} Total)", expanded=False):
+                st.caption("These rules automatically generate follow-up email drafts once their prerequisite outreach email is sent and the configured wait delay elapses (unless the prospect replies).")
+                rule_display_items = []
+                for r in all_rules[:60]:
+                    rule_display_items.append({
+                        "Rule ID": f"#{r['id']}",
+                        "Prospect": r.get("contact_email"),
+                        "Sequence Step": f"Touch {r.get('step_number')}",
+                        "Wait Delay": f"{r.get('delay_value')} {r.get('delay_unit')}",
+                        "Trigger Send": r.get("triggered_at") or "Awaiting Touch 1 send",
+                        "Scheduled Due": r.get("due_at") or "Pending trigger",
+                        "Engine Status": r.get("status")
+                    })
+                try:
+                    import pandas as pd
+                    st.dataframe(pd.DataFrame(rule_display_items), use_container_width=True, hide_index=True)
+                except Exception:
+                    st.write(rule_display_items)
+
 

@@ -358,6 +358,52 @@ def init_db(db_path: str = DB_FILE):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read, created_at)")
 
+    # 7. Processed inbox messages table for IMAP idempotency and deduplication
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS processed_inbox_messages (
+            message_id TEXT PRIMARY KEY,
+            sender_email TEXT NOT NULL,
+            subject TEXT DEFAULT '',
+            mailbox TEXT DEFAULT '',
+            processed_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_processed_msg_sender ON processed_inbox_messages(sender_email)")
+
+    # 8. Automated sequence rules table (Send-triggered dynamic follow-up engine)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sequence_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sequence_id TEXT NOT NULL,
+            contact_id INTEGER NOT NULL,
+            contact_email TEXT NOT NULL,
+            step_number INTEGER DEFAULT 2,
+            delay_unit TEXT DEFAULT 'days',
+            delay_value INTEGER DEFAULT 3,
+            template_id INTEGER NOT NULL,
+            custom_subject TEXT DEFAULT '',
+            trigger_email_id INTEGER DEFAULT NULL,
+            triggered_at TEXT DEFAULT '',
+            due_at TEXT DEFAULT '',
+            status TEXT DEFAULT 'Waiting_Trigger',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_status_due ON sequence_rules(status, due_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_email ON sequence_rules(contact_email)")
+
+    # Automatically prune historical duplicate notifications if any exist
+    try:
+        cursor.execute("""
+            DELETE FROM notifications
+            WHERE id NOT IN (
+                SELECT MAX(id) FROM notifications
+                GROUP BY type, LOWER(TRIM(contact_email)), title
+            )
+        """)
+    except Exception:
+        pass
+
     # Populate default configuration keys if not already present
     default_configs = {
         "dispatch_method": "hostinger_smtp",
@@ -1396,8 +1442,10 @@ def get_approved_due_emails(current_time_str: Optional[str] = None, db_path: str
     conn.close()
     return [dict(row) for row in rows]
 
-def mark_email_sent(email_id: int, db_path: str = DB_FILE):
+def mark_email_sent(email_id: int, sent_at: Optional[str] = None, db_path: str = DB_FILE):
+    now_iso = sent_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     update_email(email_id=email_id, status="Sent", error_message=None, db_path=db_path)
+    trigger_sequence_rules_for_sent_email(email_id, sent_at_iso=now_iso, db_path=db_path)
 
 def mark_email_error(email_id: int, status: str, error_message: str, db_path: str = DB_FILE):
     update_email(email_id=email_id, status=status, error_message=error_message, db_path=db_path)
@@ -1685,16 +1733,31 @@ def record_email_reply(
               AND sequence_step > 1
         """, (clean_email,))
 
-    # 3. Record persistent in-app reply notification
+    # Cancel any pending follow-up sequence rules for this contact
+    cursor.execute("""
+        UPDATE sequence_rules SET status = 'Cancelled'
+        WHERE LOWER(TRIM(contact_email)) = ? AND status IN ('Waiting_Trigger', 'Scheduled')
+    """, (clean_email,))
+
+    # 3. Record persistent in-app reply notification (deduplicated against existing unread alerts)
     disp_name = contact_names[0] if contact_names else clean_email
     notif_title = f"💬 New Reply from {disp_name}"
     subj_part = f" ('{reply_subject[:45]}')" if reply_subject else ""
     canc_part = f" — {len(cancelled_ids)} scheduled sequence follow-up(s) auto-cancelled (one-time mails preserved)." if cancelled_ids else " (one-time emails preserved)."
     notif_body = f"Prospect {clean_email} responded to outreach{subj_part}{canc_part}"
+
     cursor.execute("""
-        INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
-        VALUES (?, ?, ?, ?, 0, ?)
-    """, ("reply", notif_title, notif_body, clean_email, now_iso))
+        SELECT id FROM notifications
+        WHERE type = 'reply'
+          AND LOWER(TRIM(contact_email)) = ?
+          AND is_read = 0
+    """, (clean_email,))
+    existing_unreads = cursor.fetchall()
+    if not existing_unreads:
+        cursor.execute("""
+            INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
+            VALUES (?, ?, ?, ?, 0, ?)
+        """, ("reply", notif_title, notif_body, clean_email, now_iso))
 
     conn.commit()
     conn.close()
@@ -1783,6 +1846,224 @@ def delete_notification(notification_id: int, db_path: str = DB_FILE):
     cursor.execute("DELETE FROM notifications WHERE id = ?", (notification_id,))
     conn.commit()
     conn.close()
+
+def clear_all_notifications(db_path: str = DB_FILE) -> int:
+    """Delete all notifications from the database."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notifications")
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return max(0, count)
+
+def cleanup_duplicate_notifications(db_path: str = DB_FILE) -> int:
+    """Prune historical duplicate notifications, preserving the latest notification per contact/event."""
+    try:
+        conn = get_connection(db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM notifications
+            WHERE id NOT IN (
+                SELECT MAX(id) FROM notifications
+                GROUP BY type, LOWER(TRIM(contact_email)), title
+            )
+        """)
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return max(0, deleted)
+    except Exception as e:
+        logger.warning(f"Error cleaning duplicate notifications: {e}")
+        return 0
+
+# ------------------------------------------------------------------------------
+# PROCESSED INBOX MESSAGES (IMAP IDEMPOTENCY)
+# ------------------------------------------------------------------------------
+
+def is_inbox_message_processed(message_id: str, db_path: str = DB_FILE) -> bool:
+    """Check if an IMAP message ID has already been parsed and processed."""
+    if not message_id or not message_id.strip():
+        return False
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM processed_inbox_messages WHERE message_id = ?", (message_id.strip(),))
+    res = cursor.fetchone() is not None
+    conn.close()
+    return res
+
+def mark_inbox_message_processed(
+    message_id: str,
+    sender_email: str = "",
+    subject: str = "",
+    mailbox: str = "",
+    db_path: str = DB_FILE
+):
+    """Record an IMAP message ID as processed to guarantee idempotent inbox scanning."""
+    if not message_id or not message_id.strip():
+        return
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR IGNORE INTO processed_inbox_messages (message_id, sender_email, subject, mailbox, processed_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (message_id.strip(), sender_email.strip().lower(), (subject or "")[:150], (mailbox or "").strip().lower(), now_iso))
+    conn.commit()
+    conn.close()
+
+# ------------------------------------------------------------------------------
+# AUTOMATED SEND-TRIGGERED SEQUENCE RULES ENGINE
+# ------------------------------------------------------------------------------
+
+def create_sequence_rule(
+    sequence_id: str,
+    contact_id: int,
+    contact_email: str,
+    step_number: int,
+    delay_unit: str,
+    delay_value: int,
+    template_id: int,
+    custom_subject: str = "",
+    trigger_email_id: Optional[int] = None,
+    db_path: str = DB_FILE
+) -> int:
+    """Register an automated follow-up sequence rule for a contact."""
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO sequence_rules (
+            sequence_id, contact_id, contact_email, step_number,
+            delay_unit, delay_value, template_id, custom_subject,
+            trigger_email_id, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Waiting_Trigger', ?)
+    """, (
+        sequence_id, contact_id, contact_email.strip().lower(), step_number,
+        delay_unit.lower(), int(delay_value), template_id, custom_subject.strip(),
+        trigger_email_id, now_iso
+    ))
+    rid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+def trigger_sequence_rules_for_sent_email(email_id: int, sent_at_iso: Optional[str] = None, db_path: str = DB_FILE) -> int:
+    """
+    Called when an outreach email is sent: starts the timer for any associated follow-up sequence rules.
+    Calculates due_at based on the configured delay (days or hours) from the actual send time.
+    """
+    if not sent_at_iso:
+        sent_at_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        sent_dt = datetime.strptime(sent_at_iso[:19], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        sent_dt = datetime.now()
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM sequence_rules
+        WHERE trigger_email_id = ? AND status = 'Waiting_Trigger'
+    """, (email_id,))
+    rules = [dict(r) for r in cursor.fetchall()]
+
+    activated_count = 0
+    for r in rules:
+        delay_unit = (r.get("delay_unit") or "days").lower()
+        delay_val = int(r.get("delay_value") or 3)
+        if "hour" in delay_unit:
+            due_dt = sent_dt + timedelta(hours=delay_val)
+        else:
+            due_dt = sent_dt + timedelta(days=delay_val)
+
+        due_iso = due_dt.strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE sequence_rules SET
+                status = 'Scheduled',
+                triggered_at = ?,
+                due_at = ?
+            WHERE id = ?
+        """, (sent_at_iso, due_iso, r["id"]))
+        activated_count += 1
+
+    conn.commit()
+    conn.close()
+    return activated_count
+
+def get_due_sequence_rules(current_time_iso: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all sequence follow-up rules that have passed their scheduled wait interval."""
+    if not current_time_iso:
+        current_time_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM sequence_rules
+        WHERE status = 'Scheduled'
+          AND due_at IS NOT NULL
+          AND due_at != ''
+          AND due_at <= ?
+        ORDER BY due_at ASC
+    """, (current_time_iso,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def mark_sequence_rule_status(rule_id: int, status: str, db_path: str = DB_FILE):
+    """Update lifecycle status of a sequence rule ('Scheduled', 'Generated', 'Cancelled')."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE sequence_rules SET status = ? WHERE id = ?", (status, rule_id))
+    conn.commit()
+    conn.close()
+
+def cancel_sequence_rules_for_contact(clean_email: str, db_path: str = DB_FILE) -> int:
+    """Cancel all active sequence rules for a contact when they reply or bounce."""
+    clean = clean_email.strip().lower()
+    if not clean:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE sequence_rules SET status = 'Cancelled'
+        WHERE LOWER(TRIM(contact_email)) = ? AND status IN ('Waiting_Trigger', 'Scheduled')
+    """, (clean,))
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return max(0, count)
+
+def link_sequence_rule_trigger(sequence_id: str, contact_email: str, step_number: int, trigger_email_id: int, db_path: str = DB_FILE) -> bool:
+    """Link a newly created email ID as the trigger for the subsequent sequence step."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE sequence_rules
+        SET trigger_email_id = ?
+        WHERE sequence_id = ?
+          AND LOWER(TRIM(contact_email)) = ?
+          AND step_number = ?
+          AND status = 'Waiting_Trigger'
+    """, (trigger_email_id, sequence_id, contact_email.strip().lower(), step_number))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+def get_sequence_rules(status: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve sequence rules optionally filtered by status."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    if status:
+        cursor.execute("SELECT * FROM sequence_rules WHERE status = ? ORDER BY id DESC", (status,))
+    else:
+        cursor.execute("SELECT * FROM sequence_rules ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 
 def get_replied_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     """Retrieve all contacts marked as Replied."""

@@ -76,7 +76,7 @@ def render_edit_contact_dialog(contact: dict):
         with ec_r3:
             e_owner = st.text_input("Lead Owner", value=contact.get("owner") or "", key=f"dlg_own_{c_id}")
         with ec_r4:
-            stat_opts = ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]
+            stat_opts = ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]
             curr_st = contact.get("status") or "Not Contacted"
             st_idx = stat_opts.index(curr_st) if curr_st in stat_opts else 0
             e_status = st.selectbox("Pipeline Status", stat_opts, index=st_idx, key=f"dlg_stat_{c_id}")
@@ -240,7 +240,7 @@ def render_crm_tab(all_contacts=None):
                 with col_crm4:
                     c_status = st.selectbox(
                         "Pipeline Status",
-                        ["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                        ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
                         index=0
                     )
                 c_notes = st.text_input("Internal Notes", placeholder="e.g. Needs Amazon brand listing audit")
@@ -369,7 +369,7 @@ def render_crm_tab(all_contacts=None):
     with filter_col3:
         status_filter_choice = st.selectbox(
             "Filter by Pipeline",
-            ["-- All Statuses --", "Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+            ["-- All Statuses --", "Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
             key="crm_status_filter_choice"
         )
     with filter_col4:
@@ -606,7 +606,7 @@ def render_crm_tab(all_contacts=None):
             "Date First Emailed": st.column_config.TextColumn("Date First Emailed", width="small") if "Date First Emailed" in visible_cols else None,
             "Status": st.column_config.SelectboxColumn(
                 "Status",
-                options=["Not Contacted", "Contacted", "Follow-Up Sent", "Opened / Interested", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                options=["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
                 width="medium"
             ) if "Status" in visible_cols else None,
             "Follow-Ups Sent": st.column_config.NumberColumn("Follow-Ups Sent", min_value=0, max_value=20, step=1, width="small") if "Follow-Ups Sent" in visible_cols else None,

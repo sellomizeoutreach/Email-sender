@@ -64,6 +64,17 @@ from database import (
     mark_all_notifications_as_read,
     get_unread_notifications_count,
     delete_notification,
+    clear_all_notifications,
+    cleanup_duplicate_notifications,
+    is_inbox_message_processed,
+    mark_inbox_message_processed,
+    create_sequence_rule,
+    trigger_sequence_rules_for_sent_email,
+    get_due_sequence_rules,
+    mark_sequence_rule_status,
+    cancel_sequence_rules_for_contact,
+    link_sequence_rule_trigger,
+    get_sequence_rules,
     DB_FILE,
     get_outreach_analytics,
     get_bounced_contacts,
@@ -71,6 +82,7 @@ from database import (
     is_within_sending_window,
     get_next_valid_sending_datetime
 )
+from scheduler import process_due_sequence_rules
 from smtp_dispatcher import (
     test_smtp_connection,
     send_smtp_email,
@@ -1917,6 +1929,154 @@ class TestEmailAutomationSystem(unittest.TestCase):
         advance_contact_followup(engaged_email, delay_days=3, db_path=TEST_DB)
         c_final = get_contact_by_id(cid, db_path=TEST_DB)
         self.assertEqual(c_final["status"], "Replied")
+
+    def test_55_notification_deduplication(self):
+        """Test that duplicate notifications are pruned and record_email_reply does not insert redundant unread alerts."""
+        test_contact = "amanda.parker@techcorp.com"
+        # Insert 5 duplicate notifications
+        for i in range(5):
+            create_notification(
+                type="reply",
+                title=f"💬 Reply Received: Amanda Parker",
+                message=f"Prospect {test_contact} responded to outreach.",
+                contact_email=test_contact,
+                db_path=TEST_DB
+            )
+        # Prune duplicates
+        pruned_count = cleanup_duplicate_notifications(db_path=TEST_DB)
+        self.assertGreaterEqual(pruned_count, 4)
+
+        # Ensure only 1 remains for this contact
+        notifs = [n for n in get_notifications(limit=50, db_path=TEST_DB) if n.get("contact_email") == test_contact]
+        self.assertEqual(len(notifs), 1)
+
+        # Now test that record_email_reply does not insert duplicate if unread already exists
+        record_email_reply(sender_email=test_contact, reply_subject="Second ping", db_path=TEST_DB)
+        notifs_after = [n for n in get_notifications(limit=50, db_path=TEST_DB) if n.get("contact_email") == test_contact]
+        self.assertEqual(len(notifs_after), 1)
+
+    def test_56_imap_message_id_idempotency(self):
+        """Test that processed IMAP Message-IDs are tracked and prevented from being re-processed."""
+        msg_id = "<CAG8o4k39_xyz123@mail.gmail.com>"
+        self.assertFalse(is_inbox_message_processed(msg_id, db_path=TEST_DB))
+
+        mark_inbox_message_processed(msg_id, sender_email="sender@acme.com", subject="Question", mailbox="INBOX", db_path=TEST_DB)
+        self.assertTrue(is_inbox_message_processed(msg_id, db_path=TEST_DB))
+        self.assertFalse(is_inbox_message_processed("<another_id@mail.com>", db_path=TEST_DB))
+
+    def test_57_automated_send_triggered_sequence_rules(self):
+        """Test that Touch 1 dispatch triggers sequence rules (in days or hours), and scheduler auto-generates Touch 2 draft upon delay expiry."""
+        c_email = "dynamic.sequence@prospectfirm.com"
+        cid = create_contact(name="David Miller", email=c_email, company="Miller Logistics", db_path=TEST_DB)
+        t1_tpl_id = create_template("Outreach Pitch", "Hi [Name], quick idea for [Company].", db_path=TEST_DB)
+        t2_tpl_id = create_template("Follow-Up 1", "Hi [Name], following up on my previous note for [Company].", db_path=TEST_DB)
+
+        # 1. Create Touch 1 Email
+        t1_id = create_email(
+            email_html="<p>Hi David, quick idea for Miller Logistics.</p>",
+            subject="Partnership for Miller Logistics",
+            recipient=c_email,
+            status="Pending",
+            sequence_step=1,
+            sequence_id="seq_test_123",
+            db_path=TEST_DB
+        )
+
+        # 2. Register Touch 2 rule: 2 hours delay after Touch 1 send
+        rule_id = create_sequence_rule(
+            sequence_id="seq_test_123",
+            contact_id=cid,
+            contact_email=c_email,
+            step_number=2,
+            delay_unit="hours",
+            delay_value=2,
+            template_id=t2_tpl_id,
+            custom_subject="Re: Partnership for [Company]",
+            trigger_email_id=t1_id,
+            db_path=TEST_DB
+        )
+
+        # Verify status is Waiting_Trigger
+        rules = get_sequence_rules(db_path=TEST_DB)
+        r = next(x for x in rules if x["id"] == rule_id)
+        self.assertEqual(r["status"], "Waiting_Trigger")
+
+        # 3. Simulate Touch 1 being sent at 10:00:00
+        sent_time = "2026-09-22 10:00:00"
+        activated = trigger_sequence_rules_for_sent_email(t1_id, sent_at_iso=sent_time, db_path=TEST_DB)
+        self.assertEqual(activated, 1)
+
+        rules = get_sequence_rules(db_path=TEST_DB)
+        r = next(x for x in rules if x["id"] == rule_id)
+        self.assertEqual(r["status"], "Scheduled")
+        self.assertEqual(r["due_at"], "2026-09-22 12:00:00")
+
+        # 4. If current time is 11:00:00 (before 12:00:00), not due
+        due_before = get_due_sequence_rules(current_time_iso="2026-09-22 11:00:00", db_path=TEST_DB)
+        self.assertNotIn(rule_id, [x["id"] for x in due_before])
+
+        # 5. When current time reaches 12:05:00, rule is due
+        due_after = get_due_sequence_rules(current_time_iso="2026-09-22 12:05:00", db_path=TEST_DB)
+        self.assertIn(rule_id, [x["id"] for x in due_after])
+
+        # 6. Execute process_due_sequence_rules: auto-generates Touch 2 draft with variables resolved!
+        with patch("database.datetime") as mock_dt:
+            mock_dt.now.return_value.astimezone.return_value.strftime.return_value = "2026-09-22 12:05:00"
+            mock_dt.strptime = datetime.strptime
+            generated = process_due_sequence_rules(db_path=TEST_DB)
+
+        self.assertEqual(generated, 1)
+        r_after = next(x for x in get_sequence_rules(db_path=TEST_DB) if x["id"] == rule_id)
+        self.assertEqual(r_after["status"], "Generated")
+
+        # Verify new Touch 2 email was created
+        all_prospect_emails = [e for e in get_emails(db_path=TEST_DB) if e["recipient"] == c_email and e["sequence_step"] == 2]
+        self.assertEqual(len(all_prospect_emails), 1)
+        touch2_mail = all_prospect_emails[0]
+        self.assertEqual(touch2_mail["subject"], "Re: Partnership for Miller Logistics")
+        self.assertIn("Hi David", touch2_mail["email_html"])
+        self.assertIn("Miller Logistics", touch2_mail["email_html"])
+        self.assertEqual(touch2_mail["status"], "Pending")
+
+    def test_58_sequence_rule_cancelled_on_reply(self):
+        """Test that if a prospect replies, pending sequence rules are immediately cancelled and no follow-up is generated."""
+        c_email = "replying.lead@growthfirm.com"
+        cid = create_contact(name="Sophia Lin", email=c_email, company="Lin Ventures", db_path=TEST_DB)
+        tpl_id = create_template("Touch 2", "Hi [Name], following up.", db_path=TEST_DB)
+
+        t1_id = create_email(
+            email_html="<p>Pitch</p>",
+            subject="Pitch for Lin Ventures",
+            recipient=c_email,
+            status="Sent",
+            sequence_step=1,
+            db_path=TEST_DB
+        )
+
+        rule_id = create_sequence_rule(
+            sequence_id="seq_reply_test",
+            contact_id=cid,
+            contact_email=c_email,
+            step_number=2,
+            delay_unit="days",
+            delay_value=3,
+            template_id=tpl_id,
+            custom_subject="Re: Pitch",
+            trigger_email_id=t1_id,
+            db_path=TEST_DB
+        )
+        trigger_sequence_rules_for_sent_email(t1_id, db_path=TEST_DB)
+
+        # Prospect replies
+        record_email_reply(sender_email=c_email, reply_subject="Thanks, let's talk", db_path=TEST_DB)
+
+        # Verify rule was cancelled
+        r = next(x for x in get_sequence_rules(db_path=TEST_DB) if x["id"] == rule_id)
+        self.assertEqual(r["status"], "Cancelled")
+
+        # Running process_due_sequence_rules should produce 0 emails
+        gen = process_due_sequence_rules(db_path=TEST_DB)
+        self.assertEqual(gen, 0)
 
 if __name__ == "__main__":
     unittest.main()
