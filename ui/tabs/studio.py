@@ -90,23 +90,65 @@ def render_studio_tab(templates=None, contacts_list=None):
         col_new_edit, col_new_prev = st.columns([1.1, 1.1])
         with col_new_edit:
             st.markdown("##### HTML & Spintax Source")
-            st.caption("Edit HTML tags and Spintax directly. Insert dynamic placeholders like `[Name]` or `[Company]`.")
+            
+            # One-Click Variable Chips directly above editor
+            st.caption("Click to insert variable into template:")
+            chip_cols = st.columns(5)
+            chips = [("[+ Name]", "[Name]"), ("[+ Company]", "[Company]"), ("[+ Website]", "[Website]"), ("[+ ASIN]", "[ASIN]"), ("[+ Custom]", "[Custom]")]
+            for idx, (chip_lbl, chip_val) in enumerate(chips):
+                with chip_cols[idx]:
+                    if st.button(chip_lbl, key=f"new_chip_{idx}", use_container_width=True):
+                        st.session_state[new_tpl_body_key] = (st.session_state.get(new_tpl_body_key, "") + f" {chip_val}").strip()
+                        st.rerun()
+
             new_src_txt = st.text_area(
                 "HTML / Spintax Source",
                 value=st.session_state[new_tpl_body_key],
-                height=260,
+                height=240,
                 key="src_new_template",
                 label_visibility="collapsed"
             )
             st.session_state[new_tpl_body_key] = new_src_txt
 
-            # Deliverability Audit Gate
+            # Compact Deliverability Score Badge
             new_body_to_audit = new_src_txt.strip()
             neg_kw = get_config("negative_keywords", "")
             detected_kws = scan_all_negative_keywords(new_body_to_audit, neg_kw)
+            audit_res = audit_email_deliverability(new_body_to_audit)
+            score = audit_res.get("score", 100)
+
+            if score >= 85 and not detected_kws:
+                status_lbl = "Inbox Ready"
+                score_bg = "rgba(16,185,129,0.08)"
+                score_border = "rgba(16,185,129,0.28)"
+                score_col = "#059669"
+            elif score >= 65 and not detected_kws:
+                status_lbl = "Moderate"
+                score_bg = "rgba(245,158,11,0.08)"
+                score_border = "rgba(245,158,11,0.28)"
+                score_col = "#D97706"
+            else:
+                status_lbl = "Spam Risk"
+                score_bg = "rgba(239,68,68,0.08)"
+                score_border = "rgba(239,68,68,0.28)"
+                score_col = "#DC2626"
+
+            st.markdown(f"""
+            <div style="background:{score_bg}; border:1px solid {score_border}; border-radius:8px; padding:7px 12px; margin:6px 0 8px; display:flex; align-items:center; justify-content:space-between;">
+                <div style="font-weight:700; color:{score_col}; font-size:0.86rem;">
+                    Deliverability Score: {score}/100 <span style="font-size:0.8rem; font-weight:600; opacity:0.9;">({status_lbl})</span>
+                </div>
+                <div style="font-size:0.75rem; color:#64748B;">Automated Spam Pattern Shield</div>
+            </div>
+            """, unsafe_allow_html=True)
+
             if detected_kws:
-                kws_badges = ", ".join(f"`{k}`" for k in detected_kws)
-                st.warning(f"Contains restricted trigger keyword(s): {kws_badges}")
+                with st.expander(f"⚠️ {len(detected_kws)} Restricted Trigger(s) Detected (Click to expand)", expanded=False):
+                    trig_badges = ", ".join(f"`{k}`" for k in detected_kws)
+                    st.warning(f"Contains restricted trigger keyword(s): {trig_badges}")
+                    if audit_res.get("issues"):
+                        for iss in audit_res["issues"]:
+                            st.caption(f"• {iss}")
 
             if st.button("Save Template", type="primary", use_container_width=True, key="btn_save_new_template"):
                 if not new_tpl_name.strip() or not new_body_to_audit:
@@ -142,8 +184,8 @@ def render_studio_tab(templates=None, contacts_list=None):
 
     st.markdown("---")
 
-    # Saved Templates List & Spintax Test Preview
-    st.subheader("📚 Saved Templates Library")
+    # Saved Templates Library with Compact Cards
+    st.markdown("### 📚 Saved Templates Library")
     templates = get_templates()
 
     if not templates:
@@ -151,48 +193,114 @@ def render_studio_tab(templates=None, contacts_list=None):
     else:
         if "editing_tpl_id" not in st.session_state:
             st.session_state["editing_tpl_id"] = None
+        if "previewing_tpl_id" not in st.session_state:
+            st.session_state["previewing_tpl_id"] = None
 
         for tpl in templates:
             tpl_id = tpl["id"]
             is_tpl_editing = (st.session_state.get("editing_tpl_id") == tpl_id)
+            is_tpl_previewing = (st.session_state.get("previewing_tpl_id") == tpl_id)
 
-            with st.expander(f"📑 {tpl['template_name']}", expanded=is_tpl_editing):
-                if tpl.get("created_at"):
-                    st.markdown(f"<div class='timestamp-right'>Created: {tpl['created_at'][:10]}</div>", unsafe_allow_html=True)
+            # Compact Template Card Container
+            with st.container():
+                st.markdown(f"""
+                <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.14); border-radius:8px; padding:10px 14px; margin-top:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:700; color:#083731; font-size:0.95rem;">📑 #{tpl_id} — {tpl['template_name']}</span>
+                        <span style="font-size:0.75rem; color:#64748B;">{('Created ' + tpl['created_at'][:10]) if tpl.get('created_at') else ''}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
+                # Direct action button bar
+                col_act1, col_act2, col_act3 = st.columns([1.2, 1.4, 1.4])
+                with col_act1:
+                    if st.button("✏️ Edit", key=f"btn_edit_card_{tpl_id}", use_container_width=True):
+                        st.session_state["editing_tpl_id"] = None if is_tpl_editing else tpl_id
+                        st.rerun()
+                with col_act2:
+                    if st.button("🧪 Test Preview", key=f"btn_test_card_{tpl_id}", use_container_width=True):
+                        st.session_state["previewing_tpl_id"] = None if is_tpl_previewing else tpl_id
+                        st.rerun()
+                with col_act3:
+                    if st.session_state.get(f"confirm_del_tpl_{tpl_id}"):
+                        col_cd1, col_cd2 = st.columns(2)
+                        with col_cd1:
+                            if st.button("Yes", key=f"del_yes_{tpl_id}", use_container_width=True):
+                                delete_template(tpl_id)
+                                st.session_state[f"confirm_del_tpl_{tpl_id}"] = False
+                                st.warning(f"Template #{tpl_id} deleted.")
+                                st.rerun()
+                        with col_cd2:
+                            if st.button("No", key=f"del_no_{tpl_id}", use_container_width=True):
+                                st.session_state[f"confirm_del_tpl_{tpl_id}"] = False
+                                st.rerun()
+                    else:
+                        if st.button("🗑️ Delete", key=f"btn_del_card_{tpl_id}", use_container_width=True):
+                            st.session_state[f"confirm_del_tpl_{tpl_id}"] = True
+                            st.rerun()
+
+                # Test preview drawer if toggled
+                if is_tpl_previewing:
+                    sample_contact = contacts_list[0] if contacts_list else {
+                        "name": "Sarah Jenkins",
+                        "company": "Apex Outdoors",
+                        "email": "sarah@apex.com",
+                        "custom_variables_dict": {"Role": "Founder"}
+                    }
+                    resolved = resolve_template(tpl["body_content"], sample_contact)
+                    st.caption(f"Live preview resolved with lead: **{sample_contact['name']}** ({sample_contact.get('company', '')}):")
+                    render_html_preview(resolved, height=180)
+
+                # Edit template drawer if toggled
                 if is_tpl_editing:
                     st.markdown(f"""
-                    <div style="background: rgba(14, 46, 39, 0.65); border: 1px solid #10B981; border-radius: 10px; padding: 14px 18px; margin: 8px 0 14px;">
-                        <strong style="color: #34D399;">✏️ Editing Template #{tpl_id}: {tpl['template_name']}</strong>
+                    <div style="background: rgba(8,55,49,0.04); border: 1px solid #10B981; border-radius: 8px; padding: 10px 14px; margin: 8px 0;">
+                        <strong style="color: #083731; font-size:0.88rem;">✏️ Editing Template #{tpl_id}: {tpl['template_name']}</strong>
                     </div>
                     """, unsafe_allow_html=True)
 
                     edit_t_name = st.text_input("Template Name", value=tpl["template_name"], key=f"edit_tname_{tpl_id}")
 
+                    # One-Click Variable Chips inside editor
+                    edit_tpl_key = f"edit_tpl_content_{tpl_id}"
+                    if edit_tpl_key not in st.session_state:
+                        st.session_state[edit_tpl_key] = tpl["body_content"]
+
+                    st.caption("Click to insert variable:")
+                    e_chip_cols = st.columns(5)
+                    for e_idx, (e_lbl, e_val) in enumerate(chips):
+                        with e_chip_cols[e_idx]:
+                            if st.button(e_lbl, key=f"edit_chip_{tpl_id}_{e_idx}", use_container_width=True):
+                                st.session_state[edit_tpl_key] = (st.session_state.get(edit_tpl_key, "") + f" {e_val}").strip()
+                                st.rerun()
+
                     col_edit_src, col_edit_prev = st.columns([1.1, 1.1])
                     with col_edit_src:
-                        st.markdown("##### HTML & Spintax Source")
-                        st.caption("Edit HTML tags and Spintax directly. Insert dynamic placeholders like `[Name]` or `[Company]`.")
-                        edit_tpl_key = f"edit_tpl_content_{tpl_id}"
-                        if edit_tpl_key not in st.session_state:
-                            st.session_state[edit_tpl_key] = tpl["body_content"]
-
                         edit_src_txt = st.text_area(
                             "HTML / Spintax Source",
                             value=st.session_state[edit_tpl_key],
-                            height=260,
+                            height=220,
                             key=f"src_edit_tpl_{tpl_id}",
                             label_visibility="collapsed"
                         )
                         st.session_state[edit_tpl_key] = edit_src_txt
 
-                        # Deliverability Audit Gate
                         edit_body_to_audit = edit_src_txt.strip()
                         neg_kw = get_config("negative_keywords", "")
                         edit_detected_kws = scan_all_negative_keywords(edit_body_to_audit, neg_kw)
+                        edit_audit = audit_email_deliverability(edit_body_to_audit)
+                        edit_score = edit_audit.get("score", 100)
+
+                        st.markdown(f"""
+                        <div style="background:rgba(8,55,49,0.05); border:1px solid rgba(8,55,49,0.18); border-radius:6px; padding:6px 10px; margin:4px 0 8px;">
+                            <span style="font-weight:700; font-size:0.82rem; color:#083731;">Deliverability Score: {edit_score}/100</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
                         if edit_detected_kws:
-                            edit_kws_badges = ", ".join(f"`{k}`" for k in edit_detected_kws)
-                            st.warning(f"Contains restricted trigger keyword(s): {edit_kws_badges}")
+                            trig_chips = ", ".join(f"`{k}`" for k in edit_detected_kws)
+                            st.warning(f"Contains restricted trigger keyword(s): {trig_chips}")
 
                         col_save_e, col_canc_e = st.columns([1.5, 3])
                         with col_save_e:
@@ -210,14 +318,6 @@ def render_studio_tab(templates=None, contacts_list=None):
                                 st.rerun()
 
                     with col_edit_prev:
-                        col_eph, col_eprb = st.columns([2.5, 1.5])
-                        with col_eph:
-                            st.markdown("##### Live Formatted Preview")
-                            st.caption("Resolved with sample lead data:")
-                        with col_eprb:
-                            if st.button("Re-roll Spintax", key=f"btn_reroll_edit_tpl_{tpl_id}", use_container_width=True):
-                                st.rerun()
-
                         if edit_body_to_audit:
                             sample_lead = {
                                 "name": "Jack Connor",
@@ -226,44 +326,6 @@ def render_studio_tab(templates=None, contacts_list=None):
                                 "custom_variables": {"Role": "Founder", "Website": "https://summitbrands.com"}
                             }
                             resolved_edit_preview = resolve_template(edit_body_to_audit, sample_lead)
-                            render_html_preview(resolved_edit_preview, height=260)
+                            render_html_preview(resolved_edit_preview, height=220)
                         else:
-                            st.caption("Enter template source on the left to see live preview.")
-
-                    st.markdown("<hr style='margin: 1rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
-
-                st.markdown("**Rendered Preview:**")
-                render_html_preview(tpl["body_content"], height=200)
-
-                col_tp1, col_tp2, col_tp3 = st.columns([1.5, 1.5, 1])
-                with col_tp1:
-                    edit_toggle_btn = st.button("✏️ Edit Template", key=f"edit_toggle_{tpl_id}")
-                    if edit_toggle_btn:
-                        st.session_state["editing_tpl_id"] = None if is_tpl_editing else tpl_id
-                        st.rerun()
-                with col_tp2:
-                    test_btn = st.button("🧪 Test Spintax & Vars", key=f"test_tpl_{tpl_id}")
-                with col_tp3:
-                    if st.session_state.get(f"confirm_del_tpl_{tpl_id}"):
-                        if st.button("Confirm", key=f"del_conf_tpl_{tpl_id}", use_container_width=True):
-                            delete_template(tpl_id)
-                            st.session_state[f"confirm_del_tpl_{tpl_id}"] = False
-                            st.warning(f"Template '{tpl['template_name']}' deleted.")
-                            st.rerun()
-                    else:
-                        if st.button("🗑️ Delete", key=f"del_tpl_{tpl_id}"):
-                            st.session_state[f"confirm_del_tpl_{tpl_id}"] = True
-                            st.rerun()
-
-                if test_btn:
-                    # Pick sample or first contact for preview
-                    sample_contact = contacts_list[0] if contacts_list else {
-                        "name": "Sarah Jenkins",
-                        "company": "Apex Outdoors",
-                        "email": "sarah@apex.com",
-                        "custom_variables_dict": {"Role": "Founder"}
-                    }
-                    resolved = resolve_template(tpl["body_content"], sample_contact)
-
-                    st.markdown(f"**Randomized Resolution with contact '{sample_contact['name']}' at '{sample_contact['company']}':**")
-                    render_html_preview(resolved, height=200)
+                            st.caption("Enter template source to see live preview.")

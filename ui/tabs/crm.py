@@ -4,6 +4,7 @@ Includes contact creation, unified CSV center (import/export/template),
 intelligent search/filtering, bulk actions, Excel grid editor, and interactive card view with unified modal editing.
 """
 
+from datetime import datetime
 import html
 import json
 import pandas as pd
@@ -368,154 +369,156 @@ def render_crm_tab(all_contacts=None):
     st.markdown("---")
 
     # ==============================================================================
-    # 🔍 SECTION 2: SEARCH, FILTERS & VIEW MODE CONTROLS (Compact Single Bar)
+    # 🔍 SECTION 2: SMART SEGMENT BAR & CLEAN FILTER ROW
     # ==============================================================================
+    total_cnt = len(all_contacts)
+    ready_cnt = sum(1 for c in all_contacts if c.get("status") in ["Not Contacted", None, ""] and not c.get("is_bounced") and c.get("status") not in ["Bounced", "Do Not Contact", "Closed Lost"])
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    due_cnt = sum(1 for c in all_contacts if c.get("status") in ["Contacted", "Follow-Up Sent"] or (c.get("next_follow_up") and str(c.get("next_follow_up"))[:10] <= today_str))
+    replied_cnt = sum(1 for c in all_contacts if c.get("status") == "Replied" or c.get("last_reply_at"))
+    bounced_cnt = sum(1 for c in all_contacts if c.get("status") in ["Bounced", "Do Not Contact", "Closed Lost"] or c.get("is_bounced"))
+
+    segment_labels = [
+        f"All Leads ({total_cnt})",
+        f"Ready for Outreach ({ready_cnt})",
+        f"Follow-Up Due ({due_cnt})",
+        f"Replied ({replied_cnt})",
+        f"Bounced / Inactive ({bounced_cnt})"
+    ]
+
+    selected_segment = st.pills(
+        "Smart Lead Segments",
+        segment_labels,
+        default=segment_labels[0],
+        key="crm_smart_segments",
+        label_visibility="collapsed"
+    )
+    if not selected_segment:
+        selected_segment = segment_labels[0]
+
+    # Clean Filter Row: Search (col1), Tag Filter (col2), Lead Source (col3)
     distinct_tags = get_all_distinct_tags(include_predefined=True)
-    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([2.2, 1.4, 1.4, 1.5])
+    filter_col1, filter_col2, filter_col3 = st.columns([2, 1, 1])
     with filter_col1:
         search_query = st.text_input("🔍 Search Leads", placeholder="Search by Name, Email, Company, Owner, Notes...", key="crm_search_query")
     with filter_col2:
         tag_filter = st.multiselect("Filter by Tag", options=distinct_tags, placeholder="All tags...", key="crm_tag_filter")
     with filter_col3:
-        status_filter_choice = st.selectbox(
-            "Filter by Pipeline",
-            ["-- All Statuses --", "Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
-            key="crm_status_filter_choice"
-        )
-    with filter_col4:
-        crm_layout_mode = st.radio(
-            "Display Mode",
-            ["📊 Spreadsheet Grid", "🗂️ Detailed Cards"],
-            horizontal=True,
-            key="crm_display_layout_mode"
-        )
+        source_options = ["-- All Sources --", "Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"]
+        selected_source = st.selectbox("Lead Source", options=source_options, key="crm_source_filter")
 
-    active_status_filter = None if status_filter_choice == "-- All Statuses --" else status_filter_choice
-    filtered_contacts = get_contacts(tags_filter=tag_filter, search_query=search_query, status_filter=active_status_filter)
+    # Fetch and filter
+    base_filtered = get_contacts(tags_filter=tag_filter, search_query=search_query)
+    if selected_source != "-- All Sources --":
+        base_filtered = [c for c in base_filtered if (c.get("lead_source") or "Other") == selected_source]
+
+    if "Ready for Outreach" in selected_segment:
+        filtered_contacts = [c for c in base_filtered if c.get("status") in ["Not Contacted", None, ""] and not c.get("is_bounced") and c.get("status") not in ["Bounced", "Do Not Contact", "Closed Lost"]]
+    elif "Follow-Up Due" in selected_segment:
+        filtered_contacts = [c for c in base_filtered if c.get("status") in ["Contacted", "Follow-Up Sent"] or (c.get("next_follow_up") and str(c.get("next_follow_up"))[:10] <= today_str)]
+    elif "Replied" in selected_segment:
+        filtered_contacts = [c for c in base_filtered if c.get("status") == "Replied" or c.get("last_reply_at")]
+    elif "Bounced / Inactive" in selected_segment:
+        filtered_contacts = [c for c in base_filtered if c.get("status") in ["Bounced", "Do Not Contact", "Closed Lost"] or c.get("is_bounced")]
+    else:
+        filtered_contacts = base_filtered
 
     filtered_ids = [c["id"] for c in filtered_contacts]
     st.session_state["crm_selected_ids"] = st.session_state["crm_selected_ids"].intersection(set(filtered_ids))
     selected_ids = st.session_state["crm_selected_ids"]
     s_count = len(selected_ids)
 
-    # Selection Toolbar & Counter Bar
-    if filtered_contacts:
-        sel_c1, sel_c2, sel_c3 = st.columns([1.2, 1.2, 3.6])
-        with sel_c1:
-            if st.button(f"☑️ Select All ({len(filtered_contacts)})", key="btn_sel_all_crm", use_container_width=True):
+    # Sub-bar: Selection Tools & Display Mode Switcher
+    col_sel_left, col_sel_right = st.columns([2.5, 1.5], vertical_alignment="center")
+    with col_sel_left:
+        c_s1, c_s2, c_s3 = st.columns([1.1, 1.1, 2.8])
+        with c_s1:
+            if st.button(f"☑️ Select All ({len(filtered_contacts)})", key="btn_sel_all_crm", use_container_width=True, disabled=not filtered_contacts):
                 st.session_state["crm_selected_ids"] = set(filtered_ids)
                 st.rerun()
-        with sel_c2:
-            if st.button("⬜ Clear Selection", key="btn_clear_sel_crm", use_container_width=True):
+        with c_s2:
+            if st.button("⬜ Clear", key="btn_clear_sel_crm", use_container_width=True, disabled=not selected_ids):
                 st.session_state["crm_selected_ids"] = set()
                 st.rerun()
-        with sel_c3:
-            if s_count > 0:
-                st.markdown(f"<div style='padding:7px 14px; background:rgba(8,55,49,0.08); border:1.5px solid #083731; border-radius:8px; color:#083731; font-weight:700;'>📌 {s_count} of {len(filtered_contacts)} lead(s) selected</div>", unsafe_allow_html=True)
-            else:
-                st.caption(f"Displaying **{len(filtered_contacts)}** of **{len(all_contacts)}** total contacts.")
+        with c_s3:
+            st.caption(f"Displaying **{len(filtered_contacts)}** of **{len(all_contacts)}** leads.")
+    with col_sel_right:
+        crm_layout_mode = st.radio(
+            "Display Mode",
+            ["📊 Spreadsheet Grid", "🗂️ Detailed Cards"],
+            horizontal=True,
+            key="crm_display_layout_mode",
+            label_visibility="collapsed"
+        )
 
     # ==============================================================================
-    # ⚡ SECTION 3: BULK ACTIONS COMMAND CENTER (Appears when 1+ contacts selected)
+    # ⚡ CONTEXTUAL BULK ACTIONS TOOLBAR (Appears ONLY when >= 1 contact is checked)
     # ==============================================================================
     if s_count > 0:
-        with st.container():
-            st.markdown(f"""
-            <div style="background: #FFFFFF; border: 2px solid #083731; border-radius: 14px; padding: 14px 18px; margin: 10px 0 16px; box-shadow: 0 4px 16px rgba(8, 55, 49, 0.08);">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size:1.05rem; font-weight:800; color:#083731; letter-spacing:0.4px;">⚡ BULK ACTIONS <span style="color:#083731; font-weight:700;">({s_count} Leads Selected)</span></div>
-                    <div style="font-size:0.82rem; color:#64748B;">Apply tag updates, edit details, audit domains, or delete selected contacts in 1 click</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:rgba(8,55,49,0.06); border:1.5px solid #083731; border-radius:10px; padding:8px 14px; margin:6px 0 10px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:800; color:#083731; font-size:0.92rem;">📌 {s_count} lead(s) selected</span>
+            <span style="color:#475569; font-size:0.8rem;">Choose a bulk action below to apply across all selected leads</span>
+        </div>
+        """, unsafe_allow_html=True)
 
-            bulk_tab_tag, bulk_tab_details, bulk_tab_mx, bulk_tab_delete = st.tabs([
-                "🏷️ Bulk Tag Management",
-                "✏️ Bulk Edit Details & Variables",
-                "🛡️ Pre-Flight MX Verification",
-                "🗑️ Bulk Delete"
-            ])
-
-            with bulk_tab_tag:
-                col_bt1, col_bt2 = st.columns([1.3, 2.7])
-                with col_bt1:
-                    bulk_tag_mode = st.radio(
-                        "Tag Action",
-                        ["➕ Add Tags (Keep Existing)", "🔄 Replace All Tags", "➖ Remove Specific Tags"],
-                        key="bulk_tag_mode"
-                    )
-                with col_bt2:
-                    all_avail_tags = get_all_distinct_tags(include_predefined=True)
-                    bulk_chosen_tags = st.multiselect("Select Existing Tags", options=all_avail_tags, key="bulk_tags_multisel")
-                    bulk_custom_tag = st.text_input("Or Type New Tag", placeholder="e.g. Q4 Audit Target", key="bulk_custom_tag")
-
-                full_bulk_tags = list(set(bulk_chosen_tags + ([bulk_custom_tag.strip()] if bulk_custom_tag.strip() else [])))
-                if st.button(f"🚀 Apply Tags to {s_count} Selected Leads", type="primary", key="btn_apply_bulk_tags"):
-                    if not full_bulk_tags and "Replace" not in bulk_tag_mode:
-                        st.warning("Please select or enter at least one tag.")
+        col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
+        with col_b1:
+            with st.popover("🏷️ Add Tag", use_container_width=True):
+                st.caption(f"Add tags to {s_count} selected leads:")
+                all_avail_tags = get_all_distinct_tags(include_predefined=True)
+                b_tags = st.multiselect("Existing Tags", options=all_avail_tags, key="pop_bulk_tags")
+                b_new_tag = st.text_input("New Tag", placeholder="e.g. VIP Brand", key="pop_bulk_new_tag")
+                tags_to_add = list(set(b_tags + ([b_new_tag.strip()] if b_new_tag.strip() else [])))
+                if st.button("Apply Tags", type="primary", use_container_width=True, key="btn_apply_pop_tags"):
+                    if tags_to_add:
+                        bulk_add_tags_to_contacts(list(selected_ids), tags_to_add)
+                        st.success(f"Added {tags_to_add} to {s_count} lead(s)!")
+                        st.rerun()
                     else:
-                        s_list = list(selected_ids)
-                        if "Add Tags" in bulk_tag_mode:
-                            bulk_add_tags_to_contacts(s_list, full_bulk_tags)
-                            st.success(f"✅ Added tags {full_bulk_tags} to {len(s_list)} contact(s)!")
-                        elif "Replace" in bulk_tag_mode:
-                            bulk_set_tags_for_contacts(s_list, full_bulk_tags)
-                            st.success(f"✅ Replaced tags with {full_bulk_tags} on {len(s_list)} contact(s)!")
-                        else:
-                            bulk_remove_tags_from_contacts(s_list, full_bulk_tags)
-                            st.success(f"✅ Removed tags {full_bulk_tags} from {len(s_list)} contact(s)!")
-                        st.rerun()
-
-            with bulk_tab_details:
-                st.caption(f"Update company or inject custom variables across all {s_count} selected leads:")
-                col_bd1, col_bd2 = st.columns(2)
-                with col_bd1:
-                    bulk_company = st.text_input("Set Company Name (leave blank to keep unchanged)", placeholder="e.g. Acme Brands", key="bulk_company_inp")
-                with col_bd2:
-                    st.caption("Add/Update Custom Variables (JSON):")
-                    bulk_vars_raw = st.text_area("Variables JSON to Merge", value="{\n  \"Role\": \"Founder\"\n}", height=75, key="bulk_vars_json")
-
-                if st.button(f"💾 Update Details on {s_count} Leads", key="btn_bulk_update_details"):
-                    try:
-                        parsed_vars = json.loads(bulk_vars_raw) if bulk_vars_raw.strip() else {}
-                    except Exception as b_err:
-                        st.warning(f"Invalid JSON: {b_err}")
-                        parsed_vars = {}
-
-                    bulk_update_contacts_details(
-                        contact_ids=list(selected_ids),
-                        company=bulk_company if bulk_company.strip() else None,
-                        custom_vars_to_merge=parsed_vars if parsed_vars else None
-                    )
-                    st.success(f"✅ Updated details on {s_count} contact(s)!")
+                        st.warning("Please choose or enter a tag.")
+        with col_b2:
+            with st.popover("⚡ Set Stage", use_container_width=True):
+                st.caption(f"Set status for {s_count} selected leads:")
+                new_stage = st.selectbox(
+                    "Select Stage",
+                    ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                    key="pop_bulk_stage"
+                )
+                if st.button("Update Stage", type="primary", use_container_width=True, key="btn_apply_pop_stage"):
+                    for sid in selected_ids:
+                        update_contact(contact_id=sid, status=new_stage)
+                    st.success(f"Updated {s_count} leads to '{new_stage}'!")
                     st.rerun()
-
-            with bulk_tab_mx:
-                st.markdown("##### 🛡️ Verify Domain Mail Exchangers (MX) for Selected Leads")
-                st.caption("Validates domain DNS records for selected contacts to catch dead domains or typos before dispatch.")
-                if st.button(f"🔍 Run Pre-Flight MX Audit on {s_count} Selected Leads", type="primary", key="btn_bulk_audit_mx"):
-                    with st.spinner("Auditing domain mail exchangers..."):
-                        selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
-                        mx_res = batch_verify_contacts_mx(selected_contacts_list, update_db=True)
-                        if mx_res["invalid_count"] > 0:
-                            st.warning(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification and were tagged 'Invalid MX' in SQLite.")
-                            for inv in mx_res["invalid_contacts"][:8]:
-                                st.write(f"- 🔴 `{inv['email']}`: {inv['reason']}")
-                        else:
-                            st.success(f"🎉 All {mx_res['valid_count']} selected lead(s) have active MX mail exchangers!")
-                        st.rerun()
-
-            with bulk_tab_delete:
-                st.error(f"⚠️ Caution: This will permanently delete {s_count} selected contact(s) from your database.")
-                confirm_del = st.checkbox(f"Yes, permanently delete these {s_count} contact(s)", key="confirm_bulk_del")
-                if confirm_del:
-                    if st.button(f"🗑️ Confirm Delete {s_count} Contacts", key="btn_confirm_bulk_del"):
-                        del_num = bulk_delete_contacts(list(selected_ids))
-                        st.session_state["crm_selected_ids"] = set()
-                        st.success(f"Deleted {del_num} contact(s).")
-                        st.rerun()
-
-        st.markdown("<br>", unsafe_allow_html=True)
+        with col_b3:
+            if st.button("🌐 Verify MX", use_container_width=True, key="btn_bulk_mx_act", help="Verify DNS MX records for selected leads"):
+                with st.spinner("Auditing domain mail exchangers..."):
+                    selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
+                    mx_res = batch_verify_contacts_mx(selected_contacts_list, update_db=True)
+                    if mx_res["invalid_count"] > 0:
+                        st.warning(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification.")
+                    else:
+                        st.success(f"🎉 All {mx_res['valid_count']} selected leads have active MX records!")
+                    st.rerun()
+        with col_b4:
+            selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
+            export_csv_data = export_contacts_to_csv(selected_contacts_list)
+            st.download_button(
+                "📥 Export CSV",
+                data=export_csv_data,
+                file_name="selected_leads_export.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="btn_bulk_export_csv"
+            )
+        with col_b5:
+            with st.popover("🗑️ Delete", use_container_width=True):
+                st.error(f"Permanently delete {s_count} selected lead(s)?")
+                if st.button("Confirm Delete", type="primary", use_container_width=True, key="btn_conf_pop_del"):
+                    del_num = bulk_delete_contacts(list(selected_ids))
+                    st.session_state["crm_selected_ids"] = set()
+                    st.success(f"Deleted {del_num} contact(s).")
+                    st.rerun()
 
     # ==============================================================================
     # 🗃️ SECTION 4: MAIN WORKSPACE (Spreadsheet Grid vs Card View)
@@ -726,11 +729,13 @@ def render_crm_tab(all_contacts=None):
         """, unsafe_allow_html=True)
 
         column_config = {
-            "Select": st.column_config.CheckboxColumn("Select", help="Check to select contact for editing or bulk actions", width="small", default=False),
+            "Select": st.column_config.CheckboxColumn("Select", help="Check to select contact for editing or bulk actions", width="small", default=False, pinned=True),
             "id": None,
+            "created_at": None,
+            "custom_variables_raw": None,
             "Lead ID": st.column_config.TextColumn("Lead ID", disabled=True, width="small") if "Lead ID" in visible_cols else None,
-            "Company": st.column_config.TextColumn("Company", width="medium") if "Company" in visible_cols else None,
-            "Contact Name": st.column_config.TextColumn("Contact Name", width="medium", required=True) if "Contact Name" in visible_cols else None,
+            "Company": st.column_config.TextColumn("Company", width="medium", pinned=True) if "Company" in visible_cols else None,
+            "Contact Name": st.column_config.TextColumn("Contact Name", width="medium", required=True, pinned=True) if "Contact Name" in visible_cols else None,
             "Email Address": st.column_config.LinkColumn(
                 "Email Address",
                 display_text=r"mailto:(.*)",
