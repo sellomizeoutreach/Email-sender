@@ -89,6 +89,22 @@ def render_touch_composer(
     Supports variables, spintax, live sandboxed preview, spam shield, and optional template saving.
     """
     tpl_keys = list(template_options.keys())
+    saved = st.session_state.setdefault("camp_saved_state", {})
+
+    k_custom_subj = f"camp_custom_subj_{touch_step}"
+    k_custom_body = f"camp_custom_body_{touch_step}"
+    k_subj = f"camp_subj_{touch_step}"
+    k_tpl = f"camp_tpl_{touch_step}"
+    k_mode = f"camp_author_mode_{touch_step}"
+    k_dval = f"camp_t{touch_step}_val"
+    k_dunit = f"camp_t{touch_step}_unit"
+    k_save = f"camp_save_tpl_{touch_step}"
+    k_name = f"camp_new_name_{touch_step}"
+
+    for k in [k_custom_subj, k_custom_body, k_subj, k_tpl, k_mode, k_dval, k_dunit, k_save, k_name]:
+        if k in saved and k not in st.session_state:
+            st.session_state[k] = saved[k]
+
     d_val = default_delay_val
     d_unit = default_delay_unit
 
@@ -99,49 +115,62 @@ def render_touch_composer(
                 f"Wait Delay (after Touch {touch_step - 1}) *",
                 min_value=1,
                 max_value=720,
-                value=default_delay_val,
-                key=f"camp_t{touch_step}_val",
+                value=int(saved.get(k_dval, default_delay_val)),
+                key=k_dval,
                 help=f"Wait interval after Touch {touch_step - 1} send before generating this follow-up."
             )
+            saved[k_dval] = int(d_val)
         with col_d2:
+            saved_unit_val = saved.get(k_dunit, default_delay_unit)
             d_unit = st.selectbox(
                 "Delay Unit",
                 options=["Days", "Hours"],
-                index=0 if default_delay_unit.lower() == "days" else 1,
-                key=f"camp_t{touch_step}_unit"
+                index=0 if str(saved_unit_val).lower() == "days" else 1,
+                key=k_dunit
             )
+            saved[k_dunit] = d_unit
         with col_d_info:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
             st.caption(f"⚡ Follow-up draft will auto-generate **+{d_val} {d_unit.lower()}** after Touch {touch_step - 1} is sent if no reply is received.")
 
     col_m1, col_m2 = st.columns([2.2, 1.8])
     with col_m1:
+        mode_opts = ["📋 Select Pre-Made Template", "✍️ Write Email / Copy Yourself"]
+        saved_mode = saved.get(k_mode, mode_opts[0])
+        mode_idx = 0 if str(saved_mode).startswith("📋") else 1
         author_mode = st.radio(
             f"Select Drafting Mode for {touch_label}",
-            options=["📋 Select Pre-Made Template", "✍️ Write Email / Copy Yourself"],
-            index=0,
+            options=mode_opts,
+            index=mode_idx,
             horizontal=True,
-            key=f"camp_author_mode_{touch_step}"
+            key=k_mode
         )
+        saved[k_mode] = author_mode
 
     if author_mode.startswith("📋"):
         col_tpl, col_subj = st.columns([1.2, 1.8])
         with col_tpl:
-            def_idx = min(touch_step - 1, len(tpl_keys) - 1) if tpl_keys else 0
+            saved_tpl = saved.get(k_tpl)
+            if saved_tpl in tpl_keys:
+                def_idx = tpl_keys.index(saved_tpl)
+            else:
+                def_idx = min(touch_step - 1, len(tpl_keys) - 1) if tpl_keys else 0
             sel_tpl_id = st.selectbox(
                 "Select Pre-Made Template *",
                 options=tpl_keys,
                 index=def_idx,
                 format_func=lambda tid: template_options[tid],
-                key=f"camp_tpl_{touch_step}"
+                key=k_tpl
             )
+            saved[k_tpl] = sel_tpl_id
         with col_subj:
             subj_val = st.text_input(
                 "Subject Line",
-                value=default_subj,
+                value=saved.get(k_subj, default_subj),
                 help="Supports [Name], [Company], and {A|B} Spintax.",
-                key=f"camp_subj_{touch_step}"
+                key=k_subj
             )
+            saved[k_subj] = subj_val
 
         chosen_tpl = get_template_by_id(sel_tpl_id)
         raw_body = chosen_tpl["body_content"] if chosen_tpl else ""
@@ -184,10 +213,11 @@ def render_touch_composer(
         # User writes email themselves
         subj_val = st.text_input(
             "Subject Line *",
-            value=default_subj,
+            value=saved.get(k_custom_subj, default_subj),
             help="Supports [Name], [Company], and {A|B} Spintax.",
-            key=f"camp_custom_subj_{touch_step}"
+            key=k_custom_subj
         )
+        saved[k_custom_subj] = subj_val
 
         st.markdown("""
         <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:4px; font-size:0.8rem; color:#475569;">
@@ -203,20 +233,28 @@ def render_touch_composer(
 
         body_val = st.text_area(
             f"Email Body Content ({touch_label}) *",
-            value=default_body,
+            value=saved.get(k_custom_body, default_body),
             height=180,
-            key=f"camp_custom_body_{touch_step}",
+            key=k_custom_body,
             help="Write your custom email content here. Variables like [Name] and [Company] will be personalized per lead."
         )
+        saved[k_custom_body] = body_val
 
         col_save_chk, col_save_name = st.columns([1.4, 2.6])
         with col_save_chk:
-            save_tpl = st.checkbox("💾 Save as Reusable Template", key=f"camp_save_tpl_{touch_step}", help="Automatically save this copy to your Template Builder library")
+            save_tpl = st.checkbox(
+                "💾 Save as Reusable Template",
+                value=bool(saved.get(k_save, False)),
+                key=k_save,
+                help="Automatically save this copy to your Template Builder library"
+            )
+            saved[k_save] = bool(save_tpl)
         with col_save_name:
             new_tpl_name = ""
             if save_tpl:
                 def_tpl_title = f"{touch_label} - {datetime.now().strftime('%b %d')}"
-                new_tpl_name = st.text_input("Template Name *", value=def_tpl_title, key=f"camp_new_name_{touch_step}")
+                new_tpl_name = st.text_input("Template Name *", value=saved.get(k_name, def_tpl_title), key=k_name)
+                saved[k_name] = new_tpl_name
 
         preview_subj = parse_spintax(inject_variables(subj_val, sample_contact))
         preview_body = resolve_template(body_val, sample_contact)
@@ -261,6 +299,32 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         templates_list = get_templates()
 
     render_tab_header("🚀 Dispatch & Review", "Launch outreach campaigns, compose sequences, inspect rendered HTML previews, and triage drafts.")
+
+    # Anchor & Smooth Auto-Scroll Handler for Generation Wizard
+    st.markdown('<div id="generation-wizard-anchor"></div>', unsafe_allow_html=True)
+    if st.session_state.get("scroll_to_wizard"):
+        st.markdown("""
+        <script>
+            setTimeout(() => {
+                const el = document.getElementById('generation-wizard-anchor');
+                if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+            }, 120);
+        </script>
+        """, unsafe_allow_html=True)
+        st.session_state["scroll_to_wizard"] = False
+
+    saved = st.session_state.setdefault("camp_saved_state", {})
+
+    top_keys = [
+        "camp_target_method_choice", "camp_target_tag_sel", "camp_target_stage_sel",
+        "camp_cherry_pick_multisel", "camp_seq_touches", "camp_followup_days_input",
+        "camp_target_market_select", "camp_sched_preset", "camp_custom_days",
+        "camp_custom_start", "camp_custom_end", "camp_pacing_strategy_sel",
+        "camp_use_jitter", "camp_adv_spacing_mins"
+    ]
+    for tk in top_keys:
+        if tk in saved and tk not in st.session_state:
+            st.session_state[tk] = saved[tk]
 
     # Visual 3-Step Pipeline Stepper Banner
     st.markdown("""
@@ -341,6 +405,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 horizontal=True,
                 key="camp_target_method_choice"
             )
+            saved["camp_target_method_choice"] = target_choice
 
             if target_choice == "🏷️ By Tag":
                 all_distinct_tags = get_all_distinct_tags()
@@ -352,6 +417,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     key="camp_target_tag_sel",
                     help="Target leads possessing this tag."
                 )
+                saved["camp_target_tag_sel"] = selected_tag
 
                 if selected_tag == "-- All Active Leads --":
                     matching_contacts = active_candidates
@@ -415,6 +481,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     key="camp_target_stage_sel",
                     help="Target contacts based on their current stage in your outreach pipeline."
                 )
+                saved["camp_target_stage_sel"] = selected_stage_key
 
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 if selected_stage_key == "new":
@@ -513,6 +580,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     )
 
                 selected_contact_ids = selected_cherry_ids
+                saved["camp_cherry_pick_multisel"] = selected_cherry_ids
                 matching_contacts = [contact_id_map[cid] for cid in selected_cherry_ids if cid in contact_id_map]
                 unique_comps = len(set(c.get("company") for c in matching_contacts if c.get("company")))
 
@@ -531,10 +599,11 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     "Days until next sequence step",
                     min_value=1,
                     max_value=30,
-                    value=int(get_config("followup_delay_days", "4") or 4),
+                    value=int(saved.get("camp_followup_days_input", get_config("followup_delay_days", "4") or 4)),
                     help="When this campaign email is dispatched, recipient Next Follow-Up dates in CRM advance by this interval.",
                     key="camp_followup_days_input"
                 )
+                saved["camp_followup_days_input"] = int(followup_delay_days)
             with col_seq_info:
                 next_due_date = (datetime.now() + timedelta(days=int(followup_delay_days))).strftime("%B %d, %Y")
                 st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
@@ -545,17 +614,21 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
             st.markdown("#### 2. Sequence Touches & Message Content")
             st.caption("Choose how many emails to send in this sequence. Configure custom templates, subject lines, and wait intervals for each touch.")
 
+            seq_options = [
+                "Once (1 Email - Single Touch)",
+                "Twice (2 Emails - Initial Pitch + 1 Follow-Up)",
+                "Thrice (3 Emails - Initial Pitch + 2 Follow-Ups)"
+            ]
+            saved_touches = saved.get("camp_seq_touches", seq_options[0])
+            touches_idx = seq_options.index(saved_touches) if saved_touches in seq_options else 0
             sequence_touches = st.radio(
                 "Outreach Frequency / Sequence Touches",
-                [
-                    "Once (1 Email - Single Touch)",
-                    "Twice (2 Emails - Initial Pitch + 1 Follow-Up)",
-                    "Thrice (3 Emails - Initial Pitch + 2 Follow-Ups)"
-                ],
-                index=0,
+                seq_options,
+                index=touches_idx,
                 horizontal=True,
                 key="camp_seq_touches"
             )
+            saved["camp_seq_touches"] = sequence_touches
 
             num_touches = 1
             if sequence_touches.startswith("Twice"):
@@ -696,6 +769,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                     key="camp_target_market_select",
                     help="Select target country. Send times will automatically adapt to the recipient's local business hours without time-drift."
                 )
+                saved["camp_target_market_select"] = selected_market_key
             with col_tm2:
                 m_info = TARGET_MARKETS[selected_market_key]
                 m_now = get_market_current_time(selected_market_key)
@@ -745,6 +819,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 horizontal=True,
                 key="camp_sched_preset"
             )
+            saved["camp_sched_preset"] = preset_choice
 
             if preset_choice.startswith("Business Days"):
                 camp_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
@@ -774,6 +849,7 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 key="camp_pacing_strategy_sel",
                 help="Choose whether to queue emails in immediate succession or distribute them across your active business hours."
             )
+            saved["camp_pacing_strategy_sel"] = pacing_choice
 
             with st.expander("⚙️ Advanced Throttle Tuning", expanded=False):
                 st.caption("Fine-tune delivery pacing, anti-spam jitter, and custom pause intervals.")
@@ -781,20 +857,22 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 with col_att1:
                     use_jitter = st.checkbox(
                         "Add natural human jitter",
-                        value=True,
+                        value=bool(saved.get("camp_use_jitter", True)),
                         help="Adds ±20 to 90 seconds of organic variation so delivery times avoid robotic, fixed-second patterns.",
                         key="camp_use_jitter"
                     )
+                    saved["camp_use_jitter"] = bool(use_jitter)
                 with col_att2:
                     adv_gap = st.number_input(
                         "Custom Minutes Between Sends",
                         min_value=0.0,
                         max_value=120.0,
-                        value=0.0 if "fast" in pacing_choice else 5.0,
+                        value=float(saved.get("camp_adv_spacing_mins", 0.0 if "fast" in pacing_choice else 5.0)),
                         step=1.0,
                         key="camp_adv_spacing_mins",
                         help="Custom pause interval between consecutive dispatches. 0.0 means immediate dispatch."
                     )
+                    saved["camp_adv_spacing_mins"] = float(adv_gap)
 
             if "fast" in pacing_choice:
                 span_hours = 0.0

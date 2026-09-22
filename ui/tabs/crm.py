@@ -217,6 +217,144 @@ def render_crm_tab(all_contacts=None):
             st.session_state["crm_editing_id"] = None
 
     # ==============================================================================
+    # 🌟 ZERO-DATA ONBOARDING EMPTY STATE
+    # ==============================================================================
+    if not all_contacts:
+        st.markdown("""
+        <div style="background:#F8FAFC; border:2px dashed #94A3B8; border-radius:12px; padding:36px 24px; text-align:center; margin: 16px 0 24px;">
+            <div style="font-size:2.8rem; margin-bottom:10px;">👋</div>
+            <div style="font-size:1.35rem; font-weight:800; color:#083731;">Your CRM is empty. Let's add some leads.</div>
+            <div style="font-size:0.92rem; color:#475569; max-width:560px; margin:8px auto 20px; line-height:1.5;">
+                Jumpstart your cold outreach pipeline by importing a CSV contact list with pre-flight domain MX verification, or add your first lead manually.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tab_onboard_csv, tab_onboard_add = st.tabs(["📥 Import CSV", "➕ Add First Lead"])
+        with tab_onboard_csv:
+            st.caption("Upload a spreadsheet to import contacts into Sellomize Reach with tags, variables, and MX verification:")
+            up_csv = st.file_uploader("Upload Leads CSV File", type=["csv"], key="onboard_csv_uploader")
+            chk_mx = st.checkbox("🛡️ Perform Pre-Flight MX & Domain Verification", value=True, key="onboard_mx_chk")
+            col_ob_act1, col_ob_act2 = st.columns([1.5, 1.5])
+            with col_ob_act1:
+                if up_csv is not None:
+                    if st.button("Process & Import CSV", type="primary", use_container_width=True, key="btn_onboard_import_csv"):
+                        with st.spinner("Processing CSV and validating domains..."):
+                            stats = import_contacts_from_csv(up_csv.getvalue(), verify_mx=chk_mx)
+                            if stats["errors"]:
+                                for err in stats["errors"][:5]:
+                                    st.error(err)
+                            trigger_toast(f"Imported {stats['total']} contacts ({stats['inserted']} new)!", icon="🎉")
+                            st.rerun()
+            with col_ob_act2:
+                tmpl_csv = generate_csv_template()
+                st.download_button(
+                    label="📥 Download Starter CSV Template",
+                    data=tmpl_csv,
+                    file_name="contacts_template.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="btn_onboard_download_tmpl"
+                )
+
+        with tab_onboard_add:
+            with st.form("onboard_add_contact_form", clear_on_submit=True):
+                fc1, fc2, fc3 = st.columns(3)
+                with fc1:
+                    c_name = st.text_input("Full Name *", placeholder="e.g. Alex Morgan", key="onboard_name")
+                with fc2:
+                    c_email = st.text_input("Email Address *", placeholder="alex@company.com", key="onboard_email")
+                with fc3:
+                    c_company = st.text_input("Company Name", placeholder="Acme Brands", key="onboard_company")
+
+                st.markdown("##### 📊 Lead Classification")
+                col_crm1, col_crm2, col_crm3, col_crm4 = st.columns(4)
+                with col_crm1:
+                    c_source = st.selectbox(
+                        "Lead Source",
+                        ["Website", "Referral", "Cold Outreach", "LinkedIn", "Inbound", "Amazon Store", "Shopify Store", "Other"],
+                        index=2,
+                        key="onboard_source"
+                    )
+                with col_crm2:
+                    c_priority = st.selectbox(
+                        "Priority",
+                        ["High", "Medium", "Low"],
+                        index=1,
+                        key="onboard_prio"
+                    )
+                with col_crm3:
+                    c_owner = st.text_input("Lead Owner", placeholder="e.g. Alex M", key="onboard_owner")
+                with col_crm4:
+                    c_status = st.selectbox(
+                        "Pipeline Status",
+                        ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                        index=0,
+                        key="onboard_status"
+                    )
+                c_notes = st.text_input("Internal Notes", placeholder="e.g. Needs Amazon brand listing audit", key="onboard_notes")
+
+                st.markdown("##### 🏷️ Tags & Variables")
+                all_tags_list = get_all_distinct_tags(include_predefined=True)
+                col_t1, col_t2 = st.columns([1.8, 1.2])
+                with col_t1:
+                    selected_tags = st.multiselect(
+                        "Select Tags",
+                        options=all_tags_list,
+                        help="Choose tags (e.g. Amazon Brand, Shopify DTC, High Priority).",
+                        key="onboard_tags"
+                    )
+                with col_t2:
+                    new_tags_raw = st.text_input("Or Add New Tag(s)", placeholder="e.g. Beauty Brands, Q4 Leads", key="onboard_new_tags")
+
+                col_cv1, col_cv2, col_cv3 = st.columns(3)
+                with col_cv1:
+                    cv_role = st.text_input("Role / Title", placeholder="e.g. Founder & CEO", help="Accessible via [Role]", key="onboard_cv_role")
+                with col_cv2:
+                    cv_website = st.text_input("Website URL", placeholder="e.g. https://brand.com", help="Accessible via [Website]", key="onboard_cv_web")
+                with col_cv3:
+                    cv_asin = st.text_input("Product ID / ASIN", placeholder="e.g. B08N5WRWNW", help="Accessible via [ASIN]", key="onboard_cv_asin")
+
+                with st.expander("➕ Additional Variables (Key: Value)", expanded=False):
+                    more_vars_raw = st.text_area(
+                        "Additional Custom Variables",
+                        placeholder="Category: Skincare\nLocation: Austin, TX",
+                        height=65,
+                        key="onboard_more_vars"
+                    )
+
+                if st.form_submit_button("Save First Contact", type="primary"):
+                    if not c_name.strip() or not c_email.strip():
+                        st.error("Name and Email Address are required.")
+                    else:
+                        cv_parsed = parse_variables_from_text(more_vars_raw)
+                        if cv_role.strip():
+                            cv_parsed["Role"] = cv_role.strip()
+                        if cv_website.strip():
+                            cv_parsed["Website"] = cv_website.strip()
+                        if cv_asin.strip():
+                            cv_parsed["ASIN"] = cv_asin.strip()
+
+                        extra_tags = [t.strip() for t in new_tags_raw.split(",") if t.strip()]
+                        combined_tags = list(set(selected_tags + extra_tags))
+
+                        cid, is_new = upsert_contact_by_email(
+                            name=c_name.strip(),
+                            email=c_email.strip(),
+                            company=c_company.strip(),
+                            tags=combined_tags,
+                            custom_variables=cv_parsed,
+                            lead_source=c_source,
+                            priority=c_priority,
+                            owner=c_owner.strip() if c_owner else None,
+                            status=c_status,
+                            notes=c_notes.strip() if c_notes else None
+                        )
+                        trigger_toast(f"Contact '{c_name}' successfully added (ID #{cid})!", icon="✅")
+                        st.rerun()
+        return
+
+    # ==============================================================================
     # 🎯 SECTION 1: TOP ACTION HUBS (Add Lead & CSV Data Center in One Place)
     # ==============================================================================
     top_col1, top_col2 = st.columns(2)

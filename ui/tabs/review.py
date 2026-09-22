@@ -52,6 +52,28 @@ def render_review_tab():
         st.caption("Inspect pending drafts, audit deliverability, and approve emails before scheduled dispatch.")
 
         all_emails = get_emails()
+
+        # ==============================================================================
+        # 🌟 ZERO-DATA EMPTY STATE (INBOX ZERO)
+        # ==============================================================================
+        if not all_emails:
+            st.markdown("""
+            <div style="background:#F0FDF4; border:1.5px solid #BBF7D0; border-radius:12px; padding:36px 24px; text-align:center; margin: 12px 0 16px;">
+                <div style="font-size:2.8rem; margin-bottom:10px;">✅</div>
+                <div style="font-size:1.35rem; font-weight:800; color:#166534;">Inbox Zero! Generate a new campaign to see drafts here.</div>
+                <div style="font-size:0.92rem; color:#475569; max-width:560px; margin:8px auto 20px; line-height:1.5;">
+                    There are no email drafts currently queued for review or awaiting dispatch. Target your leads and schedule an outreach sequence in the Generation Wizard above.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_c1, col_c2, col_c3 = st.columns([1.5, 2, 1.5])
+            with col_c2:
+                if st.button("🚀 Launch Campaign Wizard", type="primary", use_container_width=True, key="btn_review_empty_launch_wiz"):
+                    st.session_state["scroll_to_wizard"] = True
+                    st.rerun()
+            return
+
         neg_kw_setting = get_config("negative_keywords", "")
 
         def is_clean_draft(email):
