@@ -72,37 +72,6 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
     elif not templates_list:
         st.warning("You have no templates saved. Please create a template in the Template Builder tab first.")
     else:
-        # 1. AUDIENCE SELECTION & SEQUENCE TARGETING
-        stage_options = {
-            "all": "All Contacts",
-            "new": "New Leads (Never emailed)",
-            "followup1": "Follow-Up 1 (Emailed once)",
-            "followup2": "Follow-Up 2+ (Emailed 2+ times)",
-            "opened": "Opened Previous Email",
-            "clicked": "Clicked a Link",
-            "due": "Due for Follow-Up Today"
-        }
-
-        all_distinct_tags = get_all_distinct_tags()
-        tag_selector_options = ["-- All Tags --"] + all_distinct_tags
-
-        col_stage_sel, col_tag_sel = st.columns([1.5, 1])
-        with col_stage_sel:
-            selected_stage_key = st.selectbox(
-                "Who to Send To",
-                options=list(stage_options.keys()),
-                format_func=lambda k: stage_options[k],
-                help="Choose which contacts to email. Bounced and unsubscribed contacts are automatically excluded.",
-                key="camp_stage_select"
-            )
-
-        with col_tag_sel:
-            selected_tag_filter = st.selectbox(
-                "Filter by Tag",
-                options=tag_selector_options,
-                key="camp_tag_select"
-            )
-
         # Base filter: Exclude Bounced, Closed Lost, and Do Not Contact unless specifically requested
         active_candidates = [
             c for c in contacts_list
@@ -110,49 +79,220 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         ]
         bounced_excluded_count = len(contacts_list) - len(active_candidates)
 
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        if not active_candidates:
+            st.warning("All contacts are currently marked as Bounced, Closed Lost, or Do Not Contact. Add or reactivate leads in the Leads tab.")
+            return
 
-        # Stage Filtering
-        if selected_stage_key == "new":
-            stage_filtered = [
-                c for c in active_candidates
-                if (c.get("status") in ["Not Contacted", None, ""] or c.get("contacted") in ["No", None, ""] or c.get("follow_ups_sent", 0) == 0)
-            ]
-        elif selected_stage_key == "followup1":
-            stage_filtered = [
-                c for c in active_candidates
-                if (c.get("follow_ups_sent") == 1 or c.get("status") == "Contacted")
-            ]
-        elif selected_stage_key == "followup2":
-            stage_filtered = [
-                c for c in active_candidates
-                if (c.get("follow_ups_sent", 0) >= 2 or c.get("status") == "Follow-Up Sent")
-            ]
-        elif selected_stage_key == "opened":
-            stage_filtered = [
-                c for c in active_candidates
-                if ("Opened" in (c.get("status") or "") or "Interested" in (c.get("status") or ""))
-            ]
-        elif selected_stage_key == "clicked":
-            stage_filtered = [
-                c for c in active_candidates
-                if ("Clicked" in (c.get("tags") or "") or "Clicked" in (c.get("status") or "") or "Clicked" in (c.get("notes") or ""))
-            ]
-        elif selected_stage_key == "due":
-            stage_filtered = [
-                c for c in active_candidates
-                if (c.get("next_follow_up") and c.get("next_follow_up") <= today_str)
-            ]
+        # 1. AUDIENCE SELECTION & TARGETING MODES
+        st.markdown("### 1. Who are you emailing?")
+        audience_mode = st.radio(
+            "Select Outreach Mode",
+            [
+                "👤 Single Contact (1-to-1 Sequence / Direct Outreach)",
+                "🎯 Cherry-Pick Specific Contacts (Direct Multi-Select)",
+                "👥 Bulk Segment (Filter by CRM Lifecycle Stage & Tag)"
+            ],
+            index=0,
+            horizontal=True,
+            key="camp_audience_mode"
+        )
+
+        contact_id_map = {c["id"]: c for c in active_candidates}
+        contact_id_keys = list(contact_id_map.keys())
+
+        if audience_mode.startswith("👤 Single Contact"):
+            st.caption("Target a single lead directly from your CRM. Perfect for high-touch, personalized 1-to-1 outreach or multi-touch sequences.")
+            selected_single_id = st.selectbox(
+                "Choose Recipient *",
+                options=contact_id_keys,
+                format_func=lambda cid: f"{contact_id_map[cid]['name']} ({contact_id_map[cid].get('company') or 'No Company'} — {contact_id_map[cid]['email']})",
+                key="camp_single_contact_picker"
+            )
+            single_lead = contact_id_map[selected_single_id]
+            selected_contact_ids = [selected_single_id]
+            matching_contacts = [single_lead]
+
+            # Crisp lead dossier card
+            st.markdown(f"""
+            <div style="background:#FFFFFF; border:1.5px solid rgba(8,55,49,0.18); border-radius:8px; padding:10px 16px; margin:6px 0 14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <div style="font-weight:800; color:#083731; font-size:0.95rem;">👤 {single_lead['name']}</div>
+                    <div style="font-size:0.82rem; color:#64748B;">{single_lead.get('company') or 'No Company'} • <strong style="color:#083731;">{single_lead['email']}</strong></div>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <span style="background:rgba(8,55,49,0.08); color:#083731; font-weight:700; font-size:0.75rem; padding:3px 9px; border-radius:12px;">CRM Status: {single_lead.get('status') or 'Not Contacted'}</span>
+                    <span style="background:rgba(253,77,27,0.1); color:#FD4D1B; font-weight:700; font-size:0.75rem; padding:3px 9px; border-radius:12px;">Sent: {single_lead.get('follow_ups_sent', 0)}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        elif audience_mode.startswith("🎯 Cherry-Pick Specific Contacts"):
+            st.caption("Search across your entire CRM and individually select exactly which contacts to email.")
+            col_pk1, col_pk2 = st.columns([3.2, 0.8], vertical_alignment="bottom")
+            with col_pk1:
+                selected_cherry_ids = st.multiselect(
+                    "Search and Select Contacts *",
+                    options=contact_id_keys,
+                    default=[contact_id_keys[0]] if contact_id_keys else [],
+                    format_func=lambda cid: f"{contact_id_map[cid]['name']} ({contact_id_map[cid].get('company') or 'No Company'} — {contact_id_map[cid]['email']})",
+                    help="Type to search any contact by name, company, or email address.",
+                    key="camp_cherry_pick_multisel"
+                )
+            with col_pk2:
+                if st.button("Clear All", key="btn_clear_cherry", use_container_width=True):
+                    st.session_state["camp_cherry_pick_multisel"] = []
+                    st.rerun()
+
+            selected_contact_ids = selected_cherry_ids
+            matching_contacts = [contact_id_map[cid] for cid in selected_cherry_ids]
+
+            st.markdown(f"""
+            <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:8px; padding:9px 14px; display:flex; align-items:center; justify-content:space-between; margin:6px 0 12px;">
+                <div>
+                    <strong style="color:#083731; font-size:0.92rem;">🎯 {len(selected_contact_ids)} specific contact(s) selected</strong>
+                    <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">(out of {len(active_candidates)} active CRM contacts)</span>
+                </div>
+                <span style="font-size:0.78rem; color:#2563EB; font-weight:700;">Handpicked recipients</span>
+            </div>
+            """, unsafe_allow_html=True)
+
         else:
-            stage_filtered = active_candidates
+            # Mode 3: Bulk Segment (Filter by Stage & Tag)
+            stage_options = {
+                "all": "All Contacts",
+                "new": "New Leads (Never emailed)",
+                "followup1": "Follow-Up 1 (Emailed once)",
+                "followup2": "Follow-Up 2+ (Emailed 2+ times)",
+                "opened": "Opened Previous Email",
+                "clicked": "Clicked a Link",
+                "due": "Due for Follow-Up Today"
+            }
 
-        # Tag Filtering
-        if selected_tag_filter != "-- All Tags --":
-            matching_contacts = [c for c in stage_filtered if selected_tag_filter in (c.get("tags_list") or [])]
-        else:
-            matching_contacts = stage_filtered
+            all_distinct_tags = get_all_distinct_tags()
+            tag_selector_options = ["-- All Tags --"] + all_distinct_tags
 
-        # Sequence Milestone Interval (Timing System A: Future Sequence Step)
+            col_stage_sel, col_tag_sel = st.columns([1.5, 1])
+            with col_stage_sel:
+                selected_stage_key = st.selectbox(
+                    "Filter by CRM Lifecycle Stage",
+                    options=list(stage_options.keys()),
+                    format_func=lambda k: stage_options[k],
+                    help="Choose which contacts to email. Bounced and unsubscribed contacts are automatically excluded.",
+                    key="camp_stage_select"
+                )
+
+            with col_tag_sel:
+                selected_tag_filter = st.selectbox(
+                    "Filter by Tag",
+                    options=tag_selector_options,
+                    key="camp_tag_select"
+                )
+
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
+            # Stage Filtering
+            if selected_stage_key == "new":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if (c.get("status") in ["Not Contacted", None, ""] or c.get("contacted") in ["No", None, ""] or c.get("follow_ups_sent", 0) == 0)
+                ]
+            elif selected_stage_key == "followup1":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if (c.get("follow_ups_sent") == 1 or c.get("status") == "Contacted")
+                ]
+            elif selected_stage_key == "followup2":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if (c.get("follow_ups_sent", 0) >= 2 or c.get("status") == "Follow-Up Sent")
+                ]
+            elif selected_stage_key == "opened":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if ("Opened" in (c.get("status") or "") or "Interested" in (c.get("status") or ""))
+                ]
+            elif selected_stage_key == "clicked":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if ("Clicked" in (c.get("tags") or "") or "Clicked" in (c.get("status") or "") or "Clicked" in (c.get("notes") or ""))
+                ]
+            elif selected_stage_key == "due":
+                stage_filtered = [
+                    c for c in active_candidates
+                    if (c.get("next_follow_up") and c.get("next_follow_up") <= today_str)
+                ]
+            else:
+                stage_filtered = active_candidates
+
+            # Tag Filtering
+            if selected_tag_filter != "-- All Tags --":
+                matching_contacts = [c for c in stage_filtered if selected_tag_filter in (c.get("tags_list") or [])]
+            else:
+                matching_contacts = stage_filtered
+
+            # Quick search inside segment
+            camp_search = st.text_input("🔍 Search within this segment (Name, Company, or Email)", placeholder="Type to narrow down leads...", key="camp_seg_search")
+            if camp_search.strip():
+                q = camp_search.strip().lower()
+                matching_contacts = [c for c in matching_contacts if q in c['name'].lower() or q in (c.get('company') or '').lower() or q in c['email'].lower()]
+
+            # Recipient Selection List (Responsive session-state binding without recursive rerun loops)
+            if not matching_contacts:
+                st.warning("No active contacts match the selected group, tag, or search filter. Adjust filter criteria above to queue contacts.")
+                selected_contact_ids = []
+            else:
+                current_filter = (selected_stage_key, selected_tag_filter, camp_search)
+                prev_filter = st.session_state.get("camp_prev_filter")
+
+                if prev_filter != current_filter:
+                    for c in matching_contacts:
+                        st.session_state[f"camp_chk_{c['id']}"] = True
+                    st.session_state["camp_prev_filter"] = current_filter
+
+                for c in matching_contacts:
+                    k = f"camp_chk_{c['id']}"
+                    if k not in st.session_state:
+                        st.session_state[k] = True
+
+                current_selected = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
+                selected_count = len(current_selected)
+
+                col_sel_sum, col_sel_acts = st.columns([2.6, 1.4])
+                with col_sel_sum:
+                    st.markdown(f"""
+                    <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:8px; padding:9px 14px; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                        <div>
+                            <strong style="color:#083731; font-size:0.92rem;">{selected_count} contacts selected</strong>
+                            <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">(out of {len(matching_contacts)} matching)</span>
+                        </div>
+                        <span style="font-size:0.78rem; color:#2563EB; font-weight:700;">Ready for batch</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_sel_acts:
+                    c_a1, c_a2 = st.columns(2)
+                    with c_a1:
+                        if st.button("Select All", key="btn_camp_sel_all", use_container_width=True):
+                            for c in matching_contacts:
+                                st.session_state[f"camp_chk_{c['id']}"] = True
+                            st.rerun()
+                    with c_a2:
+                        if st.button("Deselect All", key="btn_camp_desel_all", use_container_width=True):
+                            for c in matching_contacts:
+                                st.session_state[f"camp_chk_{c['id']}"] = False
+                            st.rerun()
+
+                # Expandable / Scrollable Individual Checkbox Tagger
+                with st.expander(f"📋 Check/Uncheck Individual Contacts ({selected_count} of {len(matching_contacts)} Selected)", expanded=True):
+                    st.caption("Check or uncheck individual contacts in this segment:")
+                    with st.container(height=260):
+                        for c in matching_contacts:
+                            cid = c["id"]
+                            lbl = f"{c['name']} ({c.get('company') or 'No Company'} — {c['email']}) [Status: {c.get('status') or 'Not Contacted'} | Sent: {c.get('follow_ups_sent', 0)}]"
+                            st.checkbox(lbl, key=f"camp_chk_{cid}")
+
+                selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
+
+        # Sequence Milestone Interval
         col_seq_days, col_seq_info = st.columns([1.2, 2.8])
         with col_seq_days:
             followup_delay_days = st.number_input(
@@ -160,71 +300,13 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
                 min_value=1,
                 max_value=30,
                 value=int(get_config("followup_delay_days", "4") or 4),
-                help="When this campaign email is dispatched, recipient Next Follow-Up dates in CRM advance by this interval. This does NOT affect when today's email sends.",
+                help="When this campaign email is dispatched, recipient Next Follow-Up dates in CRM advance by this interval.",
                 key="camp_followup_days_input"
             )
         with col_seq_info:
             next_due_date = (datetime.now() + timedelta(days=int(followup_delay_days))).strftime("%B %d, %Y")
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
             st.caption(f"Next follow-up due: **{next_due_date}** (+{followup_delay_days} days). {bounced_excluded_count} bounced/inactive contact(s) automatically protected.")
-
-        # Recipient Selection List (Responsive session-state binding without recursive rerun loops)
-        if not matching_contacts:
-            st.warning("No active contacts match the selected group and tag filters. Adjust filter criteria above to queue contacts.")
-            selected_contact_ids = []
-        else:
-            current_filter = (selected_stage_key, selected_tag_filter)
-            prev_filter = st.session_state.get("camp_prev_filter")
-
-            # When the user switches stage or tag filters, auto-select all matching contacts in the new view
-            if prev_filter != current_filter:
-                for c in matching_contacts:
-                    st.session_state[f"camp_chk_{c['id']}"] = True
-                st.session_state["camp_prev_filter"] = current_filter
-
-            # Pre-populate any matching contacts not yet in session_state
-            for c in matching_contacts:
-                k = f"camp_chk_{c['id']}"
-                if k not in st.session_state:
-                    st.session_state[k] = True
-
-            # Calculate currently selected count for summary banner
-            current_selected = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
-            selected_count = len(current_selected)
-
-            col_sel_sum, col_sel_acts = st.columns([2.6, 1.4])
-            with col_sel_sum:
-                st.markdown(f"""
-                <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:8px; padding:9px 14px; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-                    <div>
-                        <strong style="color:#083731; font-size:0.92rem;">{selected_count} contacts selected</strong>
-                        <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">(out of {len(matching_contacts)} matching)</span>
-                    </div>
-                    <span style="font-size:0.78rem; color:#2563EB; font-weight:700;">Ready for batch</span>
-                </div>
-                """, unsafe_allow_html=True)
-            with col_sel_acts:
-                c_a1, c_a2 = st.columns(2)
-                with c_a1:
-                    if st.button("Select All", key="btn_camp_sel_all", use_container_width=True):
-                        for c in matching_contacts:
-                            st.session_state[f"camp_chk_{c['id']}"] = True
-                        st.rerun()
-                with c_a2:
-                    if st.button("Deselect All", key="btn_camp_desel_all", use_container_width=True):
-                        for c in matching_contacts:
-                            st.session_state[f"camp_chk_{c['id']}"] = False
-                        st.rerun()
-
-            with st.expander(f"{selected_count} contacts selected — view/edit selection", expanded=False):
-                st.caption("Scroll to review or deselect specific recipients for this campaign:")
-                with st.container(height=240):
-                    for c in matching_contacts:
-                        cid = c["id"]
-                        lbl = f"{c['name']} ({c.get('company') or 'No Company'} - {c['email']}) [Status: {c.get('status') or 'Not Contacted'} | Sent: {c.get('follow_ups_sent', 0)}]"
-                        st.checkbox(lbl, key=f"camp_chk_{cid}")
-
-            selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
 
         # 2. SEQUENCE CADENCE & MESSAGE CONTENT (Once, Twice, Thrice)
         st.markdown("---")
@@ -571,9 +653,19 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         # 4. PRIMARY ACTION (Generate Campaign)
         st.markdown("<br>", unsafe_allow_html=True)
         has_recipients = len(selected_contact_ids) > 0
-        btn_help = f"Create {num_touches}-touch sequence drafts for selected contacts." if has_recipients else "Select at least one contact above to generate campaign drafts."
+        if len(selected_contact_ids) == 1 and matching_contacts:
+            recip_name = matching_contacts[0]["name"]
+            if num_touches > 1:
+                btn_title = f"🚀 Create {num_touches}-Touch Sequence for {recip_name}"
+            else:
+                btn_title = f"🚀 Generate Outreach Email for {recip_name}"
+            btn_help = f"Generate {num_touches} personalized draft(s) for {recip_name}."
+        else:
+            btn_title = f"🚀 Generate Campaign ({num_touches}-Touch Sequence for {len(selected_contact_ids)} Contacts)"
+            btn_help = f"Create {num_touches}-touch sequence drafts for {len(selected_contact_ids)} selected contacts." if has_recipients else "Select at least one contact above to generate campaign drafts."
+
         generate_campaign_btn = st.button(
-            f"Generate Campaign ({num_touches}-Touch Sequence)",
+            btn_title,
             type="primary",
             use_container_width=True,
             disabled=not has_recipients,
