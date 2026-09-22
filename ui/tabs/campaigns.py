@@ -283,178 +283,194 @@ def render_campaigns_tab(contacts_list=None, templates_list=None):
         # ==============================================================================
         with st.expander("Step 1: Audience & Message", expanded=True):
             st.markdown("#### 1. Audience Targeting & Recipients")
-            audience_mode = st.radio(
-                "Audience Selection Method",
-                [
-                    "🎯 By Audience Filter (Recommended)",
-                    "✍️ Hand-Pick Contacts"
-                ],
-                index=0,
-                horizontal=True,
-                key="camp_audience_mode"
-            )
 
             contact_id_map = {c["id"]: c for c in active_candidates}
             contact_id_keys = list(contact_id_map.keys())
 
-            if audience_mode.startswith("🎯 By Audience Filter"):
-                stage_options = {
-                    "all": "All Contacts",
-                    "new": "New Leads (Never emailed)",
-                    "followup1": "Contacted (Touch 1 Sent)",
-                    "followup2": "Follow-Up Sent (2+ Touches)",
-                    "due": "Due for Follow-Up Today",
-                    "replied": "Replied / Engaged Leads (Previously Responded)"
-                }
+            # Detect incoming navigation from CRM or session state
+            incoming_mode = st.session_state.get("camp_audience_mode", "")
+            if any(term in incoming_mode for term in ["Single Contact", "Cherry-Pick", "Hand-Pick"]):
+                def_mode_idx = 2
+                single_cid = st.session_state.get("camp_single_contact_picker")
+                if single_cid and single_cid in contact_id_keys:
+                    if "camp_cherry_pick_multisel" not in st.session_state or not st.session_state["camp_cherry_pick_multisel"]:
+                        st.session_state["camp_cherry_pick_multisel"] = [single_cid]
+            elif any(term in incoming_mode for term in ["Status", "Stage"]):
+                def_mode_idx = 1
+            else:
+                def_mode_idx = 0
 
+            target_choice = st.radio(
+                "How do you want to target contacts?",
+                ["🏷️ By Tag", "⚡ By Pipeline Status", "👤 Hand-Pick Individually"],
+                index=def_mode_idx,
+                horizontal=True,
+                key="camp_target_method_choice"
+            )
+
+            if target_choice == "🏷️ By Tag":
                 all_distinct_tags = get_all_distinct_tags()
-                tag_selector_options = ["-- All Tags --"] + all_distinct_tags
+                tag_options = ["-- All Active Leads --"] + all_distinct_tags if all_distinct_tags else ["-- All Active Leads --"]
 
-                col_stage_sel, col_tag_sel = st.columns([1.5, 1])
-                with col_stage_sel:
-                    selected_stage_key = st.selectbox(
-                        "Filter by CRM Lifecycle Stage",
-                        options=list(stage_options.keys()),
-                        format_func=lambda k: stage_options[k],
-                        help="Choose which contacts to email. Bounced and unsubscribed contacts are automatically excluded.",
-                        key="camp_stage_select"
-                    )
+                selected_tag = st.selectbox(
+                    "Select Tag *",
+                    options=tag_options,
+                    key="camp_target_tag_sel",
+                    help="Target leads possessing this tag."
+                )
 
-                with col_tag_sel:
-                    selected_tag_filter = st.selectbox(
-                        "Filter by Tag",
-                        options=tag_selector_options,
-                        key="camp_tag_select"
-                    )
-
-                today_str = datetime.now().strftime("%Y-%m-%d")
-
-                # Stage Filtering
-                if selected_stage_key == "new":
-                    stage_filtered = [
-                        c for c in active_candidates
-                        if (c.get("status") in ["Not Contacted", None, ""] or c.get("contacted") in ["No", None, ""] or c.get("follow_ups_sent", 0) == 0)
-                    ]
-                elif selected_stage_key == "followup1":
-                    stage_filtered = [
-                        c for c in active_candidates
-                        if (c.get("follow_ups_sent") == 1 or c.get("status") == "Contacted")
-                    ]
-                elif selected_stage_key == "followup2":
-                    stage_filtered = [
-                        c for c in active_candidates
-                        if (c.get("follow_ups_sent", 0) >= 2 or c.get("status") == "Follow-Up Sent")
-                    ]
-                elif selected_stage_key == "due":
-                    stage_filtered = [
-                        c for c in active_candidates
-                        if (c.get("next_follow_up") and c.get("next_follow_up") <= today_str)
-                    ]
-                elif selected_stage_key == "replied":
-                    stage_filtered = [
-                        c for c in active_candidates
-                        if (c.get("status") == "Replied" or "Replied" in (c.get("tags") or "") or "Replied" in (c.get("tags_list") or []))
-                    ]
+                if selected_tag == "-- All Active Leads --":
+                    matching_contacts = active_candidates
+                    tag_summary = "all active leads"
                 else:
-                    stage_filtered = active_candidates
+                    matching_contacts = [c for c in active_candidates if selected_tag in (c.get("tags_list") or [])]
+                    tag_summary = f"tag '{selected_tag}'"
 
-                # Tag Filtering
-                if selected_tag_filter != "-- All Tags --":
-                    matching_contacts = [c for c in stage_filtered if selected_tag_filter in (c.get("tags_list") or [])]
-                else:
-                    matching_contacts = stage_filtered
+                unique_comps = len(set(c.get("company") for c in matching_contacts if c.get("company")))
+                summary_text = f"Targeting {len(matching_contacts)} lead(s) matching {tag_summary} across {unique_comps} company/companies."
 
-                # Quick search inside segment
-                camp_search = st.text_input("🔍 Search within this segment (Name, Company, or Email)", placeholder="Type to narrow down leads...", key="camp_seg_search")
-                if camp_search.strip():
-                    q = camp_search.strip().lower()
-                    matching_contacts = [c for c in matching_contacts if q in c['name'].lower() or q in (c.get('company') or '').lower() or q in c['email'].lower()]
+                st.markdown(f"""
+                <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:10px 14px; margin:8px 0 12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#166534; font-size:0.92rem; font-weight:700;">🎯 {summary_text}</span>
+                    <span style="color:#15803D; font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">Audience by Tag</span>
+                </div>
+                """, unsafe_allow_html=True)
 
-                # Recipient Selection List (Responsive session-state binding without recursive rerun loops)
-                if not matching_contacts:
-                    st.warning("No active contacts match the selected group, tag, or search filter. Adjust filter criteria above to queue contacts.")
-                    selected_contact_ids = []
-                else:
-                    current_filter = (selected_stage_key, selected_tag_filter, camp_search)
-                    prev_filter = st.session_state.get("camp_prev_filter")
-
-                    if prev_filter != current_filter:
-                        for c in matching_contacts:
-                            st.session_state[f"camp_chk_{c['id']}"] = True
-                        st.session_state["camp_prev_filter"] = current_filter
-
-                    for c in matching_contacts:
-                        k = f"camp_chk_{c['id']}"
-                        if k not in st.session_state:
-                            st.session_state[k] = True
-
-                    current_selected = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
-                    selected_count = len(current_selected)
-                    unique_comps = len(set(c.get("company") for c in matching_contacts if c.get("company")))
-
-                    col_sel_sum, col_sel_acts = st.columns([2.6, 1.4])
-                    with col_sel_sum:
-                        st.markdown(f"""
-                        <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:9px 14px; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-                            <div>
-                                <strong style="color:#166534; font-size:0.92rem;">🎯 Targeting {selected_count} contact(s) across {unique_comps} companies</strong>
-                                <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">({len(matching_contacts)} matching filters)</span>
-                            </div>
-                            <span style="font-size:0.78rem; color:#15803D; font-weight:700;">Audience Segment</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col_sel_acts:
-                        c_a1, c_a2 = st.columns(2)
-                        with c_a1:
-                            if st.button("Select All", key="btn_camp_sel_all", use_container_width=True):
+                if matching_contacts:
+                    with st.expander(f"📋 Review / Filter Individual Leads in this Tag ({len(matching_contacts)} Total)", expanded=False):
+                        col_t_a1, col_t_a2 = st.columns([1, 1])
+                        with col_t_a1:
+                            if st.button("Select All", key="btn_tag_sel_all_camp"):
                                 for c in matching_contacts:
                                     st.session_state[f"camp_chk_{c['id']}"] = True
                                 st.rerun()
-                        with c_a2:
-                            if st.button("Deselect All", key="btn_camp_desel_all", use_container_width=True):
+                        with col_t_a2:
+                            if st.button("Deselect All", key="btn_tag_desel_all_camp"):
                                 for c in matching_contacts:
                                     st.session_state[f"camp_chk_{c['id']}"] = False
                                 st.rerun()
 
-                    # Expandable Individual Checkbox Tagger
-                    with st.expander(f"📋 Check/Uncheck Individual Contacts ({selected_count} of {len(matching_contacts)} Selected)", expanded=False):
-                        st.caption("Check or uncheck individual contacts in this segment:")
-                        with st.container(height=240):
+                        with st.container(height=200):
                             for c in matching_contacts:
-                                cid = c["id"]
-                                lbl = f"{c['name']} ({c.get('company') or 'No Company'} — {c['email']}) [Status: {c.get('status') or 'Not Contacted'} | Sent: {c.get('follow_ups_sent', 0)}]"
-                                st.checkbox(lbl, key=f"camp_chk_{cid}")
+                                k = f"camp_chk_{c['id']}"
+                                if k not in st.session_state:
+                                    st.session_state[k] = True
+                                lbl = f"{c['name']} ({c.get('company') or 'No Company'} — {c['email']})"
+                                st.checkbox(lbl, key=k)
 
                     selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
+                else:
+                    selected_contact_ids = []
+
+            elif target_choice == "⚡ By Pipeline Status":
+                stage_options = {
+                    "all": "All Pipeline Stages",
+                    "new": "Not Contacted (New Leads)",
+                    "followup1": "Contacted (Touch 1 Sent)",
+                    "followup2": "Follow-Up Sent (2+ Touches)",
+                    "due": "Due for Follow-Up Today",
+                    "replied": "Replied / Engaged Leads"
+                }
+
+                selected_stage_key = st.selectbox(
+                    "Select Pipeline Status *",
+                    options=list(stage_options.keys()),
+                    format_func=lambda k: stage_options[k],
+                    key="camp_target_stage_sel",
+                    help="Target contacts based on their current stage in your outreach pipeline."
+                )
+
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                if selected_stage_key == "new":
+                    matching_contacts = [
+                        c for c in active_candidates
+                        if (c.get("status") in ["Not Contacted", None, ""] or c.get("contacted") in ["No", None, ""] or c.get("follow_ups_sent", 0) == 0)
+                    ]
+                elif selected_stage_key == "followup1":
+                    matching_contacts = [
+                        c for c in active_candidates
+                        if (c.get("follow_ups_sent") == 1 or c.get("status") == "Contacted")
+                    ]
+                elif selected_stage_key == "followup2":
+                    matching_contacts = [
+                        c for c in active_candidates
+                        if (c.get("follow_ups_sent", 0) >= 2 or c.get("status") == "Follow-Up Sent")
+                    ]
+                elif selected_stage_key == "due":
+                    matching_contacts = [
+                        c for c in active_candidates
+                        if (c.get("next_follow_up") and c.get("next_follow_up") <= today_str)
+                    ]
+                elif selected_stage_key == "replied":
+                    matching_contacts = [
+                        c for c in active_candidates
+                        if (c.get("status") == "Replied" or "Replied" in (c.get("tags") or "") or "Replied" in (c.get("tags_list") or []))
+                    ]
+                else:
+                    matching_contacts = active_candidates
+
+                unique_comps = len(set(c.get("company") for c in matching_contacts if c.get("company")))
+                summary_text = f"Targeting {len(matching_contacts)} lead(s) in pipeline status '{stage_options[selected_stage_key]}' across {unique_comps} company/companies."
+
+                st.markdown(f"""
+                <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:10px 14px; margin:8px 0 12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#166534; font-size:0.92rem; font-weight:700;">🎯 {summary_text}</span>
+                    <span style="color:#15803D; font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">Audience by Status</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if matching_contacts:
+                    with st.expander(f"📋 Review / Filter Individual Leads in this Stage ({len(matching_contacts)} Total)", expanded=False):
+                        col_s_a1, col_s_a2 = st.columns([1, 1])
+                        with col_s_a1:
+                            if st.button("Select All", key="btn_stage_sel_all_camp"):
+                                for c in matching_contacts:
+                                    st.session_state[f"camp_chk_{c['id']}"] = True
+                                st.rerun()
+                        with col_s_a2:
+                            if st.button("Deselect All", key="btn_stage_desel_all_camp"):
+                                for c in matching_contacts:
+                                    st.session_state[f"camp_chk_{c['id']}"] = False
+                                st.rerun()
+
+                        with st.container(height=200):
+                            for c in matching_contacts:
+                                k = f"camp_chk_{c['id']}"
+                                if k not in st.session_state:
+                                    st.session_state[k] = True
+                                lbl = f"{c['name']} ({c.get('company') or 'No Company'} — {c['email']})"
+                                st.checkbox(lbl, key=k)
+
+                    selected_contact_ids = [c["id"] for c in matching_contacts if st.session_state.get(f"camp_chk_{c['id']}", True)]
+                else:
+                    selected_contact_ids = []
 
             else:
-                # Hand-Pick Contacts
-                col_pk1, col_pk2 = st.columns([3.2, 0.8], vertical_alignment="bottom")
-                with col_pk1:
+                # 👤 Hand-Pick Individually
+                col_hp1, col_hp2 = st.columns([3.5, 0.8], vertical_alignment="bottom")
+                with col_hp1:
                     selected_cherry_ids = st.multiselect(
                         "Search and Select Contacts *",
                         options=contact_id_keys,
-                        default=[contact_id_keys[0]] if contact_id_keys else [],
+                        default=st.session_state.get("camp_cherry_pick_multisel", [contact_id_keys[0]] if contact_id_keys else []),
                         format_func=lambda cid: f"{contact_id_map[cid]['name']} — {contact_id_map[cid].get('company') or 'No Company'} ({contact_id_map[cid]['email']})",
-                        help="Type to search any contact by name, company, or email address.",
+                        help="Type to search contacts by name, company, or email address.",
                         key="camp_cherry_pick_multisel"
                     )
-                with col_pk2:
+                with col_hp2:
                     if st.button("Clear All", key="btn_clear_cherry", use_container_width=True):
                         st.session_state["camp_cherry_pick_multisel"] = []
                         st.rerun()
 
                 selected_contact_ids = selected_cherry_ids
-                matching_contacts = [contact_id_map[cid] for cid in selected_cherry_ids]
+                matching_contacts = [contact_id_map[cid] for cid in selected_cherry_ids if cid in contact_id_map]
                 unique_comps = len(set(c.get("company") for c in matching_contacts if c.get("company")))
 
+                summary_text = f"Targeting {len(selected_contact_ids)} hand-picked lead(s) across {unique_comps} company/companies."
                 st.markdown(f"""
-                <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:9px 14px; display:flex; align-items:center; justify-content:space-between; margin:6px 0 12px;">
-                    <div>
-                        <strong style="color:#166534; font-size:0.92rem;">🎯 Targeting {len(selected_contact_ids)} contact(s) across {unique_comps} companies</strong>
-                        <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">(out of {len(active_candidates)} active CRM contacts)</span>
-                    </div>
-                    <span style="font-size:0.78rem; color:#15803D; font-weight:700;">Hand-picked recipients</span>
+                <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:10px 14px; margin:8px 0 12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#166534; font-size:0.92rem; font-weight:700;">🎯 {summary_text}</span>
+                    <span style="color:#15803D; font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">Hand-Picked Audience</span>
                 </div>
                 """, unsafe_allow_html=True)
 

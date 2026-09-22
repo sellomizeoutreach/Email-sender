@@ -454,70 +454,130 @@ def render_crm_tab(all_contacts=None):
     # ⚡ CONTEXTUAL BULK ACTIONS TOOLBAR (Appears ONLY when >= 1 contact is checked)
     # ==============================================================================
     if s_count > 0:
-        st.markdown(f"""
-        <div style="background:rgba(8,55,49,0.06); border:1.5px solid #083731; border-radius:10px; padding:8px 14px; margin:6px 0 10px; display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-weight:800; color:#083731; font-size:0.92rem;">📌 {s_count} lead(s) selected</span>
-            <span style="color:#475569; font-size:0.8rem;">Choose a bulk action below to apply across all selected leads</span>
-        </div>
+        st.markdown("""
+        <div style="height: 1px; background:#E2E8F0; margin: 4px 0 10px;"></div>
         """, unsafe_allow_html=True)
 
-        col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
-        with col_b1:
-            with st.popover("🏷️ Add Tag", use_container_width=True):
-                st.caption(f"Add tags to {s_count} selected leads:")
-                all_avail_tags = get_all_distinct_tags(include_predefined=True)
-                b_tags = st.multiselect("Existing Tags", options=all_avail_tags, key="pop_bulk_tags")
-                b_new_tag = st.text_input("New Tag", placeholder="e.g. VIP Brand", key="pop_bulk_new_tag")
-                tags_to_add = list(set(b_tags + ([b_new_tag.strip()] if b_new_tag.strip() else [])))
-                if st.button("Apply Tags", type="primary", use_container_width=True, key="btn_apply_pop_tags"):
-                    if tags_to_add:
-                        bulk_add_tags_to_contacts(list(selected_ids), tags_to_add)
-                        trigger_toast(f"Added {tags_to_add} to {s_count} lead(s)!", icon="🏷️")
-                        st.rerun()
-                    else:
-                        st.warning("Please choose or enter a tag.")
-        with col_b2:
-            with st.popover("⚡ Set Stage", use_container_width=True):
-                st.caption(f"Set status for {s_count} selected leads:")
-                new_stage = st.selectbox(
-                    "Select Stage",
-                    ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
-                    key="pop_bulk_stage"
-                )
-                if st.button("Update Stage", type="primary", use_container_width=True, key="btn_apply_pop_stage"):
-                    for sid in selected_ids:
-                        update_contact(contact_id=sid, status=new_stage)
-                    trigger_toast(f"Updated {s_count} leads to '{new_stage}'!", icon="⚡")
-                    st.rerun()
-        with col_b3:
-            if st.button("🌐 Verify MX", use_container_width=True, key="btn_bulk_mx_act", help="Verify DNS MX records for selected leads"):
-                with st.spinner("Auditing domain mail exchangers..."):
-                    selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
-                    mx_res = batch_verify_contacts_mx(selected_contacts_list, update_db=True)
-                    if mx_res["invalid_count"] > 0:
-                        trigger_toast(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification.", icon="⚠️")
-                    else:
-                        trigger_toast(f"🎉 All {mx_res['valid_count']} leads have active MX records!", icon="🌐")
-                    st.rerun()
-        with col_b4:
-            selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
-            export_csv_data = export_contacts_to_csv(selected_contacts_list)
-            st.download_button(
-                "📥 Export CSV",
-                data=export_csv_data,
-                file_name="selected_leads_export.csv",
-                mime="text/csv",
-                use_container_width=True,
-                key="btn_bulk_export_csv"
+        col_b_ind, col_b_act, col_b_ctx, col_b_btn = st.columns([1.4, 2.0, 3.2, 1.4], vertical_alignment="bottom")
+
+        with col_b_ind:
+            st.markdown(f"""
+            <div style="background:rgba(8,55,49,0.08); border:1px solid rgba(8,55,49,0.25); border-radius:8px; padding:7px 12px; text-align:center;">
+                <strong style="color:#083731; font-size:0.92rem;">📌 {s_count} selected</strong>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_b_act:
+            bulk_act_options = [
+                "Add Tag",
+                "Remove Tag",
+                "Update Pipeline Stage",
+                "Verify Domains (MX)",
+                "Export to CSV",
+                "Delete Contacts"
+            ]
+            chosen_bulk_action = st.selectbox(
+                "Action",
+                bulk_act_options,
+                key="crm_unified_bulk_action_choice"
             )
-        with col_b5:
-            with st.popover("🗑️ Delete", use_container_width=True):
-                st.error(f"Permanently delete {s_count} selected lead(s)?")
-                if st.button("Confirm Delete", type="primary", use_container_width=True, key="btn_conf_pop_del"):
-                    del_num = bulk_delete_contacts(list(selected_ids))
-                    st.session_state["crm_selected_ids"] = set()
-                    trigger_toast(f"Deleted {del_num} contact(s).", icon="🗑️")
-                    st.rerun()
+
+        with col_b_ctx:
+            if chosen_bulk_action == "Add Tag":
+                all_avail_tags = get_all_distinct_tags(include_predefined=True)
+                tag_add_input = st.text_input(
+                    "Tag Name(s)",
+                    placeholder="Enter tag(s) separated by commas, e.g. VIP, Tier 1",
+                    key="crm_bulk_tag_add_input",
+                    help="Type one or more comma-separated tags to append to selected leads."
+                )
+            elif chosen_bulk_action == "Remove Tag":
+                all_avail_tags = get_all_distinct_tags(include_predefined=True)
+                tags_to_remove = st.multiselect(
+                    "Select Tag(s) to Remove",
+                    options=all_avail_tags,
+                    key="crm_bulk_tag_rem_sel",
+                    placeholder="Select tags..."
+                )
+            elif chosen_bulk_action == "Update Pipeline Stage":
+                new_bulk_stage = st.selectbox(
+                    "Select New Stage",
+                    [
+                        "Not Contacted",
+                        "Contacted",
+                        "Follow-Up Sent",
+                        "Replied",
+                        "Meeting Booked",
+                        "Closed Won",
+                        "Closed Lost",
+                        "Bounced",
+                        "Do Not Contact"
+                    ],
+                    key="crm_bulk_stage_target_sel"
+                )
+            elif chosen_bulk_action == "Verify Domains (MX)":
+                st.caption(f"Verifies DNS MX mail exchangers across {s_count} selected lead(s) to prevent bounces.")
+            elif chosen_bulk_action == "Export to CSV":
+                st.caption(f"Export all columns, tags, and custom variables for {s_count} selected lead(s).")
+            elif chosen_bulk_action == "Delete Contacts":
+                del_confirmed = st.checkbox(f"⚠️ Confirm permanent deletion of {s_count} lead(s)", key="crm_bulk_del_confirm_chk")
+
+        with col_b_btn:
+            if chosen_bulk_action == "Export to CSV":
+                selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
+                export_csv_data = export_contacts_to_csv(selected_contacts_list)
+                st.download_button(
+                    "📥 Export CSV",
+                    data=export_csv_data,
+                    file_name="selected_leads_export.csv",
+                    mime="text/csv",
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_bulk_export_unified"
+                )
+            else:
+                if st.button("Execute Action", type="primary", use_container_width=True, key="btn_exec_unified_bulk"):
+                    if chosen_bulk_action == "Add Tag":
+                        parsed_tags = [t.strip() for t in tag_add_input.split(",") if t.strip()]
+                        if parsed_tags:
+                            bulk_add_tags_to_contacts(list(selected_ids), parsed_tags)
+                            trigger_toast(f"Added {parsed_tags} to {s_count} lead(s)!", icon="🏷️")
+                            st.rerun()
+                        else:
+                            st.warning("Please enter at least one tag.")
+
+                    elif chosen_bulk_action == "Remove Tag":
+                        if tags_to_remove:
+                            bulk_remove_tags_from_contacts(list(selected_ids), tags_to_remove)
+                            trigger_toast(f"Removed {tags_to_remove} from {s_count} lead(s)!", icon="🏷️")
+                            st.rerun()
+                        else:
+                            st.warning("Please select at least one tag to remove.")
+
+                    elif chosen_bulk_action == "Update Pipeline Stage":
+                        for sid in selected_ids:
+                            update_contact(contact_id=sid, status=new_bulk_stage)
+                        trigger_toast(f"Updated {s_count} leads to '{new_bulk_stage}'!", icon="⚡")
+                        st.rerun()
+
+                    elif chosen_bulk_action == "Verify Domains (MX)":
+                        with st.spinner("Auditing domain mail exchangers..."):
+                            selected_contacts_list = [c for c in filtered_contacts if c["id"] in selected_ids]
+                            mx_res = batch_verify_contacts_mx(selected_contacts_list, update_db=True)
+                            if mx_res["invalid_count"] > 0:
+                                trigger_toast(f"⚠️ {mx_res['invalid_count']} lead(s) failed MX verification.", icon="⚠️")
+                            else:
+                                trigger_toast(f"🎉 All {mx_res['valid_count']} leads have active MX records!", icon="🌐")
+                            st.rerun()
+
+                    elif chosen_bulk_action == "Delete Contacts":
+                        if del_confirmed:
+                            del_num = bulk_delete_contacts(list(selected_ids))
+                            st.session_state["crm_selected_ids"] = set()
+                            trigger_toast(f"Deleted {del_num} contact(s).", icon="🗑️")
+                            st.rerun()
+                        else:
+                            st.warning("Please check the confirmation box before deleting.")
 
     # ==============================================================================
     # 🗃️ SECTION 4: MAIN WORKSPACE (Spreadsheet Grid vs Card View)
