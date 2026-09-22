@@ -80,7 +80,9 @@ from database import (
     get_bounced_contacts,
     get_replied_contacts,
     is_within_sending_window,
-    get_next_valid_sending_datetime
+    get_next_valid_sending_datetime,
+    bulk_delete_emails,
+    clear_outbox_emails
 )
 from scheduler import process_due_sequence_rules
 from smtp_dispatcher import (
@@ -2245,6 +2247,47 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertEqual(au_rule["target_timezone"], "Australia/Sydney")
         self.assertEqual(au_rule["target_country"], "Australia")
         self.assertEqual(au_rule["market_key"], "AU_EAST")
+
+    def test_62_outbox_bulk_delete_and_clear_history(self):
+        """Test outbox bulk deletion and clear sent history helpers."""
+        # 1. Seed test emails across various outbox states
+        e_pending = create_email("Pending html", "Subject P", "p@test.com", status="Pending", db_path=TEST_DB)
+        e_sent1 = create_email("Sent 1 html", "Subject S1", "s1@test.com", status="Sent", db_path=TEST_DB)
+        e_sent2 = create_email("Sent 2 html", "Subject S2", "s2@test.com", status="Sent", db_path=TEST_DB)
+        e_err = create_email("Error html", "Subject Err", "err@test.com", status="Error", db_path=TEST_DB)
+        e_app = create_email("Approved html", "Subject App", "app@test.com", status="Approved", db_path=TEST_DB)
+
+        # 2. Test bulk_delete_emails with empty and specific list
+        self.assertEqual(bulk_delete_emails([], db_path=TEST_DB), 0)
+        self.assertEqual(bulk_delete_emails([999999], db_path=TEST_DB), 0)
+
+        del_cnt = bulk_delete_emails([e_sent1, e_err], db_path=TEST_DB)
+        self.assertEqual(del_cnt, 2)
+        self.assertIsNone(get_email_by_id(e_sent1, db_path=TEST_DB))
+        self.assertIsNone(get_email_by_id(e_err, db_path=TEST_DB))
+        # Ensure other emails remain untouched
+        self.assertIsNotNone(get_email_by_id(e_sent2, db_path=TEST_DB))
+        self.assertIsNotNone(get_email_by_id(e_pending, db_path=TEST_DB))
+        self.assertIsNotNone(get_email_by_id(e_app, db_path=TEST_DB))
+
+        # 3. Test clear_outbox_emails by status ('Sent')
+        e_sent3 = create_email("Sent 3 html", "Subject S3", "s3@test.com", status="Sent", db_path=TEST_DB)
+        purged_sent = clear_outbox_emails(status="Sent", db_path=TEST_DB)
+        self.assertGreaterEqual(purged_sent, 2)  # e_sent2 and e_sent3
+        self.assertIsNone(get_email_by_id(e_sent2, db_path=TEST_DB))
+        self.assertIsNone(get_email_by_id(e_sent3, db_path=TEST_DB))
+        # Pending and Approved are preserved
+        self.assertIsNotNone(get_email_by_id(e_pending, db_path=TEST_DB))
+        self.assertIsNotNone(get_email_by_id(e_app, db_path=TEST_DB))
+
+        # 4. Test clear_outbox_emails ('All' with exclude_pending=True)
+        e_flagged = create_email("Flagged html", "Subject F", "f@test.com", status="Flagged", db_path=TEST_DB)
+        purged_all = clear_outbox_emails(status="All", exclude_pending=True, db_path=TEST_DB)
+        self.assertGreaterEqual(purged_all, 2)  # e_app, e_flagged
+        self.assertIsNone(get_email_by_id(e_app, db_path=TEST_DB))
+        self.assertIsNone(get_email_by_id(e_flagged, db_path=TEST_DB))
+        # Pending is still preserved!
+        self.assertIsNotNone(get_email_by_id(e_pending, db_path=TEST_DB))
 
 if __name__ == "__main__":
     unittest.main()

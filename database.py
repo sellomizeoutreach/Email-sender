@@ -1489,6 +1489,43 @@ def delete_email(email_id: int, db_path: str = DB_FILE):
     conn.commit()
     conn.close()
 
+def bulk_delete_emails(email_ids: List[int], db_path: str = DB_FILE) -> int:
+    """Delete multiple emails by their IDs in a single atomic transaction."""
+    if not email_ids:
+        return 0
+    clean_ids = [int(i) for i in email_ids if str(i).isdigit() or isinstance(i, int)]
+    if not clean_ids:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in clean_ids)
+    cursor.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", clean_ids)
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return max(0, deleted_count)
+
+def clear_outbox_emails(status: Optional[str] = None, exclude_pending: bool = True, db_path: str = DB_FILE) -> int:
+    """
+    Clear historical outbox emails to prevent clutter and database buildup.
+    - If status is provided (e.g. 'Sent', 'Error', 'Account Mismatch'), deletes emails with that status.
+    - If status is None or 'All', deletes all historical emails (excluding 'Pending' if exclude_pending=True).
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    query = "DELETE FROM emails WHERE 1=1"
+    params = []
+    if status and status != "All":
+        query += " AND status = ?"
+        params.append(status)
+    elif exclude_pending:
+        query += " AND status != 'Pending'"
+    cursor.execute(query, params)
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return max(0, deleted_count)
+
 def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
     """
     Called when an email tracking pixel is loaded.

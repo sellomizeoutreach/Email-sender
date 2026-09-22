@@ -565,22 +565,34 @@ def render_settings_tab():
         """, unsafe_allow_html=True)
 
         st.markdown("##### Database Maintenance & IMAP Tools")
-        col_t1, col_t2 = st.columns(2)
+        col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
             if st.button("🧹 Prune Duplicate Notifications", use_container_width=True, key="btn_prune_dups"):
                 pruned = cleanup_duplicate_notifications()
                 st.success(f"Deduplication complete: Cleaned {pruned} redundant notification(s).")
                 st.rerun()
         with col_t2:
-            if st.button("📬 Run Instant Hostinger Inbox Scan", use_container_width=True, key="btn_sync_imap_now"):
+            if st.button("📬 Instant Inbox Scan", use_container_width=True, key="btn_sync_imap_now"):
                 with st.spinner("Scanning Hostinger inbox via IMAP for replies and bounces..."):
                     try:
                         replies_found = scan_all_hostinger_inbox()
                         bounces_found = scan_all_hostinger_bounces()
-                        st.success(f"Scan complete: Processed {replies_found} new prospect replie(s) and {bounces_found} bounce(s).")
+                        st.success(f"Scan complete: Processed {replies_found} new prospect reply(ies) and {bounces_found} bounce(s).")
                     except Exception as e:
                         st.error(f"IMAP scan failed: {e}")
                 st.rerun()
+        with col_t3:
+            clear_fn = getattr(db, "clear_outbox_emails", lambda **k: 0)
+            if st.session_state.get("confirm_settings_purge_outbox"):
+                if st.button("Confirm Purge Sent", type="primary", use_container_width=True, key="btn_conf_purge_outbox_set"):
+                    purged = clear_fn(status="Sent")
+                    st.session_state["confirm_settings_purge_outbox"] = False
+                    st.success(f"Purged {purged} historical sent email(s).")
+                    st.rerun()
+            else:
+                if st.button("🗑️ Purge Sent Outbox", use_container_width=True, key="btn_purge_outbox_set", help="Clear historical sent emails so they do not pile up in the database."):
+                    st.session_state["confirm_settings_purge_outbox"] = True
+                    st.rerun()
 
         st.markdown("##### System Logs")
         log_path = get_log_file_path()

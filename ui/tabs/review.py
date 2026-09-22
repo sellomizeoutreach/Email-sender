@@ -18,6 +18,8 @@ from database import (
     get_contact_by_email,
     get_config,
     delete_email,
+    bulk_delete_emails,
+    clear_outbox_emails,
     get_approved_due_emails,
     update_email
 )
@@ -410,17 +412,79 @@ def render_review_tab():
             else:
                 st.info(f"🔎 Dry Run: 0 approved emails currently due for dispatch at {curr_local_time} (Local Time).")
 
-    outbox_filter = st.selectbox(
-        "Filter Outbox by Status",
-        ["All", "Approved", "Sent", "Flagged", "Account Mismatch", "Error", "Pending"],
-        index=0,
-        key="outbox_history_filter"
-    )
+    col_outbox_filter, col_outbox_tools = st.columns([1.4, 2.6])
+    with col_outbox_filter:
+        outbox_filter = st.selectbox(
+            "Filter Outbox by Status",
+            ["All", "Sent", "Approved", "Flagged", "Account Mismatch", "Error", "Pending"],
+            index=0,
+            key="outbox_history_filter"
+        )
 
     if outbox_filter == "All":
         filtered_outbox = get_emails()
     else:
         filtered_outbox = get_emails(status=outbox_filter)
+
+    # Calculate selected count for outbox items
+    selected_outbox_ids = [item["id"] for item in filtered_outbox if st.session_state.get(f"sel_outbox_{item['id']}", False)]
+    s_cnt = len(selected_outbox_ids)
+
+    with col_outbox_tools:
+        st.write("")
+        c_sel_tools, c_del_sel, c_clear_hist = st.columns([1.5, 1.3, 1.4])
+        with c_sel_tools:
+            c_s1, c_s2 = st.columns(2)
+            with c_s1:
+                if st.button("Select All", key="btn_outbox_sel_all", use_container_width=True, disabled=not filtered_outbox):
+                    for item in filtered_outbox:
+                        st.session_state[f"sel_outbox_{item['id']}"] = True
+                    st.rerun()
+            with c_s2:
+                if st.button("Deselect", key="btn_outbox_desel_all", use_container_width=True, disabled=not filtered_outbox):
+                    for item in filtered_outbox:
+                        st.session_state[f"sel_outbox_{item['id']}"] = False
+                    st.rerun()
+
+        with c_del_sel:
+            if st.session_state.get("confirm_outbox_bulk_del"):
+                if st.button(f"Confirm ({s_cnt})", type="primary", use_container_width=True, key="btn_conf_outbox_del"):
+                    deleted = bulk_delete_emails(selected_outbox_ids)
+                    for sid in selected_outbox_ids:
+                        st.session_state.pop(f"sel_outbox_{sid}", None)
+                    st.session_state["confirm_outbox_bulk_del"] = False
+                    st.success(f"Deleted {deleted} email(s) from outbox.")
+                    st.rerun()
+            else:
+                if st.button(f"🗑️ Delete ({s_cnt})", disabled=(s_cnt == 0), use_container_width=True, key="btn_outbox_del_sel", help="Delete selected emails from outbox"):
+                    st.session_state["confirm_outbox_bulk_del"] = True
+                    st.rerun()
+
+        with c_clear_hist:
+            clear_btn_label = "🧹 Clear Sent" if outbox_filter in ["All", "Sent"] else f"🧹 Clear {outbox_filter}"
+            if st.session_state.get("confirm_outbox_clear_all"):
+                if st.button("Confirm Clear", type="primary", use_container_width=True, key="btn_conf_outbox_clear"):
+                    target_status = "Sent" if outbox_filter in ["All", "Sent"] else outbox_filter
+                    deleted = clear_outbox_emails(status=target_status)
+                    st.session_state["confirm_outbox_clear_all"] = False
+                    st.success(f"Purged {deleted} '{target_status}' email(s) from outbox.")
+                    st.rerun()
+            else:
+                target_hint = "Sent emails" if outbox_filter in ["All", "Sent"] else f"all '{outbox_filter}' emails"
+                if st.button(clear_btn_label, use_container_width=True, key="btn_outbox_clear_all", help=f"Purge historical {target_hint} so they don't pile up in SQLite."):
+                    st.session_state["confirm_outbox_clear_all"] = True
+                    st.rerun()
+
+    # Confirmation cancel banner if any confirmation is pending
+    if st.session_state.get("confirm_outbox_bulk_del") or st.session_state.get("confirm_outbox_clear_all"):
+        c_warn, c_canc = st.columns([3, 1])
+        with c_warn:
+            st.warning("⚠️ Permanent Action: Selected emails will be permanently removed from the database.")
+        with c_canc:
+            if st.button("Cancel Action", key="btn_canc_outbox_acts", use_container_width=True):
+                st.session_state["confirm_outbox_bulk_del"] = False
+                st.session_state["confirm_outbox_clear_all"] = False
+                st.rerun()
 
     if not filtered_outbox:
         st.info("No emails match the selected outbox filter.")
@@ -436,27 +500,52 @@ def render_review_tab():
             elif item["status"] in ["Account Mismatch", "Error"]:
                 st_class = "badge-flagged"
 
-            with st.expander(f"#{item['id']} | [{item['status'].upper()}] {item['subject']} -> {item.get('recipient') or 'No Recipient'}"):
-                if item.get("created_at"):
-                    st.markdown(f"<div class='timestamp-right'>Created: {item['created_at'][:19]}</div>", unsafe_allow_html=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown(f"**Status:** <span class='{st_class}'>{item['status']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Recipient:** `{item.get('recipient')}`")
-                    if item.get("sent_via"):
-                        st.markdown(f"**Dispatched Via:** `{item['sent_via']}`")
-                    st.markdown(f"**Scheduled Send Time:** `{item.get('scheduled_time')}`")
-                with c2:
-                    if item.get("revision_notes"):
-                        st.info(f"**Notes / Trigger:** {item['revision_notes']}")
-                    if item.get("error_message"):
-                        st.error(f"**Error Details:** {item['error_message']}")
+            col_chk, col_exp = st.columns([0.04, 0.96], vertical_alignment="top")
+            with col_chk:
+                st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+                st.checkbox(
+                    f"Select email #{item['id']}",
+                    key=f"sel_outbox_{item['id']}",
+                    label_visibility="collapsed",
+                    help=f"Select email #{item['id']} for bulk deletion"
+                )
 
-                st.markdown("**Email Content Preview:**")
-                render_html_preview(item["email_html"], height=240)
+            with col_exp:
+                with st.expander(f"#{item['id']} | [{item['status'].upper()}] {item['subject']} -> {item.get('recipient') or 'No Recipient'}"):
+                    if item.get("created_at"):
+                        st.markdown(f"<div class='timestamp-right'>Created: {item['created_at'][:19]}</div>", unsafe_allow_html=True)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"**Status:** <span class='{st_class}'>{item['status']}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**Recipient:** `{item.get('recipient')}`")
+                        if item.get("sent_via"):
+                            st.markdown(f"**Dispatched Via:** `{item['sent_via']}`")
+                        st.markdown(f"**Scheduled Send Time:** `{item.get('scheduled_time')}`")
+                    with c2:
+                        if item.get("revision_notes"):
+                            st.info(f"**Notes / Trigger:** {item['revision_notes']}")
+                        if item.get("error_message"):
+                            st.error(f"**Error Details:** {item['error_message']}")
 
-                if item["status"] in ["Account Mismatch", "Error", "Approved", "Flagged"]:
-                    if st.button(f"↩️ Reset #{item['id']} to Pending", key=f"reset_{item['id']}"):
-                        update_email(email_id=item["id"], status="Pending", error_message=None)
-                        st.success(f"Email #{item['id']} reset to Pending.")
-                        st.rerun()
+                    st.markdown("**Email Content Preview:**")
+                    render_html_preview(item["email_html"], height=240)
+
+                    col_act_left, col_act_right = st.columns([1.2, 1])
+                    with col_act_left:
+                        if item["status"] in ["Account Mismatch", "Error", "Approved", "Flagged"]:
+                            if st.button(f"↩️ Reset #{item['id']} to Pending", key=f"reset_{item['id']}"):
+                                update_email(email_id=item["id"], status="Pending", error_message=None)
+                                st.success(f"Email #{item['id']} reset to Pending.")
+                                st.rerun()
+                    with col_act_right:
+                        if st.session_state.get(f"confirm_del_outbox_{item['id']}"):
+                            if st.button(f"Confirm Delete #{item['id']}", type="primary", key=f"conf_del_ob_{item['id']}", use_container_width=True):
+                                delete_email(item["id"])
+                                st.session_state.pop(f"sel_outbox_{item['id']}", None)
+                                st.session_state[f"confirm_del_outbox_{item['id']}"] = False
+                                st.warning(f"Deleted email #{item['id']}.")
+                                st.rerun()
+                        else:
+                            if st.button(f"🗑️ Delete Email", key=f"del_ob_{item['id']}", use_container_width=True, help="Permanently delete this email record"):
+                                st.session_state[f"confirm_del_outbox_{item['id']}"] = True
+                                st.rerun()
