@@ -24,7 +24,7 @@ def render_sidebar():
         st.markdown("""
         <div style="padding:10px 4px 14px; border-bottom:1.5px solid rgba(8,55,49,0.15); margin-bottom:14px;">
             <div style="font-weight:900; font-size:1.15rem; color:#083731; letter-spacing:0.6px; line-height:1.1;">SELLOMIZE REACH</div>
-            <div style="font-size:0.75rem; color:#64748B; font-weight:700; letter-spacing:0.4px; margin-top:2px;">COLD OUTREACH AGENCY ENGINE</div>
+            <div style="font-size:0.75rem; color:#475569; font-weight:700; letter-spacing:0.4px; margin-top:2px;">COLD OUTREACH AGENCY ENGINE</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -84,22 +84,22 @@ def render_sidebar():
         total_capacity = sum(get_effective_daily_limit(acc) for acc in active_accounts)
         total_sent_today = sum(acc.get("sent_today", 0) for acc in active_accounts)
 
-        status_badge = '<span style="background:rgba(16,185,129,0.15); color:#059669; border:1px solid #10B981; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.72rem;">WINDOW OPEN</span>' if is_open else '<span style="background:rgba(239,68,68,0.15); color:#DC2626; border:1px solid #EF4444; padding:3px 10px; border-radius:12px; font-weight:700; font-size:0.72rem;">WINDOW PAUSED</span>'
+        status_badge = '<span class="sellomize-badge badge-success">WINDOW OPEN</span>' if is_open else '<span class="sellomize-badge badge-alert">WINDOW PAUSED</span>'
 
         st.markdown(f"""
         <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.16); border-radius:10px; padding:12px 14px; margin:10px 0 14px; box-shadow:0 1px 4px rgba(8,55,49,0.04);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:0.75rem; color:#64748B; font-weight:800; text-transform:uppercase; letter-spacing:0.4px;">Dispatch Engine</span>
+                <span style="font-size:0.75rem; color:#475569; font-weight:800; text-transform:uppercase; letter-spacing:0.4px;">Dispatch Engine</span>
                 <div>{status_badge}</div>
             </div>
             <div style="font-size:0.85rem; color:#083731; font-weight:700;">{engine_label}</div>
-            <div style="font-size:0.78rem; color:#64748B; margin:4px 0 8px;">{window_msg}</div>
+            <div style="font-size:0.78rem; color:#475569; margin:4px 0 8px;">{window_msg}</div>
             <div style="border-top:1px solid #F1F5F9; padding-top:6px; display:flex; justify-content:space-between; font-size:0.78rem;">
-                <span style="color:#64748B;">Fleet Cap Today:</span>
+                <span style="color:#475569;">Fleet Cap Today:</span>
                 <strong style="color:#083731;">{total_sent_today} / {total_capacity} sent</strong>
             </div>
             <div style="display:flex; justify-content:space-between; font-size:0.78rem; margin-top:2px;">
-                <span style="color:#64748B;">Active Mailboxes:</span>
+                <span style="color:#475569;">Active Mailboxes:</span>
                 <strong style="color:#083731;">{len(active_accounts)} of {len(smtp_accounts)}</strong>
             </div>
         </div>

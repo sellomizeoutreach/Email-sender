@@ -569,15 +569,15 @@ def render_crm_tab(all_contacts=None):
             <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.2); border-radius:8px; padding:10px 14px; margin:6px 0 10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <div>
                     <strong style="color:#083731; font-size:0.92rem;">👤 {c_target['name']}</strong>
-                    <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">({c_target.get('company') or 'No Company'} • <strong>{c_target['email']}</strong>)</span>
-                    <span style="background:rgba(8,55,49,0.08); color:#083731; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:10px; margin-left:8px;">Pipeline: {c_target.get('status') or 'Not Contacted'}</span>
+                    <span style="color:#475569; font-size:0.82rem; margin-left:6px;">({c_target.get('company') or 'No Company'} • <strong>{c_target['email']}</strong>)</span>
+                    <span class="sellomize-badge badge-brand" style="margin-left:8px;">Pipeline: {c_target.get('status') or 'Not Contacted'}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            col_act1, col_act2, col_act3, _ = st.columns([1.6, 1.4, 1.6, 2.4])
+            col_act1, col_act2, col_act3, _ = st.columns([1.6, 1.4, 1.8, 2.2])
             with col_act1:
-                if st.button("✏️ Edit Full Lead", type="primary", use_container_width=True, key=f"btn_edit_indiv_grid_{chosen_indiv}", help="Open full lead editor modal with all variables, tags & notes"):
+                if st.button("✏️ Edit Full Lead", use_container_width=True, key=f"btn_edit_indiv_grid_{chosen_indiv}", help="Open full lead editor modal with all variables, tags & notes"):
                     st.session_state["crm_editing_id"] = chosen_indiv
                     st.rerun()
             with col_act2:
@@ -593,7 +593,7 @@ def render_crm_tab(all_contacts=None):
                         st.session_state[f"confirm_grid_del_{chosen_indiv}"] = True
                         st.rerun()
             with col_act3:
-                if st.button("✉️ Draft 1-to-1 Email", use_container_width=True, key=f"btn_mail_indiv_grid_{chosen_indiv}", help="Preselect this contact in Sequences & Campaigns"):
+                if st.button("✉️ Draft 1-to-1 Email", type="primary", use_container_width=True, key=f"btn_mail_indiv_grid_{chosen_indiv}", help="Preselect this contact in Sequences & Campaigns"):
                     st.session_state["camp_audience_mode"] = "👤 Single Contact (1-to-1 Sequence / Direct Outreach)"
                     st.session_state["camp_single_contact_picker"] = chosen_indiv
                     st.rerun()
@@ -603,7 +603,7 @@ def render_crm_tab(all_contacts=None):
             <div style="background:rgba(8,55,49,0.06); border:1.5px solid #083731; border-radius:8px; padding:10px 14px; margin:6px 0 10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <div>
                     <strong style="color:#083731; font-size:0.92rem;">📌 {s_count} Leads Selected in Spreadsheet</strong>
-                    <span style="color:#64748B; font-size:0.8rem; margin-left:6px;">Use Bulk Actions above or quick controls below</span>
+                    <span style="color:#475569; font-size:0.8rem; margin-left:6px;">Use Bulk Actions above or quick controls below</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -622,7 +622,7 @@ def render_crm_tab(all_contacts=None):
                         st.session_state["confirm_multi_del_grid"] = True
                         st.rerun()
             with col_b2:
-                if st.button(f"🚀 Outreach with {s_count} Leads", use_container_width=True, key="btn_multi_outreach_grid"):
+                if st.button(f"🚀 Outreach with {s_count} Leads", type="primary", use_container_width=True, key="btn_multi_outreach_grid"):
                     st.session_state["camp_audience_mode"] = "🎯 Cherry-Pick Specific Contacts (Search & Select)"
                     st.session_state["camp_cherry_pick_multisel"] = list(selected_ids)
                     st.rerun()

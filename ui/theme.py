@@ -156,18 +156,23 @@ SELLOMIZE_THEME_CSS = """<style>
     /* Executive Stat Cards (60% Crisp White Canvas with 30% Green / 10% Orange Accents) */
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(7, 1fr);
+        grid-template-columns: repeat(6, 1fr);
         gap: 0.9rem;
         margin-bottom: 1.5rem;
     }
     @media (max-width: 1280px) {
         .stats-grid {
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(3, 1fr);
         }
     }
     @media (max-width: 768px) {
         .stats-grid {
             grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    @media (max-width: 480px) {
+        .stats-grid {
+            grid-template-columns: 1fr;
         }
     }
     .stat-card {
@@ -390,19 +395,19 @@ SELLOMIZE_THEME_CSS = """<style>
         border: none !important;
     }
 
-    /* Primary Action Buttons (Action Blue #2563EB - Clean, High-Converting SaaS CTAs) */
+    /* Primary Action Buttons (Sellomize Flame Orange #FD4D1B - High-Converting 10% SaaS CTAs) */
     button[kind="primary"],
     [data-testid="baseButton-primary"],
     div.stButton > button[kind="primary"],
     div.stFormSubmitButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important;
+        background: linear-gradient(135deg, #FD4D1B 0%, #EA3A08 100%) !important;
         color: #FFFFFF !important;
         font-weight: 700 !important;
         font-size: 0.92rem !important;
-        border: 1px solid #1D4ED8 !important;
+        border: 1px solid #D63204 !important;
         border-radius: 8px !important;
         padding: 0.55rem 1.4rem !important;
-        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+        box-shadow: 0 4px 14px rgba(253, 77, 27, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         letter-spacing: 0.3px !important;
     }
@@ -419,8 +424,9 @@ SELLOMIZE_THEME_CSS = """<style>
     [data-testid="baseButton-primary"]:hover,
     div.stButton > button[kind="primary"]:hover,
     div.stFormSubmitButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%) !important;
-        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
+        background: linear-gradient(135deg, #FF6236 0%, #FD4D1B 100%) !important;
+        box-shadow: 0 6px 20px rgba(253, 77, 27, 0.45) !important;
+        border-color: #FD4D1B !important;
         transform: translateY(-1px) !important;
     }
     button[kind="primary"]:active,
@@ -600,19 +606,50 @@ SELLOMIZE_THEME_CSS = """<style>
         box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25) !important;
     }
 
-    /* Micro Status Badges */
-    .badge-flagged {
+    /* Unified Sellomize Badge & Tag Design System Tokens */
+    .sellomize-badge {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        font-size: 0.78rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.35px !important;
+        padding: 4px 11px !important;
+        border-radius: 20px !important;
+        line-height: 1.2 !important;
+        white-space: nowrap !important;
+        vertical-align: middle !important;
+        transition: all 0.15s ease !important;
+    }
+    .badge-brand {
+        background: rgba(8, 55, 49, 0.08) !important;
+        color: #083731 !important;
+        border: 1px solid rgba(8, 55, 49, 0.22) !important;
+    }
+    .badge-orange {
+        background: rgba(253, 77, 27, 0.09) !important;
+        color: #C2340B !important;
+        border: 1px solid rgba(253, 77, 27, 0.3) !important;
+    }
+    .badge-success {
+        background: #ECFDF5 !important;
+        color: #065F46 !important;
+        border: 1px solid #A7F3D0 !important;
+    }
+    .badge-alert, .badge-danger, .badge-flagged {
         background: rgba(239, 68, 68, 0.12) !important;
         color: #DC2626 !important;
         border: 1px solid rgba(239, 68, 68, 0.3) !important;
-        padding: 3px 10px !important;
-        border-radius: 6px !important;
-        font-weight: 700 !important;
-        font-size: 0.8rem !important;
-        letter-spacing: 0.3px !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        gap: 5px !important;
+    }
+    .badge-warning {
+        background: #FFFBEB !important;
+        color: #92400E !important;
+        border: 1px solid #FDE68A !important;
+    }
+    .badge-info {
+        background: #EFF6FF !important;
+        color: #1E40AF !important;
+        border: 1px solid #BFDBFE !important;
     }
     .badge-pending {
         background: rgba(245, 158, 11, 0.12) !important;

@@ -125,7 +125,7 @@ def render_review_tab():
         st.markdown("""
         <div style="background:rgba(8,55,49,0.05); border:1px solid rgba(8,55,49,0.14); border-radius:8px; padding:9px 14px; margin:6px 0 12px; display:flex; align-items:center; justify-content:space-between;">
             <span style="font-size:0.88rem; color:#083731; font-weight:600;">Review queue is clear — no pending drafts awaiting approval.</span>
-            <span style="font-size:0.8rem; color:#64748B;">Generate new batches from Sequences & Campaigns</span>
+            <span style="font-size:0.8rem; color:#475569; font-weight:500;">Generate new batches from Sequences & Campaigns</span>
         </div>
         """, unsafe_allow_html=True)
     else:

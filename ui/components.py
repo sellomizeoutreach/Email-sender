@@ -114,7 +114,7 @@ def render_tab_header(title: str, subtitle: str = ""):
     else:
         logo_tag = '<span style="font-size:1.4rem;">🚀</span>'
 
-    subtitle_html = f"<div style='font-size:0.83rem; color:#64748B; font-weight:500; margin-top:2px;'>{subtitle}</div>" if subtitle else ""
+    subtitle_html = f"<div style='font-size:0.83rem; color:#475569; font-weight:500; margin-top:2px;'>{subtitle}</div>" if subtitle else ""
 
     tab_header_html = (
         f'<div style="display:flex; align-items:center; gap:12px; margin-bottom:4px; margin-top:2px;">'
