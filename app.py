@@ -28,12 +28,29 @@ from database import (
 from tracker import start_tracking_server
 from ui.theme import apply_theme
 from ui.components import render_header, render_notification_bell, trigger_toast
-from ui.tabs.crm import render_crm_tab
-from ui.tabs.studio import render_studio_tab
-from ui.tabs.compose import render_compose_tab
-from ui.tabs.review import render_review_outbox_tab
-from ui.tabs.analytics import render_analytics_tab
-from ui.tabs.settings import render_settings_tab
+
+# Resilient dynamic imports prevent Streamlit Cloud hot-reload ImportErrors
+import importlib
+import ui.tabs.crm as crm_tab_mod
+import ui.tabs.studio as studio_tab_mod
+import ui.tabs.compose as compose_tab_mod
+import ui.tabs.review as review_tab_mod
+import ui.tabs.analytics as analytics_tab_mod
+import ui.tabs.settings as settings_tab_mod
+
+for _m in [crm_tab_mod, studio_tab_mod, compose_tab_mod, review_tab_mod, analytics_tab_mod, settings_tab_mod]:
+    try:
+        if hasattr(_m, "__file__"):
+            importlib.reload(_m)
+    except Exception:
+        pass
+
+render_crm_tab = getattr(crm_tab_mod, "render_crm_tab")
+render_studio_tab = getattr(studio_tab_mod, "render_studio_tab")
+render_compose_tab = getattr(compose_tab_mod, "render_compose_tab")
+render_review_outbox_tab = getattr(review_tab_mod, "render_review_outbox_tab", getattr(review_tab_mod, "render_review_tab", None))
+render_analytics_tab = getattr(analytics_tab_mod, "render_analytics_tab")
+render_settings_tab = getattr(settings_tab_mod, "render_settings_tab")
 
 import threading
 from scheduler import start_scheduler_loop

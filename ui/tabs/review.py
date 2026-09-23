@@ -675,3 +675,7 @@ def _render_outbox_history(all_emails):
                             if st.button(f"🗑️ Delete Email", key=f"del_ob_{item['id']}", use_container_width=True, help="Permanently delete this email record"):
                                 st.session_state[f"confirm_del_outbox_{item['id']}"] = True
                                 st.rerun()
+
+# Backward-compatible alias prevents Streamlit Cloud hot-reload ImportErrors
+render_review_tab = render_review_outbox_tab
+
