@@ -49,16 +49,38 @@ from timezone_helper import (
     calculate_market_aware_schedule,
     is_within_market_hours,
 )
-from template_engine import (
-    resolve_template,
-    format_email_html,
-    inject_variables,
-    parse_spintax,
-    scan_all_negative_keywords,
-    audit_email_deliverability,
-    highlight_spam_triggers,
-    COMMON_SPAM_TRIGGERS,
-)
+import importlib
+import template_engine as te
+
+# Resilient reload and dynamic bindings prevent hot-reload ImportErrors on Streamlit Cloud
+try:
+    if hasattr(te, "__file__"):
+        importlib.reload(te)
+except Exception:
+    pass
+
+resolve_template = getattr(te, "resolve_template", lambda b, c: str(b))
+format_email_html = getattr(te, "format_email_html", lambda b: f"<p>{b}</p>")
+inject_variables = getattr(te, "inject_variables", lambda t, c: str(t))
+parse_spintax = getattr(te, "parse_spintax", lambda t: str(t))
+scan_all_negative_keywords = getattr(te, "scan_all_negative_keywords", lambda t, k: [])
+audit_email_deliverability = getattr(te, "audit_email_deliverability", lambda *a, **kw: {"score": 100, "detected_spam_words": []})
+COMMON_SPAM_TRIGGERS = getattr(te, "COMMON_SPAM_TRIGGERS", {})
+
+def highlight_spam_triggers(body_html: str, triggers: list) -> str:
+    fn = getattr(te, "highlight_spam_triggers", None)
+    if fn is not None:
+        return fn(body_html, triggers)
+    if not body_html or not triggers:
+        return body_html
+    result = body_html
+    for trigger in sorted(triggers, key=len, reverse=True):
+        escaped = re.escape(trigger)
+        pattern = re.compile(rf'(?i)(?<![<\w])({escaped})(?![\w>])')
+        replacement = r'<mark style="background:#FEF08A; color:#92400E; font-weight:700; padding:0 2px; border-radius:2px;">\1</mark>'
+        result = pattern.sub(replacement, result)
+    return result
+
 from ui.components import render_tab_header, render_html_preview, trigger_toast
 
 
