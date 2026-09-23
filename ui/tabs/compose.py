@@ -1073,29 +1073,34 @@ def render_compose_tab(contacts_list=None, templates_list=None):
                                        neg_keywords_setting, DEFAULT_COPIES[1]["subj"], DEFAULT_COPIES[1]["body"])
             touch_configs.append(cfg1)
     else:
-        touch_tab_titles = ["Touch 1 — Initial Pitch", "Touch 2 — Follow-Up"]
-        if num_touches == 3:
-            touch_tab_titles.append("Touch 3 — Final Note")
-
         with st.container(border=True):
-            st.markdown("#### Step 3 — Compose")
-            touch_ui_tabs = st.tabs(touch_tab_titles)
+            st.markdown(f"#### Step 3 — Compose All {num_touches} Touches")
+            st.caption(
+                "Write and review your initial email and follow-up(s) simultaneously on this screen. "
+                "Both / all three will be scheduled together in one action."
+            )
 
-        with touch_ui_tabs[0]:
+            # --- Touch 1: Initial Pitch ---
+            st.markdown("##### ✉️ Touch 1 — Initial Pitch")
             cfg1 = _render_touch_block(1, "Touch 1", template_options, sample_contact,
                                        neg_keywords_setting, DEFAULT_COPIES[1]["subj"], DEFAULT_COPIES[1]["body"])
             touch_configs.append(cfg1)
 
-        with touch_ui_tabs[1]:
-            st.caption("Sent automatically if no reply received to Touch 1.")
+            st.markdown("<hr style='margin: 22px 0 16px; border: none; border-top: 2px dashed rgba(8,55,49,0.18);'>", unsafe_allow_html=True)
+
+            # --- Touch 2: First Follow-Up ---
+            st.markdown("##### ⏰ Touch 2 — First Follow-Up")
+            st.caption("⚡ Automatically scheduled to dispatch after Touch 1 if the prospect has not replied.")
             cfg2 = _render_touch_block(2, "Touch 2", template_options, sample_contact,
                                        neg_keywords_setting, DEFAULT_COPIES[2]["subj"], DEFAULT_COPIES[2]["body"],
                                        include_delay=True, default_delay_val=3)
             touch_configs.append(cfg2)
 
-        if num_touches == 3:
-            with touch_ui_tabs[2]:
-                st.caption("Sent automatically if no reply received to Touch 2.")
+            if num_touches == 3:
+                st.markdown("<hr style='margin: 22px 0 16px; border: none; border-top: 2px dashed rgba(8,55,49,0.18);'>", unsafe_allow_html=True)
+                # --- Touch 3: Final Note ---
+                st.markdown("##### ⏰ Touch 3 — Final Note")
+                st.caption("⚡ Automatically scheduled to dispatch after Touch 2 if the prospect still has not replied.")
                 cfg3 = _render_touch_block(3, "Touch 3", template_options, sample_contact,
                                            neg_keywords_setting, DEFAULT_COPIES[3]["subj"], DEFAULT_COPIES[3]["body"],
                                            include_delay=True, default_delay_val=4)
@@ -1126,9 +1131,9 @@ def render_compose_tab(contacts_list=None, templates_list=None):
     if total_recipients == 1 and num_touches == 1:
         btn_label = "Send now (1 recipient, 1 touch)"
     elif total_recipients == 1:
-        btn_label = f"Generate & Schedule ({num_touches}-touch sequence for 1 recipient)"
+        btn_label = f"Schedule All {num_touches} Touches (Single Email Sequence)"
     elif has_recipients:
-        btn_label = f"Generate & Schedule ({total_recipients * num_touches} drafts for {total_recipients} recipients)"
+        btn_label = f"Schedule All {total_recipients * num_touches} Touches ({num_touches}-Touch Sequence for {total_recipients} Leads)"
     else:
         btn_label = "Select recipients above to continue"
 
@@ -1169,26 +1174,37 @@ def render_compose_tab(contacts_list=None, templates_list=None):
                 all_recipients, touch_configs, sched_params, neg_keywords_setting, variable_fallback
             )
 
-        trigger_toast("Drafts generated!", icon="🚀")
+        trigger_toast("Sequence scheduled!", icon="🚀")
         st.session_state["scroll_to_review"] = True
 
         if num_touches > 1:
-            create_notification(type="campaign", title="Campaign Sequence Generated",
-                                message=f"Created {created_pending} Touch 1 draft(s) and {registered_rules} follow-up rule(s).")
+            create_notification(type="campaign", title="Sequence Scheduled",
+                                message=f"Created {created_pending} Touch 1 draft(s) and {registered_rules} automated follow-up rule(s).")
             st.success(
-                f"Done: {created_pending} pending draft(s) + {registered_rules} automated follow-up rule(s) registered. "
+                f"✅ Done: Touch 1 draft(s) created and {registered_rules} automated follow-up rule(s) registered! "
                 f"{'(' + str(created_flagged) + ' flagged for review)' if created_flagged else ''}"
             )
-            st.markdown(
-                "<div style='background:#EFF6FF;border:1.5px solid #3B82F6;border-radius:10px;"
-                "padding:12px 16px;margin:12px 0;'>"
-                "<div style='font-weight:800;color:#1D4ED8;'>Automated follow-up sequence active</div>"
-                f"<div style='color:#1E3A8A;font-size:0.85rem;margin-top:4px;'>"
-                f"Touch 1 drafts are in the Review & Outbox tab. Once dispatched, the engine waits "
-                f"{touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']} and auto-generates the follow-up "
-                f"— only if the prospect hasn't replied.</div></div>",
-                unsafe_allow_html=True,
-            )
+            if num_touches == 3:
+                st.markdown(
+                    f"<div style='background:#EFF6FF;border:1.5px solid #3B82F6;border-radius:10px;"
+                    f"padding:14px 16px;margin:12px 0;'>"
+                    f"<div style='font-weight:800;color:#1D4ED8;font-size:0.95rem;'>All 3 touches scheduled simultaneously in sequence</div>"
+                    f"<div style='color:#1E3A8A;font-size:0.86rem;margin-top:6px;line-height:1.6;'>"
+                    f"• <b>Touch 1:</b> Initial pitch is queued in the Review & Outbox tab for dispatch.<br>"
+                    f"• <b>Touch 2:</b> Automatically scheduled +{touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']} after Touch 1 — fires only if no reply.<br>"
+                    f"• <b>Touch 3:</b> Automatically scheduled +{touch_configs[2]['delay_value']} {touch_configs[2]['delay_unit']} after Touch 2 — fires only if still no reply.</div></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div style='background:#EFF6FF;border:1.5px solid #3B82F6;border-radius:10px;"
+                    f"padding:14px 16px;margin:12px 0;'>"
+                    f"<div style='font-weight:800;color:#1D4ED8;font-size:0.95rem;'>Both touches scheduled simultaneously in sequence</div>"
+                    f"<div style='color:#1E3A8A;font-size:0.86rem;margin-top:6px;line-height:1.6;'>"
+                    f"• <b>Touch 1:</b> Initial pitch is queued in the Review & Outbox tab for dispatch.<br>"
+                    f"• <b>Touch 2:</b> Automatically scheduled +{touch_configs[1]['delay_value']} {touch_configs[1]['delay_unit']} after Touch 1 — fires only if no reply.</div></div>",
+                    unsafe_allow_html=True,
+                )
         else:
             create_notification(type="campaign", title="Drafts Generated",
                                 message=f"Queued {created_pending} draft(s).")
