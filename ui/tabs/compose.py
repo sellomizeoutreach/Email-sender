@@ -41,14 +41,6 @@ from scheduler import (
     analyze_schedule_overflow,
     WEEKDAY_NAMES,
 )
-from timezone_helper import (
-    TARGET_MARKETS,
-    get_market_info,
-    get_market_current_time,
-    get_time_difference_summary,
-    calculate_market_aware_schedule,
-    is_within_market_hours,
-)
 import importlib
 import template_engine as te
 
@@ -609,46 +601,42 @@ def _render_spam_preview(preview_subj: str, final_html: str, triggers: list, tou
 # ---------------------------------------------------------------------------
 
 def _render_schedule_step(n_recipients: int, num_touches: int) -> dict:
-    """Render Step 4: Schedule. Returns dict with all scheduling parameters."""
+    """Render Step 4: Schedule. Returns dict with all scheduling parameters using local PC time."""
     with st.container(border=True):
-        st.markdown("#### Step 4 — Schedule")
+        st.markdown("#### Step 4 — Schedule (Host PC Time)")
 
-        # Market / timezone
-        db_default_market = get_config("default_market", "CA_EAST")
-        market_keys = list(TARGET_MARKETS.keys())
-        def_m_idx = market_keys.index(db_default_market) if db_default_market in market_keys else 0
+        # Current Local PC Time indicator
+        now = datetime.now()
+        st.markdown(
+            f"<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;"
+            f"padding:8px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;'>"
+            f"<div><span style='font-size:0.75rem;font-weight:700;color:#64748B;text-transform:uppercase;'>🖥️ Host PC Local Time: </span>"
+            f"<span style='font-weight:800;color:#083731;font-size:0.95rem;margin-left:6px;'>{now.strftime('%A, %b %d, %Y • %I:%M %p')}</span></div>"
+            f"<span style='background:#E0F2FE;color:#0369A1;font-size:0.72rem;font-weight:800;padding:2px 8px;border-radius:10px;'>PC CLOCK</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-        col_tm1, col_tm2 = st.columns([1.8, 1.2])
-        with col_tm1:
-            selected_market_key = st.selectbox(
-                "Recipient market / timezone",
-                options=market_keys,
-                index=def_m_idx,
-                format_func=lambda k: TARGET_MARKETS[k]["label"],
-                key="cs_target_market",
-                help="Send times auto-adapt to recipient business hours.",
+        # Timing: Start immediately vs specific date & time
+        col_when1, col_when2 = st.columns([1.4, 2.6])
+        with col_when1:
+            timing_type = st.radio(
+                "Dispatch timing",
+                ["🚀 Start immediately", "📅 Specific date & time"],
+                index=0,
+                key="cs_timing_type",
+                help="Start immediately or schedule for a specific date and time on this PC.",
             )
-        with col_tm2:
-            m_info = TARGET_MARKETS[selected_market_key]
-            m_now = get_market_current_time(selected_market_key)
-            is_open, _ = is_within_market_hours(selected_market_key)
-            badge_html = (
-                "<span style='background:#16A34A;color:white;font-size:0.72rem;font-weight:800;"
-                "padding:2px 7px;border-radius:10px;'>OPEN</span>"
-                if is_open else
-                "<span style='background:#CA8A04;color:white;font-size:0.72rem;font-weight:800;"
-                "padding:2px 7px;border-radius:10px;'>CLOSED</span>"
-            )
-            diff_str = get_time_difference_summary(selected_market_key)
-            st.markdown(
-                f"<div style='background:#FFFFFF;border:1px solid rgba(8,55,49,0.18);"
-                f"border-radius:8px;padding:9px 12px;margin-top:5px;'>"
-                f"<div style='font-size:0.75rem;color:#64748B;font-weight:700;'>LOCAL TIME {badge_html}</div>"
-                f"<div style='font-weight:800;color:#083731;font-size:1rem;'>{m_now.strftime('%I:%M %p')}"
-                f" <span style='font-size:0.75rem;color:#64748B;'>{m_now.strftime('%Z')}</span></div>"
-                f"<div style='font-size:0.78rem;color:#475569;'>{diff_str}</div></div>",
-                unsafe_allow_html=True,
-            )
+
+        if timing_type.startswith("📅"):
+            col_dt1, col_dt2 = st.columns(2)
+            with col_dt1:
+                sched_date = st.date_input("Start date", value=now.date(), min_value=now.date(), key="cs_sched_date")
+            with col_dt2:
+                sched_time = st.time_input("Start time", value=now.time(), key="cs_sched_time")
+            base_dt = datetime.combine(sched_date, sched_time)
+        else:
+            base_dt = datetime.now()
 
         # BCC notice
         bcc_conf = get_config("bcc_email", "")
@@ -670,7 +658,7 @@ def _render_schedule_step(n_recipients: int, num_touches: int) -> dict:
             default_preset_idx = 2
 
         preset_choice = st.radio(
-            "Sending schedule",
+            "Allowed sending window (Local PC Time)",
             ["Business Days (Mon–Fri, 9 AM–6 PM)", "24/7 Continuous", "Custom"],
             index=default_preset_idx,
             horizontal=True,
@@ -679,8 +667,8 @@ def _render_schedule_step(n_recipients: int, num_touches: int) -> dict:
 
         if preset_choice.startswith("Business"):
             camp_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-            camp_start = m_info.get("default_start", "09:00")
-            camp_end = m_info.get("default_end", "17:00")
+            camp_start = "09:00"
+            camp_end = "18:00"
         elif preset_choice.startswith("24/7"):
             camp_days = list(WEEKDAY_NAMES)
             camp_start = "00:00"
@@ -728,22 +716,13 @@ def _render_schedule_step(n_recipients: int, num_touches: int) -> dict:
 
         if n_recipients > 0:
             try:
-                if selected_market_key != "LOCAL":
-                    pairs = calculate_market_aware_schedule(
-                        total_contacts=n_recipients, market_key_or_tz=selected_market_key,
-                        stagger_mode=stagger_mode_arg, span_hours=float(span_hours),
-                        spacing_minutes=float(spacing_minutes), days=camp_days,
-                        start_time=camp_start, end_time=camp_end, use_jitter=False,
-                    )
-                    first_slot_str = pairs[0][0].strftime("%a %b %d, %I:%M %p")
-                    est_completion_str = pairs[-1][0].strftime("%a %b %d, %I:%M %p")
-                else:
-                    slots = calculate_staggered_schedule(
-                        total_contacts=n_recipients, stagger_mode=stagger_mode_arg,
-                        base_dt=datetime.now(), span_hours=float(span_hours),
-                        spacing_minutes=float(spacing_minutes), sending_days=camp_days,
-                        start_time_str=camp_start, end_time_str=camp_end, use_jitter=False,
-                    )
+                slots = calculate_staggered_schedule(
+                    total_contacts=n_recipients, stagger_mode=stagger_mode_arg,
+                    base_dt=base_dt, span_hours=float(span_hours),
+                    spacing_minutes=float(spacing_minutes), sending_days=camp_days,
+                    start_time_str=camp_start, end_time_str=camp_end, use_jitter=False,
+                )
+                if slots:
                     first_slot_str = slots[0].strftime("%a %b %d, %I:%M %p")
                     est_completion_str = slots[-1].strftime("%a %b %d, %I:%M %p")
             except Exception:
@@ -756,7 +735,7 @@ def _render_schedule_step(n_recipients: int, num_touches: int) -> dict:
         st.markdown(
             f"<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;"
             f"padding:14px;margin:12px 0;'>"
-            f"<div style='font-weight:700;color:#0F172A;font-size:0.9rem;margin-bottom:10px;'>Schedule preview</div>"
+            f"<div style='font-weight:700;color:#0F172A;font-size:0.9rem;margin-bottom:10px;'>Schedule preview (Local PC Time)</div>"
             f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;'>"
             f"<div style='background:#fff;border:1px solid #E2E8F0;border-radius:8px;padding:10px;'>"
             f"<div style='font-size:0.72rem;color:#64748B;font-weight:700;text-transform:uppercase;'>Drafts to queue</div>"
@@ -776,8 +755,9 @@ def _render_schedule_step(n_recipients: int, num_touches: int) -> dict:
         )
 
     return {
-        "market_key": selected_market_key,
-        "m_info": m_info,
+        "market_key": "LOCAL",
+        "m_info": {"timezone": "LOCAL", "country": ""},
+        "base_dt": base_dt,
         "camp_days": camp_days,
         "camp_start": camp_start,
         "camp_end": camp_end,
@@ -838,8 +818,7 @@ def _generate_drafts(recipients, touch_configs, sched_params, neg_keywords_setti
     """Core generation loop. Returns (created_pending, created_flagged, flagged_details)."""
     num_touches = len(touch_configs)
     n = len(recipients)
-    selected_market_key = sched_params["market_key"]
-    m_info = sched_params["m_info"]
+    base_dt = sched_params.get("base_dt") or datetime.now()
     camp_days = sched_params["camp_days"]
     camp_start = sched_params["camp_start"]
     camp_end = sched_params["camp_end"]
@@ -847,27 +826,24 @@ def _generate_drafts(recipients, touch_configs, sched_params, neg_keywords_setti
     span_hours = sched_params["span_hours"]
     spacing_minutes = sched_params["spacing_minutes"]
     use_jitter = sched_params["use_jitter"]
-    m_tz = m_info.get("timezone", "LOCAL")
-    m_country = m_info.get("country", "")
+    m_tz = "LOCAL"
+    m_country = ""
+    selected_market_key = "LOCAL"
 
     batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}" if num_touches >= 2 else ""
 
-    # Compute Touch 1 schedule slots
-    if selected_market_key != "LOCAL":
-        pairs = calculate_market_aware_schedule(
-            total_contacts=n, market_key_or_tz=selected_market_key,
-            stagger_mode=stagger_mode_arg, span_hours=float(span_hours),
-            spacing_minutes=float(spacing_minutes), days=camp_days,
-            start_time=camp_start, end_time=camp_end, use_jitter=use_jitter,
-        )
-        scheduled_dts = [p[1] for p in pairs]
-    else:
-        scheduled_dts = calculate_staggered_schedule(
-            total_contacts=n, stagger_mode=stagger_mode_arg,
-            base_dt=datetime.now(), span_hours=float(span_hours),
-            spacing_minutes=float(spacing_minutes), sending_days=camp_days,
-            start_time_str=camp_start, end_time_str=camp_end, use_jitter=use_jitter,
-        )
+    # Compute Touch 1 schedule slots in Local PC Time
+    scheduled_dts = calculate_staggered_schedule(
+        total_contacts=n,
+        stagger_mode=stagger_mode_arg,
+        base_dt=base_dt,
+        span_hours=float(span_hours),
+        spacing_minutes=float(spacing_minutes),
+        sending_days=camp_days,
+        start_time_str=camp_start,
+        end_time_str=camp_end,
+        use_jitter=use_jitter,
+    )
 
     system_excluded = get_system_excluded_emails()
     created_pending = 0

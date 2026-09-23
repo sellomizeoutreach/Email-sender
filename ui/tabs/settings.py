@@ -352,12 +352,24 @@ def render_settings_tab():
         st.markdown("### ⚙️ Advanced Telemetry & Infrastructure")
         st.caption("Sending schedules, multi-country destination timezones, anti-spam delay intervals, system health diagnostics, and LAN access.")
 
-        # --- SECTION A: SENDING SCHEDULE & WINDOW ---
-        with st.expander("⏰ Sending Schedule & Destination Timezones", expanded=True):
-            st.caption("Control the working hours, destination country schedules, and allowed delivery days for automated background dispatch.")
+        # --- SECTION A: SENDING SCHEDULE & WINDOW (LOCAL PC TIME) ---
+        with st.expander("⏰ Sending Schedule & Window (Local PC Time)", expanded=True):
+            st.caption("Control outbound working hours and allowed delivery days for automated background dispatch using your local PC clock.")
 
-            db_schedule_mode = (current_configs.get("schedule_mode", "adaptive_multi_country") or "adaptive_multi_country").strip()
-            db_default_market = (current_configs.get("default_market", "CA_EAST") or "CA_EAST").strip()
+            now_local = datetime.now()
+            st.markdown(f"""
+            <div style="background:#F8FAFC; border:1.5px solid #E2E8F0; border-radius:10px; padding:12px 16px; margin:6px 0 14px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-size:0.75rem; color:#64748B; font-weight:700; text-transform:uppercase;">Host PC Local Clock</div>
+                    <div style="font-weight:800; color:#083731; font-size:1.05rem; margin-top:2px;">
+                        {now_local.strftime('%A, %b %d, %Y • %I:%M %p')}
+                    </div>
+                </div>
+                <span style="background:#10B981; color:#FFFFFF; font-size:0.75rem; font-weight:800; padding:4px 10px; border-radius:12px;">LOCAL PC TIME</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            db_schedule_mode = (current_configs.get("schedule_mode", "office_hours") or "office_hours").strip()
             db_enforce = (current_configs.get("enforce_sending_window", "true") or "true").strip().lower() in ["true", "1", "yes"]
             db_days_raw = current_configs.get("sending_days", "Monday, Tuesday, Wednesday, Thursday, Friday") or "Monday, Tuesday, Wednesday, Thursday, Friday"
             db_days_list = [d.strip() for d in db_days_raw.split(",") if d.strip()]
@@ -365,95 +377,42 @@ def render_settings_tab():
             db_end = (current_configs.get("sending_end_time", "18:00") or "18:00").strip()
 
             preset_options = [
-                "🌍 Adaptive Multi-Country Dispatch (Timezone-Aware)",
-                "🏢 Single Office Hours Window (Mon - Fri, Host PC Hours)",
+                "🏢 Business Hours (Mon - Fri, 09:00 AM - 06:00 PM)",
                 "⚡ 24/7 Continuous (All 7 Days, Around the Clock)",
                 "🛠️ Custom Schedule"
             ]
 
-            if db_schedule_mode == "adaptive_multi_country":
-                preset_idx = 0
-            elif db_schedule_mode == "continuous" or not db_enforce or (db_start == "00:00" and db_end in ["23:59", "24:00"] and len(db_days_list) >= 7):
-                preset_idx = 2
-            elif set(db_days_list) == {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"} and db_start == "09:00" and db_end == "18:00":
+            if db_schedule_mode == "continuous" or not db_enforce or (db_start == "00:00" and db_end in ["23:59", "24:00"] and len(db_days_list) >= 7):
                 preset_idx = 1
+            elif set(db_days_list) == {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"} and db_start == "09:00" and db_end == "18:00":
+                preset_idx = 0
             else:
-                preset_idx = 3
+                preset_idx = 2
 
             sched_preset = st.radio(
-                "Schedule Mode",
+                "Sending Schedule Preset",
                 preset_options,
                 index=preset_idx,
                 key="set_sched_preset"
             )
 
-            market_keys = list(TARGET_MARKETS.keys())
-            def_m_idx = market_keys.index(db_default_market) if db_default_market in market_keys else 0
-
-            if sched_preset.startswith("🌍 Adaptive Multi-Country"):
-                sel_mode = "adaptive_multi_country"
-                sel_enforce = True
-                sel_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-                sel_start = "09:00"
-                sel_end = "18:00"
-
-                st.markdown("""
-                <div style="background:#F0FDF4; border:1.5px solid #16A34A; border-radius:8px; padding:12px 16px; margin:10px 0 14px;">
-                    <div style="font-weight:800; color:#15803D; font-size:0.92rem;">🌍 Autonomous Country-Wise Pacing Enabled</div>
-                    <div style="color:#166534; font-size:0.83rem; margin-top:4px; line-height:1.45;">
-                        The background dispatch engine operates 24/7, continuously matching each email's delivery to its specific destination country's working hours (09:00 - 17:00).
-                        Emails destined for <strong>Canada</strong> send during Canadian business hours; <strong>Australia</strong> sends during Australian hours, without blocking each other or stopping when your Host PC is off hours.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                col_m1, col_m2 = st.columns([1.8, 1.2])
-                with col_m1:
-                    sel_default_market = st.selectbox(
-                        "Default Target Country & Market Timezone",
-                        options=market_keys,
-                        index=def_m_idx,
-                        format_func=lambda k: TARGET_MARKETS[k]["label"],
-                        key="set_def_market_select",
-                        help="Default market applied to new campaigns if not individually customized."
-                    )
-                with col_m2:
-                    m_info = TARGET_MARKETS[sel_default_market]
-                    m_now = get_market_current_time(sel_default_market)
-                    diff_summary = get_time_difference_summary(sel_default_market)
-                    is_m_open, m_open_reason = is_within_market_hours(sel_default_market)
-                    m_badge_color = "#16A34A" if is_m_open else "#CA8A04"
-                    m_badge_status = "OPEN" if is_m_open else "CLOSED"
-
-                    st.markdown(f"""
-                    <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.18); border-radius:8px; padding:10px 14px; margin-top:6px;">
-                        <div style="font-size:0.75rem; color:#64748B; font-weight:700;">LIVE TARGET CLOCK</div>
-                        <div style="font-weight:800; color:#083731; font-size:1.05rem;">{m_now.strftime('%I:%M %p')} <span style="font-size:0.8rem; color:#64748B;">{m_now.strftime('%Z')}</span></div>
-                        <div style="font-size:0.8rem; color:#475569; margin-top:2px;">{diff_summary}</div>
-                        <div style="display:inline-block; font-size:0.72rem; font-weight:800; color:#FFFFFF; background:{m_badge_color}; padding:2px 8px; border-radius:10px; margin-top:4px;">{m_badge_status}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            elif sched_preset.startswith("🏢 Single Office Hours"):
+            if sched_preset.startswith("🏢 Business Hours"):
                 sel_mode = "office_hours"
                 sel_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
                 sel_start = "09:00"
                 sel_end = "18:00"
                 sel_enforce = True
-                sel_default_market = db_default_market
-                st.info("Emails will only be sent Monday through Friday between 09:00 AM and 06:00 PM Host PC local time.")
+                st.info("Emails will only dispatch Monday through Friday between 09:00 AM and 06:00 PM local PC time.")
             elif sched_preset.startswith("⚡ 24/7 Continuous"):
                 sel_mode = "continuous"
                 sel_days = list(WEEKDAY_NAMES)
                 sel_start = "00:00"
                 sel_end = "23:59"
                 sel_enforce = False
-                sel_default_market = db_default_market
-                st.info("Continuous delivery: Emails will be dispatched at any time, 24 hours a day, 7 days a week.")
+                st.info("Continuous delivery: Emails will dispatch at any time, 24 hours a day, 7 days a week.")
             else:
-                sel_mode = "office_hours"
+                sel_mode = "custom"
                 sel_enforce = True
-                sel_default_market = db_default_market
                 col_cs1, col_cs2, col_cs3 = st.columns([2, 1, 1])
                 with col_cs1:
                     sel_days = st.multiselect(
@@ -482,12 +441,12 @@ def render_settings_tab():
             if st.button("💾 Save Sending Schedule", type="primary", key="btn_save_settings_sched"):
                 clean_days = [d for d in sel_days if d in WEEKDAY_NAMES] or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
                 set_config("schedule_mode", sel_mode)
-                set_config("default_market", sel_default_market)
+                set_config("default_market", "LOCAL")
                 set_config("enforce_sending_window", "true" if sel_enforce else "false")
                 set_config("sending_days", ", ".join(clean_days))
                 set_config("sending_start_time", sel_start.strip())
                 set_config("sending_end_time", sel_end.strip())
-                trigger_toast("Sending schedule successfully updated!", icon="🕒")
+                trigger_toast("Sending schedule successfully saved!", icon="🕒")
                 st.rerun()
 
         # --- SECTION B: ANTI-SPAM & OUTBOUND ENGINE ---
