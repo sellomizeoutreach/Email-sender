@@ -114,7 +114,8 @@ TAB_NAMES = [
 
 tab_leads, tab_templates, tab_dispatch_review, tab_analytics, tab_settings = st.tabs(
     TAB_NAMES,
-    key="main_app_tabs"
+    key="main_app_tabs",
+    on_change="rerun"
 )
 
 with tab_leads:
