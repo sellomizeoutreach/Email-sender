@@ -14,6 +14,7 @@ Backend engines (template_engine, scheduler, smtp_dispatcher) are reused unchang
 from datetime import datetime, timedelta
 import re
 import uuid
+import base64
 import streamlit as st
 
 from database import (
@@ -147,6 +148,55 @@ def _stub_contact(email: str) -> dict:
         "custom_variables_dict": {},
         "custom_variables": "{}",
     }
+
+
+def _get_default_copy(touch_step: int, sample_contact: dict, is_single_recipient: bool) -> dict:
+    """
+    Returns default subject and body for a touch.
+    For single recipients (especially manual / 1-to-1 sends): provides natural direct copy
+    without awkward template placeholder tokens like [Name] or [Company].
+    For campaigns (multi-recipient): provides parameterized copy with [Name] and [Company].
+    """
+    if not is_single_recipient:
+        return DEFAULT_COPIES.get(touch_step, DEFAULT_COPIES[1])
+
+    c_name = (sample_contact.get("name") or "").strip()
+    c_comp = (sample_contact.get("company") or "").strip()
+
+    greeting = f"Hi {c_name}," if c_name else "Hi,"
+    subj_comp = f" for {c_comp}" if c_comp else ""
+    body_comp = f" at {c_comp}" if c_comp else ""
+
+    if touch_step == 1:
+        return {
+            "subj": f"Quick question{subj_comp}",
+            "body": (
+                f"{greeting}\n\n"
+                f"I wanted to reach out regarding your work{body_comp}.\n\n"
+                f"We help scale outreach and drive consistent pipeline results. "
+                f"Do you have 10 minutes this week for a brief conversation?\n\n"
+                f"Best regards,"
+            ),
+        }
+    elif touch_step == 2:
+        return {
+            "subj": f"Re: Quick question{subj_comp}",
+            "body": (
+                f"{greeting}\n\n"
+                f"Just following up to see if you had a chance to review my previous note.\n\n"
+                f"Would you be open to a quick 5-minute chat next week?\n\n"
+                f"Best,"
+            ),
+        }
+    else:
+        return {
+            "subj": f"Final note{subj_comp}",
+            "body": (
+                f"{greeting}\n\n"
+                f"I haven't heard back, so I'll assume the timing isn't right.\n\n"
+                f"Feel free to reach out anytime if things change. Wishing you continued success!"
+            ),
+        }
 
 
 def _sync_sending_window_to_db(preset: str, days: list, start: str, end: str, db_path: str = DB_FILE):
@@ -410,6 +460,219 @@ def _render_recipient_step(active_candidates: list, contact_id_map: dict, system
 # STEP 3 — ENHANCED TOUCH BLOCK
 # ---------------------------------------------------------------------------
 
+def _append_to_body(k_body: str, saved: dict, snippet: str, default_body: str = ""):
+    current = st.session_state.get(k_body, saved.get(k_body, default_body))
+    if current.strip():
+        new_val = f"{current.rstrip()}\n\n{snippet}"
+    else:
+        new_val = snippet
+    st.session_state[k_body] = new_val
+    saved[k_body] = new_val
+    st.rerun()
+
+
+def _wrap_or_append_inline(k_body: str, saved: dict, start_tag: str, end_tag: str, default_text: str, default_body: str = ""):
+    current = st.session_state.get(k_body, saved.get(k_body, default_body))
+    snippet = f"{start_tag}{default_text}{end_tag}"
+    if current.strip():
+        new_val = f"{current} {snippet}"
+    else:
+        new_val = snippet
+    st.session_state[k_body] = new_val
+    saved[k_body] = new_val
+    st.rerun()
+
+
+def _render_customization_bar(touch_step: int, k_body: str, saved: dict, default_body: str, is_single_recipient: bool):
+    """
+    Renders an email customization toolbar:
+    - Text styling: Bold, Italic, Underline, Strikethrough, Heading 2, Heading 3
+    - Structure: Bullets, Numbered List, Quote/Callout, Horizontal Divider
+    - Rich Elements: Add Image (Upload local PC file / Web URL), Add Link, CTA Button, Highlight Box, Signature
+    - Campaign Tokens: Variable chips ([Name], [Company], etc.) shown ONLY when multiple recipients are targeted.
+    """
+    st.markdown(
+        "<div style='font-size:0.75rem; font-weight:700; color:#475569; text-transform:uppercase; "
+        "margin-bottom:6px; letter-spacing:0.5px;'>🎨 Email Formatting & Customization Bar</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Row 1: Text formatting & structure buttons
+    col_f1, col_f2, col_f3, col_f4, col_f5, col_f6, col_f7, col_f8, col_f9 = st.columns(9)
+    with col_f1:
+        if st.button("𝗕 Bold", key=f"btn_bold_{touch_step}", use_container_width=True, help="Insert bold text"):
+            _wrap_or_append_inline(k_body, saved, "<b>", "</b>", "Bold text", default_body)
+    with col_f2:
+        if st.button("𝘐 Italic", key=f"btn_ital_{touch_step}", use_container_width=True, help="Insert italic text"):
+            _wrap_or_append_inline(k_body, saved, "<i>", "</i>", "Italic text", default_body)
+    with col_f3:
+        if st.button("<u>U</u> Under", key=f"btn_und_{touch_step}", use_container_width=True, help="Insert underlined text"):
+            _wrap_or_append_inline(k_body, saved, "<u>", "</u>", "Underlined text", default_body)
+    with col_f4:
+        if st.button("<s>S</s>", key=f"btn_str_{touch_step}", use_container_width=True, help="Insert strikethrough text"):
+            _wrap_or_append_inline(k_body, saved, "<s>", "</s>", "Strikethrough text", default_body)
+    with col_f5:
+        if st.button("H2 Title", key=f"btn_h2_{touch_step}", use_container_width=True, help="Insert section heading"):
+            _append_to_body(k_body, saved, "<h2>Section Heading</h2>", default_body)
+    with col_f6:
+        if st.button("• List", key=f"btn_ul_{touch_step}", use_container_width=True, help="Insert bulleted list"):
+            _append_to_body(k_body, saved, "<ul>\n  <li>Key point 1</li>\n  <li>Key point 2</li>\n</ul>", default_body)
+    with col_f7:
+        if st.button("1. List", key=f"btn_ol_{touch_step}", use_container_width=True, help="Insert numbered list"):
+            _append_to_body(k_body, saved, "<ol>\n  <li>First step</li>\n  <li>Second step</li>\n</ol>", default_body)
+    with col_f8:
+        if st.button("❝ Quote", key=f"btn_qt_{touch_step}", use_container_width=True, help="Insert quote/callout block"):
+            _append_to_body(k_body, saved, "<blockquote style='border-left:3px solid #083731; padding-left:12px; margin:12px 0; color:#475569;'>“Quote or client testimonial here.”</blockquote>", default_body)
+    with col_f9:
+        if st.button("― Line", key=f"btn_hr_{touch_step}", use_container_width=True, help="Insert horizontal divider line"):
+            _append_to_body(k_body, saved, "<hr style='border:none; border-top:1px solid #E2E8F0; margin:16px 0;' />", default_body)
+
+    # Row 2: Rich HTML Elements (Image, Link, CTA, Highlight, Signature)
+    col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+    with col_r1:
+        if st.button("🖼️ Add Image", key=f"btn_toggle_img_{touch_step}", use_container_width=True, help="Upload an image from your PC or insert from URL"):
+            st.session_state[f"exp_img_{touch_step}"] = not st.session_state.get(f"exp_img_{touch_step}", False)
+            st.rerun()
+    with col_r2:
+        if st.button("🔗 Add Link", key=f"btn_toggle_link_{touch_step}", use_container_width=True, help="Insert a styled hyperlink"):
+            st.session_state[f"exp_link_{touch_step}"] = not st.session_state.get(f"exp_link_{touch_step}", False)
+            st.rerun()
+    with col_r3:
+        if st.button("🔘 CTA Button", key=f"btn_toggle_cta_{touch_step}", use_container_width=True, help="Insert a bulletproof email button"):
+            st.session_state[f"exp_cta_{touch_step}"] = not st.session_state.get(f"exp_cta_{touch_step}", False)
+            st.rerun()
+    with col_r4:
+        if st.button("📦 Highlight Box", key=f"btn_box_{touch_step}", use_container_width=True, help="Insert styled callout box"):
+            _append_to_body(k_body, saved, "<div style='background-color:#F8FAFC; border-left:4px solid #083731; border-radius:4px; padding:12px 16px; margin:14px 0; color:#1E293B;'><strong>Highlight:</strong> Important note, offer, or case study metric here.</div>", default_body)
+    with col_r5:
+        if st.button("✍️ Sign-off", key=f"btn_sig_{touch_step}", use_container_width=True, help="Insert professional sign-off"):
+            _append_to_body(k_body, saved, "<br><br>Best regards,<br><strong>Your Name</strong><br><span style='color:#64748B; font-size:13px;'>Founder • Company<br><a href='https://yourwebsite.com' style='color:#083731; text-decoration:none;'>yourwebsite.com</a></span>", default_body)
+
+    # ── Expandable Drawer 1: 🖼️ Image Tool (Upload from PC or Web URL) ─────
+    if st.session_state.get(f"exp_img_{touch_step}", False):
+        with st.container(border=True):
+            st.markdown("##### 🖼️ Add Image to Email")
+            img_tabs = st.tabs(["📁 Upload Image from PC", "🌐 Image from Web URL"])
+            with img_tabs[0]:
+                up_file = st.file_uploader(
+                    "Select image file (PNG, JPG, JPEG, GIF, WebP)",
+                    type=["png", "jpg", "jpeg", "gif", "webp"],
+                    key=f"file_up_{touch_step}",
+                )
+                if up_file:
+                    col_prev, col_opts = st.columns([1.2, 2.8])
+                    with col_prev:
+                        st.image(up_file, caption=up_file.name, width=160)
+                    with col_opts:
+                        col_w, col_al = st.columns(2)
+                        with col_w:
+                            up_w = st.selectbox("Width", ["100% (Responsive)", "480px (Medium)", "320px (Compact)", "180px (Logo)"], index=0, key=f"up_w_{touch_step}")
+                        with col_al:
+                            up_al = st.selectbox("Alignment", ["Center", "Left", "Right"], index=0, key=f"up_al_{touch_step}")
+                        up_alt = st.text_input("Alt text", value=up_file.name.rsplit('.', 1)[0], key=f"up_alt_{touch_step}")
+                        up_link = st.text_input("Clickable Link URL (optional)", placeholder="https://...", key=f"up_link_{touch_step}")
+                        if st.button("➕ Insert Uploaded Image Into Email", key=f"btn_ins_up_{touch_step}", type="primary"):
+                            b64 = base64.b64encode(up_file.getvalue()).decode("utf-8")
+                            mime = up_file.type or "image/png"
+                            data_uri = f"data:{mime};base64,{b64}"
+                            w_val = "100%" if "100%" in up_w else ("480px" if "480" in up_w else ("320px" if "320" in up_w else "180px"))
+                            al_style = "text-align: center;" if up_al == "Center" else ("text-align: left;" if up_al == "Left" else "text-align: right;")
+                            tag = f"<img src='{data_uri}' alt='{up_alt}' style='max-width: 100%; width: {w_val}; height: auto; border-radius: 6px; display: inline-block; margin: 8px 0;' />"
+                            if up_link.strip():
+                                tag = f"<a href='{up_link.strip()}' target='_blank'>{tag}</a>"
+                            block = f"<div style='{al_style} margin: 12px 0;'>{tag}</div>"
+                            st.session_state[f"exp_img_{touch_step}"] = False
+                            _append_to_body(k_body, saved, block, default_body)
+
+            with img_tabs[1]:
+                col_u1, col_u2 = st.columns([2.5, 1.5])
+                with col_u1:
+                    web_url = st.text_input("Image Web URL", placeholder="https://yourbrand.com/banner.png", key=f"web_url_{touch_step}")
+                with col_u2:
+                    web_alt = st.text_input("Alt text", value="Outreach image", key=f"web_alt_{touch_step}")
+                col_uw, col_ual, col_ulk = st.columns([1, 1, 2])
+                with col_uw:
+                    web_w = st.selectbox("Width", ["100% (Responsive)", "480px (Medium)", "320px (Compact)", "180px (Logo)"], index=0, key=f"web_w_{touch_step}")
+                with col_ual:
+                    web_al = st.selectbox("Alignment", ["Center", "Left", "Right"], index=0, key=f"web_al_{touch_step}")
+                with col_ulk:
+                    web_link = st.text_input("Clickable Link URL (optional)", placeholder="https://...", key=f"web_link_{touch_step}")
+
+                if st.button("➕ Insert Web Image Into Email", key=f"btn_ins_web_{touch_step}", type="primary", disabled=not bool(web_url.strip())):
+                    w_val = "100%" if "100%" in web_w else ("480px" if "480" in web_w else ("320px" if "320" in web_w else "180px"))
+                    al_style = "text-align: center;" if web_al == "Center" else ("text-align: left;" if web_al == "Left" else "text-align: right;")
+                    tag = f"<img src='{web_url.strip()}' alt='{web_alt}' style='max-width: 100%; width: {w_val}; height: auto; border-radius: 6px; display: inline-block; margin: 8px 0;' />"
+                    if web_link.strip():
+                        tag = f"<a href='{web_link.strip()}' target='_blank'>{tag}</a>"
+                    block = f"<div style='{al_style} margin: 12px 0;'>{tag}</div>"
+                    st.session_state[f"exp_img_{touch_step}"] = False
+                    _append_to_body(k_body, saved, block, default_body)
+
+    # ── Expandable Drawer 2: 🔗 Link Tool ──────────────────────────────────
+    if st.session_state.get(f"exp_link_{touch_step}", False):
+        with st.container(border=True):
+            st.markdown("##### 🔗 Insert Hyperlink")
+            col_lt, col_lu, col_lb = st.columns([2, 3, 1], vertical_alignment="bottom")
+            with col_lt:
+                lk_txt = st.text_input("Link Text", value="our platform", key=f"lk_txt_{touch_step}")
+            with col_lu:
+                lk_url = st.text_input("Destination URL", value="https://", key=f"lk_url_{touch_step}")
+            with col_lb:
+                if st.button("➕ Insert Link", key=f"btn_ins_lk_{touch_step}", type="primary"):
+                    lk_html = f"<a href='{lk_url.strip()}' style='color:#083731; font-weight:600; text-decoration:underline;'>{lk_txt.strip()}</a>"
+                    st.session_state[f"exp_link_{touch_step}"] = False
+                    _wrap_or_append_inline(k_body, saved, "", "", lk_html, default_body)
+
+    # ── Expandable Drawer 3: 🔘 CTA Button Tool ────────────────────────────
+    if st.session_state.get(f"exp_cta_{touch_step}", False):
+        with st.container(border=True):
+            st.markdown("##### 🔘 Insert Email Call-to-Action Button")
+            col_ct1, col_ct2, col_ct3, col_ct4 = st.columns([2, 2.5, 1.5, 1], vertical_alignment="bottom")
+            with col_ct1:
+                cta_label = st.text_input("Button Text", value="Schedule a Call →", key=f"cta_lbl_{touch_step}")
+            with col_ct2:
+                cta_dest = st.text_input("Destination URL", value="https://calendly.com", key=f"cta_dst_{touch_step}")
+            with col_ct3:
+                cta_color_pick = st.selectbox(
+                    "Color",
+                    ["Dark Green (#083731)", "Royal Blue (#2563EB)", "Emerald (#059669)", "Crimson (#DC2626)"],
+                    key=f"cta_clr_{touch_step}",
+                )
+            with col_ct4:
+                if st.button("➕ Insert CTA", key=f"btn_ins_cta_{touch_step}", type="primary"):
+                    hex_c = "#083731" if "083731" in cta_color_pick else ("#2563EB" if "2563EB" in cta_color_pick else ("#059669" if "059669" in cta_color_pick else "#DC2626"))
+                    btn_html = (
+                        f"<table cellpadding='0' cellspacing='0' border='0' style='margin: 16px 0;'>"
+                        f"<tr><td style='border-radius: 6px; background-color: {hex_c}; text-align: center;'>"
+                        f"<a href='{cta_dest.strip()}' style='display: inline-block; padding: 11px 22px; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; "
+                        f"font-size: 14px; font-weight: 700; color: #FFFFFF; text-decoration: none; border-radius: 6px;'>"
+                        f"{cta_label.strip()}</a></td></tr></table>"
+                    )
+                    st.session_state[f"exp_cta_{touch_step}"] = False
+                    _append_to_body(k_body, saved, btn_html, default_body)
+
+    # ── Variable Tokens (Campaign Only) OR Direct Single Send Notice ───────
+    if not is_single_recipient:
+        st.caption("Click to insert campaign personalization token into body:")
+        chip_cols = st.columns(4)
+        chips = [("[+ Name]", "[Name]"), ("[+ Company]", "[Company]"), ("[+ Email]", "[Email]"), ("[+ Spintax]", "{Hi|Hello|Hey}")]
+        for c_idx, (chip_lbl, chip_val) in enumerate(chips):
+            with chip_cols[c_idx]:
+                if st.button(chip_lbl, key=f"chip_btn_{touch_step}_{c_idx}", use_container_width=True):
+                    curr_val = st.session_state.get(k_body, saved.get(k_body, default_body))
+                    st.session_state[k_body] = f"{curr_val} {chip_val}".strip()
+                    saved[k_body] = st.session_state[k_body]
+                    st.rerun()
+    else:
+        st.markdown(
+            "<div style='background:rgba(8,55,49,0.04); border:1px solid rgba(8,55,49,0.14); "
+            "border-radius:6px; padding:6px 12px; margin:6px 0 10px; font-size:0.8rem; color:#083731;'>"
+            "🎯 <b>Single Recipient Direct Compose:</b> Writing to one person directly. "
+            "Template placeholder tokens like <code>[Name]</code> or <code>[Company]</code> are omitted.</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render_touch_block(
     touch_step: int,
     touch_label: str,
@@ -421,6 +684,7 @@ def _render_touch_block(
     include_delay: bool = False,
     default_delay_val: int = 3,
     default_delay_unit: str = "Days",
+    is_single_recipient: bool = False,
 ) -> dict:
     """
     Authoring card for one outreach touch.
@@ -441,6 +705,18 @@ def _render_touch_block(
     for k in [k_mode, k_tpl, k_subj, k_body, k_dval, k_dunit, k_save, k_name]:
         if k in saved and k not in st.session_state:
             st.session_state[k] = saved[k]
+
+    # If single recipient and the stored text still holds the multi-recipient default template,
+    # swap it to the single-recipient direct body so user doesn't see [Name] or [Company]!
+    if is_single_recipient:
+        legacy_default_body = DEFAULT_COPIES.get(touch_step, {}).get("body")
+        if saved.get(k_body) == legacy_default_body:
+            saved[k_body] = default_body
+            st.session_state[k_body] = default_body
+        legacy_default_subj = DEFAULT_COPIES.get(touch_step, {}).get("subj")
+        if saved.get(k_subj) == legacy_default_subj:
+            saved[k_subj] = default_subj
+            st.session_state[k_subj] = default_subj
 
     # Delay selector (for Touch 2 and 3)
     d_val, d_unit = default_delay_val, default_delay_unit
@@ -491,7 +767,7 @@ def _render_touch_block(
             saved[k_tpl] = sel_tpl_id
         with col_subj:
             subj_val = st.text_input("Subject line", value=saved.get(k_subj, default_subj), key=k_subj,
-                                     help="Supports [Name], [Company], {A|B} spintax.")
+                                     help="Direct subject line" if is_single_recipient else "Supports [Name], [Company], {A|B} spintax.")
             saved[k_subj] = subj_val
 
         chosen_tpl = get_template_by_id(sel_tpl_id)
@@ -513,30 +789,23 @@ def _render_touch_block(
 
     else:
         # Write your own
-        st.markdown(
-            "<div style='font-size:0.8rem; color:#475569; margin-bottom:4px;'>"
-            "<strong>Variables:</strong> <code>[Name]</code> <code>[Company]</code> <code>[Email]</code> "
-            "• <strong>Spintax:</strong> <code>{Hi|Hello|Hey}</code></div>",
-            unsafe_allow_html=True,
-        )
+        if not is_single_recipient:
+            st.markdown(
+                "<div style='font-size:0.8rem; color:#475569; margin-bottom:4px;'>"
+                "<strong>Variables:</strong> <code>[Name]</code> <code>[Company]</code> <code>[Email]</code> "
+                "• <strong>Spintax:</strong> <code>{Hi|Hello|Hey}</code></div>",
+                unsafe_allow_html=True,
+            )
         subj_val = st.text_input("Subject line", value=saved.get(k_subj, default_subj), key=k_subj,
-                                  help="Supports [Name], [Company], {A|B} spintax.")
+                                  help="Direct subject line" if is_single_recipient else "Supports [Name], [Company], {A|B} spintax.")
         saved[k_subj] = subj_val
 
-        # Clickable variable chips above body editor
-        st.caption("Click to insert token into body:")
-        chip_cols = st.columns(4)
-        chips = [("[+ Name]", "[Name]"), ("[+ Company]", "[Company]"), ("[+ Email]", "[Email]"), ("[+ Spintax]", "{Hi|Hello|Hey}")]
-        for c_idx, (chip_lbl, chip_val) in enumerate(chips):
-            with chip_cols[c_idx]:
-                if st.button(chip_lbl, key=f"chip_btn_{touch_step}_{c_idx}", use_container_width=True):
-                    curr_val = st.session_state.get(k_body, saved.get(k_body, default_body))
-                    st.session_state[k_body] = f"{curr_val} {chip_val}".strip()
-                    saved[k_body] = st.session_state[k_body]
-                    st.rerun()
+        # Complete email customization bar (Text styles, Headings, Lists, Images, Links, CTA buttons)
+        _render_customization_bar(touch_step, k_body, saved, default_body, is_single_recipient)
 
         body_val = st.text_area(f"Email body ({touch_label})", value=saved.get(k_body, default_body),
-                                 height=160, key=k_body)
+                                 height=180, key=k_body,
+                                 help="Supports plain text, markdown, and HTML tags with inline styles.")
         saved[k_body] = body_val
 
         col_sv, col_sn = st.columns([1.4, 2.6])
@@ -1033,12 +1302,24 @@ def render_compose_tab(contacts_list=None, templates_list=None):
     neg_keywords_setting = get_config("negative_keywords", "")
     template_options = {t["id"]: t["template_name"] for t in templates_list}
 
+    total_recipients = len(crm_ids) + len(manual_emails)
+    is_single_recipient = (total_recipients == 1)
+
     # Pick a sample contact for live preview
-    sample_contact = (
-        (contact_id_map.get(crm_ids[0]) or get_contact_by_id(crm_ids[0]))
-        if crm_ids
-        else {"name": "Alex", "company": "Acme Corp", "email": "prospect@acme.com", "custom_variables_dict": {}}
-    )
+    if crm_ids:
+        sample_contact = (contact_id_map.get(crm_ids[0]) or get_contact_by_id(crm_ids[0])) or {}
+    elif manual_emails:
+        c_exist = get_contact_by_email(manual_emails[0])
+        if c_exist:
+            sample_contact = c_exist
+        else:
+            sample_contact = {"name": "", "company": "", "email": manual_emails[0], "custom_variables_dict": {}}
+    else:
+        sample_contact = {"name": "Alex", "company": "Acme Corp", "email": "prospect@acme.com", "custom_variables_dict": {}}
+
+    t1_copy = _get_default_copy(1, sample_contact, is_single_recipient)
+    t2_copy = _get_default_copy(2, sample_contact, is_single_recipient)
+    t3_copy = _get_default_copy(3, sample_contact, is_single_recipient)
 
     touch_configs = []
 
@@ -1046,7 +1327,8 @@ def render_compose_tab(contacts_list=None, templates_list=None):
         with st.container(border=True):
             st.markdown("#### Step 3 — Compose")
             cfg1 = _render_touch_block(1, "Touch 1", template_options, sample_contact,
-                                       neg_keywords_setting, DEFAULT_COPIES[1]["subj"], DEFAULT_COPIES[1]["body"])
+                                       neg_keywords_setting, t1_copy["subj"], t1_copy["body"],
+                                       is_single_recipient=is_single_recipient)
             touch_configs.append(cfg1)
     else:
         with st.container(border=True):
@@ -1059,7 +1341,8 @@ def render_compose_tab(contacts_list=None, templates_list=None):
             # --- Touch 1: Initial Pitch ---
             st.markdown("##### ✉️ Touch 1 — Initial Pitch")
             cfg1 = _render_touch_block(1, "Touch 1", template_options, sample_contact,
-                                       neg_keywords_setting, DEFAULT_COPIES[1]["subj"], DEFAULT_COPIES[1]["body"])
+                                       neg_keywords_setting, t1_copy["subj"], t1_copy["body"],
+                                       is_single_recipient=is_single_recipient)
             touch_configs.append(cfg1)
 
             st.markdown("<hr style='margin: 22px 0 16px; border: none; border-top: 2px dashed rgba(8,55,49,0.18);'>", unsafe_allow_html=True)
@@ -1068,8 +1351,9 @@ def render_compose_tab(contacts_list=None, templates_list=None):
             st.markdown("##### ⏰ Touch 2 — First Follow-Up")
             st.caption("⚡ Automatically scheduled to dispatch after Touch 1 if the prospect has not replied.")
             cfg2 = _render_touch_block(2, "Touch 2", template_options, sample_contact,
-                                       neg_keywords_setting, DEFAULT_COPIES[2]["subj"], DEFAULT_COPIES[2]["body"],
-                                       include_delay=True, default_delay_val=3)
+                                       neg_keywords_setting, t2_copy["subj"], t2_copy["body"],
+                                       include_delay=True, default_delay_val=3,
+                                       is_single_recipient=is_single_recipient)
             touch_configs.append(cfg2)
 
             if num_touches == 3:
@@ -1078,8 +1362,9 @@ def render_compose_tab(contacts_list=None, templates_list=None):
                 st.markdown("##### ⏰ Touch 3 — Final Note")
                 st.caption("⚡ Automatically scheduled to dispatch after Touch 2 if the prospect still has not replied.")
                 cfg3 = _render_touch_block(3, "Touch 3", template_options, sample_contact,
-                                           neg_keywords_setting, DEFAULT_COPIES[3]["subj"], DEFAULT_COPIES[3]["body"],
-                                           include_delay=True, default_delay_val=4)
+                                           neg_keywords_setting, t3_copy["subj"], t3_copy["body"],
+                                           include_delay=True, default_delay_val=4,
+                                           is_single_recipient=is_single_recipient)
                 touch_configs.append(cfg3)
 
     # ── Step 4: Schedule ───────────────────────────────────────────────────

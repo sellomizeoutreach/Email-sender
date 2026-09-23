@@ -927,6 +927,65 @@ class TestComposeAndSendFlow(unittest.TestCase):
         self.assertNotIn(c2, vip_leads)
 
 
+    # ------------------------------------------------------------------
+    # TEST H: Single recipient direct copy & email customization bar
+    # ------------------------------------------------------------------
+    def test_18_single_recipient_copy_and_image_customization(self):
+        """
+        Verify:
+        1. Single recipient copy has NO [Name] or [Company] tokens.
+        2. Named single contact has natural greeting (e.g. 'Hi Sarah,').
+        3. Multi-recipient campaigns retain parameterized tokens ([Name], [Company]).
+        4. Rich email HTML with images and CTA buttons formats and sanitizes properly.
+        """
+        from ui.tabs.compose import _get_default_copy
+        from template_engine import format_email_html, sanitize_email_html, audit_email_deliverability
+
+        # 1. Single recipient (manual, no CRM name)
+        manual_contact = {"name": "", "company": "", "email": "prospect@example.com"}
+        single_copy = _get_default_copy(1, manual_contact, is_single_recipient=True)
+        self.assertNotIn("[Name]", single_copy["body"])
+        self.assertNotIn("[Company]", single_copy["body"])
+        self.assertNotIn("[Company]", single_copy["subj"])
+        self.assertTrue(single_copy["body"].startswith("Hi,\n\n"))
+
+        # 2. Single recipient (CRM contact with name & company)
+        crm_contact = {"name": "Sarah", "company": "Acme Innovations", "email": "sarah@acme.com"}
+        crm_single_copy = _get_default_copy(1, crm_contact, is_single_recipient=True)
+        self.assertNotIn("[Name]", crm_single_copy["body"])
+        self.assertNotIn("[Company]", crm_single_copy["body"])
+        self.assertIn("Hi Sarah,", crm_single_copy["body"])
+        self.assertIn("Acme Innovations", crm_single_copy["subj"])
+
+        # 3. Campaign (multi-recipient)
+        camp_copy = _get_default_copy(1, crm_contact, is_single_recipient=False)
+        self.assertIn("[Name]", camp_copy["body"])
+        self.assertIn("[Company]", camp_copy["body"])
+
+        # 4. Rich email formatting with Image & CTA Button
+        rich_html = (
+            "<p>Hi Sarah,</p>"
+            "<div style='text-align: center; margin: 12px 0;'>"
+            "<img src='https://agency.com/logo.png' alt='Logo' style='max-width:100%; width:320px;' />"
+            "</div>"
+            "<p>Here is our offer.</p>"
+            "<table cellpadding='0' cellspacing='0' style='margin: 16px 0;'>"
+            "<tr><td style='background:#083731; border-radius:6px;'>"
+            "<a href='https://calendly.com' style='color:#fff; padding:10px 20px; display:inline-block;'>Book Call →</a>"
+            "</td></tr></table>"
+        )
+        formatted = format_email_html(rich_html)
+        sanitized = sanitize_email_html(formatted)
+        self.assertIn("<img", sanitized)
+        self.assertIn("agency.com/logo.png", sanitized)
+        self.assertIn("<table", sanitized)
+        self.assertIn("Book Call", sanitized)
+
+        audit = audit_email_deliverability(sanitized, "Quick question for Acme")
+        self.assertGreaterEqual(audit["score"], 80)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
