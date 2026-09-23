@@ -886,6 +886,46 @@ class TestComposeAndSendFlow(unittest.TestCase):
         # Ensure score is reduced
         self.assertLess(result["score"], 100, "Score should be less than 100 when spam words found")
 
+    # ------------------------------------------------------------------
+    # TEST F: Pre-flight MX check intercepts dead domains on manual entry
+    # ------------------------------------------------------------------
+    def test_16_manual_email_mx_dead_domain_interception(self):
+        """
+        verify_email_domain_mx must intercept invalid or dead domains like
+        'deadnonexistentdomain9988776655.org' and return (False, reason).
+        """
+        from mx_checker import verify_email_domain_mx
+
+        dead_email = "test@deadnonexistentdomain9988776655.org"
+        is_valid, reason, *_ = verify_email_domain_mx(dead_email)
+        self.assertFalse(is_valid, "Dead domain must fail MX verification")
+        self.assertTrue(len(reason) > 0, "Failure reason should be provided")
+
+    # ------------------------------------------------------------------
+    # TEST G: Audience filter helpers and tag matching logic
+    # ------------------------------------------------------------------
+    def test_17_audience_helpers_and_tag_filtering(self):
+        """
+        Verify that audience filtering correctly segregates Not Contacted leads
+        and matches by specific tags.
+        """
+        from database import create_contact, get_contacts
+
+        c1 = create_contact(name="Tag Lead 1", email="tag1@test.com", tags="Wholesale, VIP", status="Not Contacted", db_path=self.SMOKE_DB)
+        c2 = create_contact(name="Tag Lead 2", email="tag2@test.com", tags="Retail", status="Contacted", db_path=self.SMOKE_DB)
+
+        all_candidates = get_contacts(db_path=self.SMOKE_DB)
+        not_contacted = [c["id"] for c in all_candidates if (c.get("status") or "Not Contacted") == "Not Contacted"]
+        self.assertIn(c1, not_contacted)
+        self.assertNotIn(c2, not_contacted)
+
+        vip_leads = [
+            c["id"] for c in all_candidates
+            if "VIP" in (c.get("tags_list") or []) or "vip" in (c.get("tags") or "").lower()
+        ]
+        self.assertIn(c1, vip_leads)
+        self.assertNotIn(c2, vip_leads)
+
 
 if __name__ == "__main__":
     unittest.main()

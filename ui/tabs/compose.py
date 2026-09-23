@@ -31,9 +31,11 @@ from database import (
     create_template,
     get_smtp_accounts,
     get_system_excluded_emails,
+    get_all_distinct_tags,
     create_notification,
     DB_FILE,
 )
+from mx_checker import verify_email_domain_mx
 from scheduler import (
     calculate_staggered_schedule,
     analyze_schedule_overflow,
@@ -201,6 +203,12 @@ def _add_manual_email():
         st.session_state["cs_recipient_error"] = f"'{raw}' is a protected internal address and cannot be a recipient."
         return
 
+    # Pre-Flight MX Verification: detect dead or non-existent domains before queuing
+    is_valid_mx, mx_note, *_ = verify_email_domain_mx(raw)
+    if not is_valid_mx:
+        st.session_state["cs_recipient_error"] = f"Dead Domain (MX Check Failed): '{raw}' cannot receive emails. ({mx_note})"
+        return
+
     crm_ids = list(st.session_state.get("cs_crm_selected_ids", []))
     manual = list(st.session_state.get("cs_manual_emails", []))
 
@@ -247,6 +255,42 @@ def _render_recipient_step(active_candidates: list, contact_id_map: dict, system
             valid = [i for i in st.session_state["cs_crm_selected_ids"] if i in contact_id_map]
             if len(valid) != len(st.session_state["cs_crm_selected_ids"]):
                 st.session_state["cs_crm_selected_ids"] = valid
+
+        # Quick Audience Tool Strip
+        not_contacted_ids = [c["id"] for c in active_candidates if (c.get("status") or "Not Contacted") == "Not Contacted"]
+        col_q1, col_q2, col_q3, col_q4 = st.columns([1.5, 1.4, 1.4, 1.0], vertical_alignment="center")
+        with col_q1:
+            if st.button(f"➕ Not Contacted ({len(not_contacted_ids)})", use_container_width=True, key="btn_add_not_contacted", help="Add all active leads who have not been contacted yet"):
+                merged = list(set(st.session_state.get("cs_crm_selected_ids", []) + not_contacted_ids))
+                st.session_state["cs_crm_selected_ids"] = merged
+                st.rerun()
+        with col_q2:
+            if st.button(f"➕ Select All ({len(active_candidates)})", use_container_width=True, key="btn_add_all_active", help="Add every active deliverable contact in your CRM"):
+                st.session_state["cs_crm_selected_ids"] = list(contact_id_keys)
+                st.rerun()
+        with col_q3:
+            show_tag_filter = st.checkbox("🏷️ Add by Tag", key="cs_show_tag_selector")
+        with col_q4:
+            if st.button("✕ Clear", use_container_width=True, key="btn_clear_recipients", help="Clear all selected contacts and typed emails"):
+                st.session_state["cs_crm_selected_ids"] = []
+                st.session_state["cs_manual_emails"] = []
+                st.rerun()
+
+        if show_tag_filter:
+            all_tags = get_all_distinct_tags(include_predefined=True)
+            col_tag_sel, col_tag_act = st.columns([3, 1], vertical_alignment="bottom")
+            with col_tag_sel:
+                chosen_tag = st.selectbox("Select Tag to Add", options=all_tags, key="cs_bulk_tag_choice")
+            with col_tag_act:
+                if st.button("Add Matching", use_container_width=True, key="btn_add_tag_matching"):
+                    matching_ids = [
+                        c["id"] for c in active_candidates
+                        if chosen_tag in (c.get("tags_list") or []) or chosen_tag.lower() in (c.get("tags") or "").lower()
+                    ]
+                    merged = list(set(st.session_state.get("cs_crm_selected_ids", []) + matching_ids))
+                    st.session_state["cs_crm_selected_ids"] = merged
+                    trigger_toast(f"Added {len(matching_ids)} contact(s) tagged '{chosen_tag}'!", icon="🏷️")
+                    st.rerun()
 
         show_name = st.session_state.get("cs_show_name_email", False)
 
@@ -464,6 +508,18 @@ def _render_touch_block(
         subj_val = st.text_input("Subject line", value=saved.get(k_subj, default_subj), key=k_subj,
                                   help="Supports [Name], [Company], {A|B} spintax.")
         saved[k_subj] = subj_val
+
+        # Clickable variable chips above body editor
+        st.caption("Click to insert token into body:")
+        chip_cols = st.columns(4)
+        chips = [("[+ Name]", "[Name]"), ("[+ Company]", "[Company]"), ("[+ Email]", "[Email]"), ("[+ Spintax]", "{Hi|Hello|Hey}")]
+        for c_idx, (chip_lbl, chip_val) in enumerate(chips):
+            with chip_cols[c_idx]:
+                if st.button(chip_lbl, key=f"chip_btn_{touch_step}_{c_idx}", use_container_width=True):
+                    curr_val = st.session_state.get(k_body, saved.get(k_body, default_body))
+                    st.session_state[k_body] = f"{curr_val} {chip_val}".strip()
+                    saved[k_body] = st.session_state[k_body]
+                    st.rerun()
 
         body_val = st.text_area(f"Email body ({touch_label})", value=saved.get(k_body, default_body),
                                  height=160, key=k_body)
@@ -1123,3 +1179,17 @@ def render_compose_tab(contacts_list=None, templates_list=None):
             for fd in flagged_details[:8]:
                 trig_badges = ", ".join(f"`{t}`" for t in fd["triggers"])
                 st.markdown(f"- **{fd['recipient']}** ({fd['touch']}): {trig_badges}")
+
+        total_created = created_pending + created_flagged
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+        col_jump1, col_jump2, col_jump3 = st.columns([1, 2, 1])
+        with col_jump2:
+            if st.button(
+                f"👉 Review & Approve Drafts Now ({total_created}) →",
+                type="primary",
+                use_container_width=True,
+                key="btn_post_gen_review_jump"
+            ):
+                st.session_state["main_app_tabs"] = "📥 Review & Outbox"
+                st.session_state["scroll_to_review"] = True
+                st.rerun()

@@ -223,6 +223,33 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
             </div>
             """, unsafe_allow_html=True)
 
+        # Actionable Re-engagement Section for Contacted Unreplied Leads
+        unreplied_contacted_leads = [
+            c for c in all_contacts
+            if c.get("status") in ["Contacted", "Follow-Up Sent"]
+            and not c.get("is_bounced")
+            and not c.get("is_unsubscribed")
+            and c.get("status") != "Replied"
+            and not any(r.get("email", "").lower() == (c.get("email") or "").strip().lower() for r in replied_leads)
+        ]
+
+        if unreplied_contacted_leads:
+            st.markdown(f"""
+            <div style="background:#F0FDF4; border:1.5px solid #BBF7D0; border-radius:10px; padding:16px; margin: 12px 0 16px;">
+                <div style="font-weight:800; font-size:1.05rem; color:#166534;">🎯 Actionable Pipeline: {len(unreplied_contacted_leads)} Contacted Lead(s) Awaiting Response</div>
+                <div style="font-size:0.83rem; color:#475569; margin-top:2px;">
+                    These prospects received outreach but haven't replied yet. Launch a dedicated follow-up or re-activation campaign to win them back.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            col_re1, col_re2 = st.columns([1.8, 1.2])
+            with col_re1:
+                if st.button(f"✉️ Re-engage {len(unreplied_contacted_leads)} Unreplied Leads in Compose & Send", type="primary", use_container_width=True, key="btn_reengage_analytics_unreplied"):
+                    st.session_state["cs_crm_selected_ids"] = [c["id"] for c in unreplied_contacted_leads]
+                    st.session_state["main_app_tabs"] = "✉️ Compose & Send"
+                    trigger_toast(f"Loaded {len(unreplied_contacted_leads)} unreplied leads into Compose & Send!", icon="🎯")
+                    st.rerun()
+
         st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
 
         # Sent Outreach Ledger
@@ -322,6 +349,14 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
                         last_sent = lead_sent_emails[-1]
                         st.caption(f"**Subject:** {last_sent.get('subject')} | **Sent At:** {last_sent.get('sent_at', '')}")
                         render_html_preview(last_sent.get("email_html", ""), height=160)
+
+                    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+                    if st.button(f"✉️ Compose Direct Follow-Up to {selected_lead['name']}", type="primary", key=f"btn_reply_lead_{selected_lead['id']}"):
+                        st.session_state["cs_crm_selected_ids"] = [selected_lead["id"]]
+                        st.session_state["cs_num_touches"] = 1
+                        st.session_state["main_app_tabs"] = "✉️ Compose & Send"
+                        trigger_toast(f"Opening Compose & Send for {selected_lead['name']}!", icon="✉️")
+                        st.rerun()
 
     # ==============================================================================
     # SUB-TAB 3: 🚫 DELIVERABILITY & BOUNCES
