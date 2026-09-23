@@ -325,6 +325,26 @@ def render_settings_tab():
                 trigger_toast("Reset shield rules to recommended defaults.", icon="🔄")
                 st.rerun()
 
+        st.markdown("---")
+        st.markdown("#### Variable Fallback Default")
+        st.caption(
+            "When a contact has no value for a template variable like `[Name]` or `[Company]`, "
+            "the system substitutes this fallback word. Leave blank to remove the placeholder entirely. "
+            "A literal `[Name]` token is **never** sent in a live email."
+        )
+        current_fallback = current_configs.get("variable_fallback", "there")
+        new_fallback = st.text_input(
+            "Fallback value for missing variables",
+            value=current_fallback if current_fallback is not None else "there",
+            max_chars=40,
+            key="set_variable_fallback",
+            help="E.g. 'there' → 'Hi there,' when [Name] is missing. Leave blank to strip the token."
+        )
+        if st.button("💾 Save Fallback Setting", key="btn_save_fallback"):
+            set_config("variable_fallback", new_fallback.strip())
+            trigger_toast("Variable fallback setting saved.", icon="✅")
+            st.rerun()
+
     # ==========================================================================
     # SUB-TAB 4: ⚙️ ADVANCED TELEMETRY & INFRASTRUCTURE
     # ==========================================================================

@@ -615,11 +615,276 @@ class TestBehavioralSmokeSuite(unittest.TestCase):
         self.assertNotIn("\n", clean_sender)
         self.assertEqual(clean_sender, "Alex Morgan Reply-To: phishing@spoof.com")
 
+
         # 4. Null byte injection
         raw_bcc = "archive@sellomize.com\x00hidden@domain.com"
         clean_bcc = sanitize_header(raw_bcc)
         self.assertNotIn("\x00", clean_bcc)
         self.assertEqual(clean_bcc, "archive@sellomize.com hidden@domain.com")
+
+
+# ==============================================================================
+# COMPOSE & SEND UNIFIED FLOW TESTS
+# ==============================================================================
+
+class TestComposeAndSendFlow(unittest.TestCase):
+    """
+    Tests for the unified Compose & Send flow:
+    A: once-send to manual email → 1 draft, no literal [Token]
+    B: 3-touch to CRM contact → 3 sequence rules created
+    C: reply cancels touches 2+3 for that contact only
+    D: manual email dedup against CRM → 1 draft only
+    E: spam word blocks and highlight_spam_triggers annotates HTML
+    """
+
+    SMOKE_DB = "test_compose_flow.db"
+
+    @classmethod
+    def setUpClass(cls):
+        if os.path.exists(cls.SMOKE_DB):
+            os.remove(cls.SMOKE_DB)
+        init_db(cls.SMOKE_DB)
+        # Pre-create a CRM contact for dedup + sequence tests
+        cls.crm_contact_id = create_contact(
+            name="Alice CRM",
+            email="alice@example.com",
+            company="Acme Corp",
+            db_path=cls.SMOKE_DB,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        if os.path.exists(cls.SMOKE_DB):
+            os.remove(cls.SMOKE_DB)
+
+    # ------------------------------------------------------------------
+    # TEST A: once-send to a manual email — variable fallback applied
+    # ------------------------------------------------------------------
+    def test_11_once_send_manual_email_variable_fallback(self):
+        """
+        A manually-typed email with no CRM record must never produce a literal
+        [Name] or [Company] token in the stored draft.
+        The variable_fallback ('there') must be substituted.
+        """
+        from template_engine import inject_variables, parse_spintax, format_email_html
+        from ui.tabs.compose import _apply_variable_fallback, _missing_tokens
+
+        manual_email = "manual_only@newlead.io"
+        stub = {"name": "", "email": manual_email, "company": "", "custom_variables_dict": {}}
+
+        raw_subject = "Quick question for [Company]"
+        raw_body = "Hi [Name], wanted to reach out about [Company]."
+
+        resolved_subj = parse_spintax(inject_variables(raw_subject, stub))
+        resolved_body = parse_spintax(inject_variables(raw_body, stub))
+
+        # Tokens still present — fallback must fire
+        missing_s = _missing_tokens(resolved_subj)
+        missing_b = _missing_tokens(resolved_body)
+        self.assertTrue(len(missing_s) > 0 or len(missing_b) > 0,
+                        "Expected unfilled [Token] placeholders before fallback")
+
+        fallback = "there"
+        final_subj = _apply_variable_fallback(resolved_subj, fallback)
+        final_body = _apply_variable_fallback(resolved_body, fallback)
+
+        self.assertNotIn("[Name]", final_subj)
+        self.assertNotIn("[Company]", final_subj)
+        self.assertNotIn("[Name]", final_body)
+        self.assertNotIn("[Company]", final_body)
+        # Check fallback word is actually in the output
+        self.assertIn("there", final_body)
+
+        # Create the email draft and verify DB record is clean
+        from database import create_email, get_email_by_id
+        final_html = format_email_html(final_body)
+        email_id = create_email(
+            email_html=final_html,
+            subject=final_subj,
+            recipient=manual_email,
+            status="Pending",
+            revision_notes="Test A: manual once-send",
+            db_path=self.SMOKE_DB,
+        )
+        stored = get_email_by_id(email_id, db_path=self.SMOKE_DB)
+        self.assertIsNotNone(stored)
+        self.assertNotIn("[Name]", stored["email_html"])
+        self.assertNotIn("[Company]", stored["email_html"])
+        self.assertNotIn("[Name]", stored["subject"])
+
+    # ------------------------------------------------------------------
+    # TEST B: 3-touch sequence to a CRM contact — 3 rules registered
+    # ------------------------------------------------------------------
+    def test_12_three_touch_sequence_rules_created(self):
+        """
+        A 3-touch sequence to a CRM contact must register exactly
+        2 sequence rules (Touch 2 and Touch 3). Touch 1 is a direct email.
+        """
+        from database import (
+            create_email, create_sequence_rule, get_sequence_rules,
+            upsert_contact_by_email, get_contact_by_id
+        )
+        import uuid
+
+        contact_id, _ = upsert_contact_by_email(
+            name="Bob Sequence", email="bob@sequencetest.com", company="Seq Corp",
+            db_path=self.SMOKE_DB,
+        )
+        batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
+
+        t1_id = create_email(
+            email_html="<p>Touch 1</p>", subject="Touch 1 Subject",
+            recipient="bob@sequencetest.com", status="Pending",
+            revision_notes="Sequence Touch 1/3", sequence_step=1, sequence_id=batch_seq_id,
+            db_path=self.SMOKE_DB,
+        )
+
+        create_sequence_rule(
+            sequence_id=batch_seq_id, contact_id=contact_id, contact_email="bob@sequencetest.com",
+            step_number=2, delay_unit="days", delay_value=3,
+            template_id=None, custom_subject="Follow-up", custom_body="Following up...",
+            trigger_email_id=t1_id, db_path=self.SMOKE_DB,
+        )
+        create_sequence_rule(
+            sequence_id=batch_seq_id, contact_id=contact_id, contact_email="bob@sequencetest.com",
+            step_number=3, delay_unit="days", delay_value=4,
+            template_id=None, custom_subject="Final note", custom_body="Last reach-out.",
+            trigger_email_id=None, db_path=self.SMOKE_DB,
+        )
+
+        all_rules = get_sequence_rules(db_path=self.SMOKE_DB)
+        bob_rules = [r for r in all_rules if r.get("contact_email") == "bob@sequencetest.com"
+                     and r.get("sequence_id") == batch_seq_id]
+
+        self.assertEqual(len(bob_rules), 2, f"Expected 2 sequence rules, got {len(bob_rules)}")
+        steps = sorted(r["step_number"] for r in bob_rules)
+        self.assertEqual(steps, [2, 3])
+
+        # Verify staggered delay values are stored
+        rule2 = next(r for r in bob_rules if r["step_number"] == 2)
+        rule3 = next(r for r in bob_rules if r["step_number"] == 3)
+        self.assertEqual(rule2["delay_value"], 3)
+        self.assertEqual(rule3["delay_value"], 4)
+
+    # ------------------------------------------------------------------
+    # TEST C: reply cancels touches 2+3 for that contact ONLY
+    # ------------------------------------------------------------------
+    def test_13_reply_cancels_sequence_for_one_contact_only(self):
+        """
+        cancel_sequence_rules_for_contact() must cancel pending rules for the
+        replied contact and leave other contacts' rules intact.
+        """
+        from database import (
+            create_email, create_sequence_rule, cancel_sequence_rules_for_contact,
+            get_sequence_rules, upsert_contact_by_email
+        )
+        import uuid
+
+        # Set up two contacts in the same campaign
+        c_replied_id, _ = upsert_contact_by_email(
+            name="Carol Replied", email="carol@replied.com", company="Carol Co",
+            db_path=self.SMOKE_DB,
+        )
+        c_other_id, _ = upsert_contact_by_email(
+            name="Dave Other", email="dave@other.com", company="Dave LLC",
+            db_path=self.SMOKE_DB,
+        )
+
+        batch_seq_id = f"seq_{uuid.uuid4().hex[:8]}"
+
+        for email_addr, cid in [("carol@replied.com", c_replied_id), ("dave@other.com", c_other_id)]:
+            t1_id = create_email(
+                email_html="<p>Hi</p>", subject="Outreach", recipient=email_addr,
+                status="Pending", sequence_step=1, sequence_id=batch_seq_id,
+                db_path=self.SMOKE_DB,
+            )
+            create_sequence_rule(
+                sequence_id=batch_seq_id, contact_id=cid, contact_email=email_addr,
+                step_number=2, delay_unit="days", delay_value=3,
+                template_id=None, custom_subject="FU", custom_body="FU body",
+                trigger_email_id=t1_id, db_path=self.SMOKE_DB,
+            )
+
+        # Carol replies → cancel her rules only
+        cancelled = cancel_sequence_rules_for_contact("carol@replied.com", db_path=self.SMOKE_DB)
+        self.assertGreaterEqual(cancelled, 1, "Expected at least 1 rule cancelled for carol")
+
+        all_rules = get_sequence_rules(db_path=self.SMOKE_DB)
+        carol_active = [
+            r for r in all_rules
+            if r.get("contact_email") == "carol@replied.com"
+            and r.get("status") not in ("Cancelled", "Done", "Skipped")
+            and r.get("sequence_id") == batch_seq_id
+        ]
+        dave_active = [
+            r for r in all_rules
+            if r.get("contact_email") == "dave@other.com"
+            and r.get("status") not in ("Cancelled", "Done", "Skipped")
+            and r.get("sequence_id") == batch_seq_id
+        ]
+        self.assertEqual(len(carol_active), 0, "Carol's rules should be cancelled")
+        self.assertEqual(len(dave_active), 1, "Dave's rule should still be active")
+
+    # ------------------------------------------------------------------
+    # TEST D: manual email dedup against CRM → only 1 draft created
+    # ------------------------------------------------------------------
+    def test_14_manual_email_dedup_against_crm(self):
+        """
+        If a manually-typed email matches an existing CRM contact, the unified
+        recipient builder must produce exactly one entry (CRM record used).
+        """
+        from database import get_emails, get_contact_by_email
+        from ui.tabs.compose import _resolve_all_recipients
+
+        # alice@example.com is already in CRM (setUpClass)
+        crm_contact = get_contact_by_email("alice@example.com", db_path=self.SMOKE_DB)
+        self.assertIsNotNone(crm_contact)
+
+        contact_id_map = {crm_contact["id"]: crm_contact}
+
+        # Provide alice's email in BOTH crm_ids AND manual_emails
+        crm_ids = [crm_contact["id"]]
+        manual_emails = ["alice@example.com"]  # duplicate
+
+        recipients = _resolve_all_recipients(
+            crm_ids=crm_ids,
+            manual_emails=manual_emails,
+            contact_id_map=contact_id_map,
+            num_touches=1,
+            save_manual=False,
+        )
+
+        # Must be exactly 1 recipient — deduped
+        self.assertEqual(len(recipients), 1, "Duplicate email must be deduped to exactly 1 recipient")
+        self.assertEqual(
+            recipients[0]["contact"]["email"].lower(), "alice@example.com"
+        )
+
+    # ------------------------------------------------------------------
+    # TEST E: spam word detected, highlight_spam_triggers annotates HTML
+    # ------------------------------------------------------------------
+    def test_15_spam_trigger_detected_and_highlighted(self):
+        """
+        audit_email_deliverability must detect 'guarantee' and return it in
+        detected_spam_words. highlight_spam_triggers must wrap the word in <mark>.
+        """
+        from template_engine import audit_email_deliverability, highlight_spam_triggers
+
+        body_html = "<p>We guarantee results. 100% free trial available.</p>"
+        subject = "Your guaranteed success"
+
+        result = audit_email_deliverability(body_html, subject)
+
+        spam_words = [d["word"] for d in result.get("detected_spam_words", [])]
+        self.assertIn("guarantee", spam_words, f"Expected 'guarantee' in spam words, got: {spam_words}")
+
+        # Test highlight function
+        highlighted = highlight_spam_triggers(body_html, ["guarantee"])
+        self.assertIn("<mark", highlighted, "Expected <mark> tag in highlighted output")
+        self.assertIn("guarantee", highlighted.lower())
+
+        # Ensure score is reduced
+        self.assertLess(result["score"], 100, "Score should be less than 100 when spam words found")
 
 
 if __name__ == "__main__":

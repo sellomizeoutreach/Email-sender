@@ -30,8 +30,8 @@ from ui.theme import apply_theme
 from ui.components import render_header, render_notification_bell, trigger_toast
 from ui.tabs.crm import render_crm_tab
 from ui.tabs.studio import render_studio_tab
-from ui.tabs.campaigns import render_campaigns_tab
-from ui.tabs.review import render_review_tab
+from ui.tabs.compose import render_compose_tab
+from ui.tabs.review import render_review_outbox_tab
 from ui.tabs.analytics import render_analytics_tab
 from ui.tabs.settings import render_settings_tab
 
@@ -102,32 +102,31 @@ contacts_list = all_contacts
 all_templates = get_templates()
 
 # ==============================================================================
-# 5-SECTION PRIMARY APP NAVIGATION
+# PRIMARY APP NAVIGATION (5 tabs — Templates kept temporarily)
 # ==============================================================================
 TAB_NAMES = [
-    "👥 Leads & CRM",
-    "✍️ Templates",
-    "🚀 Dispatch & Review",
+    "👥 Contacts",
+    "✉️ Compose & Send",
+    "📥 Review & Outbox",
     "📊 Analytics",
-    "⚙️ Settings"
+    "⚙️ Settings",
+    "✍️ Templates",
 ]
 
-tab_leads, tab_templates, tab_dispatch_review, tab_analytics, tab_settings = st.tabs(
+tab_contacts, tab_compose, tab_review, tab_analytics, tab_settings, tab_templates = st.tabs(
     TAB_NAMES,
     key="main_app_tabs",
     on_change="rerun"
 )
 
-with tab_leads:
+with tab_contacts:
     render_crm_tab(all_contacts)
 
-with tab_templates:
-    render_studio_tab(all_templates, contacts_list)
+with tab_compose:
+    render_compose_tab(contacts_list, all_templates)
 
-with tab_dispatch_review:
-    render_campaigns_tab(contacts_list, all_templates)
-    st.markdown("---")
-    render_review_tab()
+with tab_review:
+    render_review_outbox_tab()
 
 with tab_analytics:
     render_analytics_tab(all_contacts, all_emails)
@@ -135,4 +134,5 @@ with tab_analytics:
 with tab_settings:
     render_settings_tab()
 
-
+with tab_templates:
+    render_studio_tab(all_templates, contacts_list)

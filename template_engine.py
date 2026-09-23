@@ -355,6 +355,30 @@ def audit_email_deliverability(
 
 # ------------------------------------------------------------------------------
 
+def highlight_spam_triggers(body_html: str, triggers: List[str]) -> str:
+    """
+    Wrap each detected spam trigger word/phrase in a highlighted <mark> span
+    inside the HTML body so the user sees exactly which words triggered the flag.
+    Operates on the plain-text sections of the HTML, not inside tag attributes.
+    Returns the annotated HTML string unchanged if triggers is empty.
+    """
+    if not body_html or not triggers:
+        return body_html
+
+    result = body_html
+    for trigger in sorted(triggers, key=len, reverse=True):  # longest first to avoid partial overlaps
+        escaped = re.escape(trigger)
+        # Match whole-word occurrences (not inside HTML tags)
+        pattern = re.compile(
+            rf'(?i)(?<![<\w])({escaped})(?![\w>])',
+        )
+        replacement = (
+            r'<mark style="background:#FEF08A; color:#92400E; '
+            r'font-weight:700; padding:0 2px; border-radius:2px;">\1</mark>'
+        )
+        result = pattern.sub(replacement, result)
+    return result
+
 
 def format_email_html(raw_body: str) -> str:
     """

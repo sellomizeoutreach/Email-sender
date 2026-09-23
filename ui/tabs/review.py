@@ -34,29 +34,30 @@ from timezone_helper import get_zoneinfo
 from ui.components import render_html_preview, trigger_toast
 
 
-def render_review_tab():
-    """Render Step 3: The Triage Desk with 1-click clean approvals, isolated noise sub-tabs, and visual WYSIWYG editor."""
-    # Anchor & Smooth Auto-Scroll Handler
-    st.markdown('<div id="triage-desk-anchor"></div>', unsafe_allow_html=True)
-    if st.session_state.get("scroll_to_triage"):
-        st.markdown("""
-        <script>
-            setTimeout(() => {
-                const el = document.getElementById('triage-desk-anchor');
-                if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-            }, 120);
-        </script>
-        """, unsafe_allow_html=True)
-        st.session_state["scroll_to_triage"] = False
+def render_review_outbox_tab():
+    """Render the Review & Outbox tab: pending drafts, flagged items, approved queue, and sent history."""
+    # Anchor & scroll handler (triggered by compose.py after generation)
+    st.markdown('<div id="review-outbox-anchor"></div>', unsafe_allow_html=True)
+    for scroll_key in ("scroll_to_triage", "scroll_to_review"):
+        if st.session_state.get(scroll_key):
+            st.markdown("""
+            <script>
+                setTimeout(() => {
+                    const el = document.getElementById('review-outbox-anchor');
+                    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+                }, 120);
+            </script>
+            """, unsafe_allow_html=True)
+            st.session_state[scroll_key] = False
 
     with st.container(border=True):
-        st.markdown("### 🛡️ Step 3: The Triage Desk (Review Queue & Approvals)")
-        st.caption("Inspect pending drafts, audit deliverability, and approve emails before scheduled dispatch.")
+        st.markdown("### 📥 Review Queue & Outbox")
+        st.caption("Inspect pending drafts, approve emails, and review sent history.")
 
         all_emails = get_emails()
 
         # ==============================================================================
-        # 🌟 ZERO-DATA EMPTY STATE (INBOX ZERO)
+        # ZERO-DATA EMPTY STATE (INBOX ZERO)
         # ==============================================================================
         if not all_emails:
             st.markdown("""
@@ -64,17 +65,18 @@ def render_review_tab():
                 <div style="font-size:2.8rem; margin-bottom:10px;">✅</div>
                 <div style="font-size:1.35rem; font-weight:800; color:#166534;">Inbox Zero! Generate a new campaign to see drafts here.</div>
                 <div style="font-size:0.92rem; color:#475569; max-width:560px; margin:8px auto 20px; line-height:1.5;">
-                    There are no email drafts currently queued for review or awaiting dispatch. Target your leads and schedule an outreach sequence in the Generation Wizard above.
+                    No email drafts queued for review or dispatch. Go to Compose &amp; Send to target your leads and launch outreach.
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
             col_c1, col_c2, col_c3 = st.columns([1.5, 2, 1.5])
             with col_c2:
-                if st.button("🚀 Launch Campaign Wizard", type="primary", use_container_width=True, key="btn_review_empty_launch_wiz"):
-                    st.session_state["scroll_to_wizard"] = True
+                if st.button("✉️ Go to Compose & Send", type="primary", use_container_width=True, key="btn_review_empty_goto_compose"):
+                    st.session_state["main_app_tabs"] = "✉️ Compose & Send"
                     st.rerun()
             return
+
 
         neg_kw_setting = get_config("negative_keywords", "")
         system_excluded_emails = get_system_excluded_emails()
