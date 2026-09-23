@@ -2514,6 +2514,195 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("[ProductCategory]", missing)
         self.assertIn("[AmazonObservation]", missing)
 
+    def test_72_targeted_pipeline_leads_bucketing(self):
+        """Test that get_targeted_pipeline_leads accurately buckets contacts across 5 stages."""
+        from database import get_targeted_pipeline_leads
+        # 1. Drafting lead
+        c_draft = create_contact("Draft Lead", "draft@prospect.com", status="Drafted", db_path=TEST_DB)
+
+        # 2. Closed lead
+        c_closed = create_contact("Closed Lead", "closed@prospect.com", status="Meeting Booked", db_path=TEST_DB)
+
+        # 3. Replied lead
+        c_replied = create_contact("Replied Lead", "replied@prospect.com", status="Replied", db_path=TEST_DB)
+        record_email_reply("replied@prospect.com", "Yes let's chat", "Sounds good", db_path=TEST_DB)
+
+        # 4. Sent / Scheduled lead
+        c_sent = create_contact("Sent Lead", "sent@prospect.com", status="Sent", db_path=TEST_DB)
+        eid_sent = create_email("<p>Hi</p>", "Pitch", "sent@prospect.com", status="Sent", db_path=TEST_DB)
+
+        # 5. Follow-up Due lead (due_at in the past)
+        c_due = create_contact("Due Lead", "due@prospect.com", status="Sent", db_path=TEST_DB)
+        eid_due = create_email("<p>Hi</p>", "Pitch", "due@prospect.com", status="Sent", db_path=TEST_DB)
+        rid = create_sequence_rule(
+            sequence_id="seq_due_test",
+            contact_id=c_due,
+            contact_email="due@prospect.com",
+            step_number=2,
+            delay_value=3,
+            delay_unit="days",
+            template_id=None,
+            custom_body="<p>Follow up 2</p>",
+            db_path=TEST_DB
+        )
+        import sqlite3
+        conn = sqlite3.connect(TEST_DB)
+        conn.execute("UPDATE sequence_rules SET status = 'Scheduled', due_at = '2020-01-01 10:00:00' WHERE id = ?", (rid,))
+        conn.commit()
+        conn.close()
+
+        pipeline = get_targeted_pipeline_leads(db_path=TEST_DB)
+        self.assertIn("drafting", pipeline)
+        self.assertIn("scheduled_sent", pipeline)
+        self.assertIn("followup_due", pipeline)
+        self.assertIn("replied", pipeline)
+        self.assertIn("closed", pipeline)
+
+        draft_emails = [x["email"] for x in pipeline["drafting"]]
+        self.assertIn("draft@prospect.com", draft_emails)
+
+        closed_emails = [x["email"] for x in pipeline["closed"]]
+        self.assertIn("closed@prospect.com", closed_emails)
+
+        replied_emails = [x["email"] for x in pipeline["replied"]]
+        self.assertIn("replied@prospect.com", replied_emails)
+
+        due_emails = [x["email"] for x in pipeline["followup_due"]]
+        self.assertIn("due@prospect.com", due_emails)
+
+        sent_emails = [x["email"] for x in pipeline["scheduled_sent"]]
+        self.assertIn("sent@prospect.com", sent_emails)
+
+    def test_73_thread_history_timeline(self):
+        """Test get_thread_history returns full conversation history in chronological order."""
+        from database import get_thread_history
+        target_email = "timeline.test@prospect.com"
+        cid = create_contact(
+            name="Alex Turner",
+            email=target_email,
+            company="Turner Arctic",
+            custom_variables={"role": "Founder", "observation": "listing hero image"},
+            db_path=TEST_DB
+        )
+
+        # 1. Draft email
+        e1 = create_email("<p>Touch 1</p>", "Touch 1 Draft", target_email, status="Draft", db_path=TEST_DB)
+        # 2. Sent email
+        e2 = create_email("<p>Touch 1 Sent</p>", "Partnership Inquiry", target_email, status="Sent", message_id="<msg001@sellomize.com>", db_path=TEST_DB)
+        # 3. Notification reply
+        from database import create_notification
+        nid = create_notification(
+            type="reply",
+            title="Reply from Alex",
+            message="Hey, thanks for reaching out. What are your rates?",
+            contact_email=target_email,
+            db_path=TEST_DB
+        )
+
+        history = get_thread_history(target_email, db_path=TEST_DB)
+        self.assertIsNotNone(history["contact"])
+        self.assertEqual(history["contact"]["name"], "Alex Turner")
+        self.assertEqual(history["contact"]["custom_variables_dict"].get("role"), "Founder")
+        self.assertGreaterEqual(len(history["emails"]), 2)
+        self.assertGreaterEqual(len(history["notifications"]), 1)
+        self.assertGreaterEqual(len(history["timeline"]), 3)
+
+        timeline_types = [t["type"] for t in history["timeline"]]
+        self.assertIn("email_draft", timeline_types)
+        self.assertIn("email_sent", timeline_types)
+        self.assertIn("reply_received", timeline_types)
+
+    def test_74_send_smtp_email_threading_headers(self):
+        """Test send_smtp_email includes In-Reply-To and References headers and populates message_id_out."""
+        from unittest.mock import MagicMock, patch
+        from smtp_dispatcher import send_smtp_email
+
+        mock_smtp = MagicMock()
+        mock_acc = {
+            "id": 1,
+            "sender_name": "Antigravity",
+            "email": "sender@agency.com",
+            "password": "pass",
+            "smtp_host": "smtp.hostinger.com",
+            "smtp_port": 465
+        }
+
+        msg_ids = []
+        with patch("smtplib.SMTP_SSL", return_value=mock_smtp):
+            mock_smtp.__enter__.return_value = mock_smtp
+            success, info = send_smtp_email(
+                smtp_account=mock_acc,
+                recipient="prospect@client.com",
+                subject="Re: Quick Question",
+                html_content="<p>Follow up</p>",
+                in_reply_to="<parent-msg-123@agency.com>",
+                references="<grandparent-msg@agency.com>",
+                message_id_out=msg_ids
+            )
+
+            self.assertTrue(success)
+            self.assertEqual(len(msg_ids), 1)
+            self.assertTrue(msg_ids[0].startswith("<") and msg_ids[0].endswith(">"))
+
+            # Inspect the sent MIME message
+            call_args = mock_smtp.send_message.call_args[0]
+            sent_msg = call_args[0]
+            self.assertEqual(sent_msg["In-Reply-To"], "<parent-msg-123@agency.com>")
+            self.assertEqual(sent_msg["References"], "<grandparent-msg@agency.com>")
+
+    def test_75_template_engine_first_name_curly_and_aliases(self):
+        """Test inject_variables extracts first_name automatically and handles curly vars without breaking Spintax."""
+        contact = {
+            "name": "Marcus Aurelius",
+            "company": "Rome Inc",
+            "custom_variables_dict": {
+                "observation": "poor storefront layout",
+                "pain_point": "losing 30% organic traffic",
+                "proof_story": "helped brand lift revenue by +42%"
+            }
+        }
+
+        # 1. Bracketed first_name
+        res1 = inject_variables("Hi [first_name], welcome to [company].", contact)
+        self.assertEqual(res1, "Hi Marcus, welcome to Rome Inc.")
+
+        # 2. Curly first_name and aliases
+        res2 = inject_variables("Hi {first_name}, noticed {observation} which causes {pain_point}. {proof_story}", contact)
+        self.assertEqual(res2, "Hi Marcus, noticed poor storefront layout which causes losing 30% organic traffic. helped brand lift revenue by +42%")
+
+        # 3. Spintax {opt1|opt2} preserved for parse_spintax
+        mixed = "Hi {first_name}, {quick question|wanted to check in}."
+        injected = inject_variables(mixed, contact)
+        self.assertTrue(injected.startswith("Hi Marcus, {"))
+        resolved = parse_spintax(injected)
+        self.assertTrue("quick question" in resolved or "wanted to check in" in resolved)
+
+    def test_76_targeted_frameworks_resolution(self):
+        """Test that built-in targeted frameworks resolve cleanly with zero missing tokens."""
+        from ui.tabs.targeted import TARGETED_FRAMEWORKS
+        contact = {
+            "name": "Elena Rostova",
+            "company": "Rostova Botanicals",
+            "custom_variables_dict": {
+                "first_name": "Elena",
+                "observation": "suppressed variation listings",
+                "pain_point": "inventory is stranded and unpurchasable",
+                "compliment": "exceptional organic customer reviews",
+                "offer_angle": "Listing Optimization",
+                "trigger_event": "upcoming Prime Fall event",
+                "proof_story": "+84% overall catalog revenue in 90 days for Skinfix"
+            }
+        }
+
+        for step in [1, 2, 3, 4]:
+            frameworks = TARGETED_FRAMEWORKS[step]
+            for fw in frameworks:
+                subj = inject_variables(parse_spintax(fw["subject"]), contact)
+                body = resolve_template(fw["body"], contact)
+                missing = _missing_tokens(subj) + _missing_tokens(body)
+                self.assertEqual(missing, [], f"Framework '{fw['name']}' in step {step} had unfilled tokens: {missing}")
+                self.assertIn("Elena", body)
+
 
 if __name__ == "__main__":
     unittest.main()

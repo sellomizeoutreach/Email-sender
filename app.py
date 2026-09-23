@@ -31,6 +31,7 @@ from ui.components import render_header, render_notification_bell, trigger_toast
 
 # Resilient dynamic imports prevent Streamlit Cloud hot-reload ImportErrors
 import importlib
+import ui.tabs.targeted as targeted_tab_mod
 import ui.tabs.crm as crm_tab_mod
 import ui.tabs.studio as studio_tab_mod
 import ui.tabs.compose as compose_tab_mod
@@ -38,13 +39,14 @@ import ui.tabs.review as review_tab_mod
 import ui.tabs.analytics as analytics_tab_mod
 import ui.tabs.settings as settings_tab_mod
 
-for _m in [crm_tab_mod, studio_tab_mod, compose_tab_mod, review_tab_mod, analytics_tab_mod, settings_tab_mod]:
+for _m in [targeted_tab_mod, crm_tab_mod, studio_tab_mod, compose_tab_mod, review_tab_mod, analytics_tab_mod, settings_tab_mod]:
     try:
         if hasattr(_m, "__file__"):
             importlib.reload(_m)
     except Exception:
         pass
 
+render_targeted_tab = getattr(targeted_tab_mod, "render_targeted_tab")
 render_crm_tab = getattr(crm_tab_mod, "render_crm_tab")
 render_studio_tab = getattr(studio_tab_mod, "render_studio_tab")
 render_compose_tab = getattr(compose_tab_mod, "render_compose_tab")
@@ -119,22 +121,26 @@ contacts_list = all_contacts
 all_templates = get_templates()
 
 # ==============================================================================
-# PRIMARY APP NAVIGATION (5 tabs — Templates kept temporarily)
+# PRIMARY APP NAVIGATION (Dedicated Targeted 1:1 Thread + Bulk Campaign)
 # ==============================================================================
 TAB_NAMES = [
+    "🎯 Targeted Thread",
     "👥 Contacts",
-    "✉️ Compose & Send",
+    "✉️ Bulk Campaign",
     "📥 Review & Outbox",
     "📊 Analytics",
     "⚙️ Settings",
     "✍️ Templates",
 ]
 
-tab_contacts, tab_compose, tab_review, tab_analytics, tab_settings, tab_templates = st.tabs(
+tab_targeted, tab_contacts, tab_compose, tab_review, tab_analytics, tab_settings, tab_templates = st.tabs(
     TAB_NAMES,
     key="main_app_tabs",
     on_change="rerun"
 )
+
+with tab_targeted:
+    render_targeted_tab()
 
 with tab_contacts:
     render_crm_tab(all_contacts)

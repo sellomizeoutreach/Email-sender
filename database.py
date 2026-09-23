@@ -350,7 +350,10 @@ def init_db(db_path: str = DB_FILE):
         ("sequence_id", "TEXT DEFAULT ''"),
         ("target_timezone", "TEXT DEFAULT ''"),
         ("target_country", "TEXT DEFAULT ''"),
-        ("market_key", "TEXT DEFAULT ''")
+        ("market_key", "TEXT DEFAULT ''"),
+        ("message_id", "TEXT DEFAULT ''"),
+        ("in_reply_to", "TEXT DEFAULT ''"),
+        ("thread_id", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in email_migrations:
         try:
@@ -459,7 +462,8 @@ def init_db(db_path: str = DB_FILE):
         ("target_timezone", "TEXT DEFAULT ''"),
         ("target_country", "TEXT DEFAULT ''"),
         ("market_key", "TEXT DEFAULT ''"),
-        ("custom_body", "TEXT DEFAULT ''")
+        ("custom_body", "TEXT DEFAULT ''"),
+        ("thread_reply", "INTEGER DEFAULT 1")
     ]
     for col_name, col_def in seq_rule_migrations:
         try:
@@ -1523,6 +1527,9 @@ def create_email(
     target_timezone: str = "",
     target_country: str = "",
     market_key: str = "",
+    message_id: str = "",
+    in_reply_to: str = "",
+    thread_id: str = "",
     db_path: str = DB_FILE
 ) -> int:
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
@@ -1533,13 +1540,15 @@ def create_email(
             subject, recipient, email_html, status, scheduled_time,
             variation_num, revision_notes, sequence_step, sequence_id,
             target_timezone, target_country, market_key,
+            message_id, in_reply_to, thread_id,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         subject, recipient, email_html, status, scheduled_time,
         variation_num, revision_notes, sequence_step, sequence_id,
         target_timezone.strip(), target_country.strip(), market_key.strip(),
+        message_id.strip(), in_reply_to.strip(), thread_id.strip(),
         now_iso, now_iso
     ))
     email_id = cursor.lastrowid
@@ -1579,6 +1588,9 @@ def update_email(
     error_message: Any = _FIELD_UNSET,
     sequence_step: Any = _FIELD_UNSET,
     sequence_id: Any = _FIELD_UNSET,
+    message_id: Any = _FIELD_UNSET,
+    in_reply_to: Any = _FIELD_UNSET,
+    thread_id: Any = _FIELD_UNSET,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
@@ -1615,6 +1627,15 @@ def update_email(
     if sequence_id is not _FIELD_UNSET:
         fields.append("sequence_id = ?")
         values.append(sequence_id)
+    if message_id is not _FIELD_UNSET:
+        fields.append("message_id = ?")
+        values.append(message_id)
+    if in_reply_to is not _FIELD_UNSET:
+        fields.append("in_reply_to = ?")
+        values.append(in_reply_to)
+    if thread_id is not _FIELD_UNSET:
+        fields.append("thread_id = ?")
+        values.append(thread_id)
 
     values.append(email_id)
     query = f"UPDATE emails SET {', '.join(fields)} WHERE id = ?"
@@ -1678,9 +1699,15 @@ def get_approved_due_emails(current_time_str: Optional[str] = None, db_path: str
     conn.close()
     return [dict(row) for row in rows]
 
-def mark_email_sent(email_id: int, sent_at: Optional[str] = None, db_path: str = DB_FILE):
+def mark_email_sent(email_id: int, sent_at: Optional[str] = None, message_id: Optional[str] = None, db_path: str = DB_FILE):
     now_iso = sent_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    update_email(email_id=email_id, status="Sent", error_message=None, db_path=db_path)
+    update_email(
+        email_id=email_id,
+        status="Sent",
+        error_message=None,
+        message_id=message_id if message_id else _FIELD_UNSET,
+        db_path=db_path
+    )
     trigger_sequence_rules_for_sent_email(email_id, sent_at_iso=now_iso, db_path=db_path)
 
 def mark_email_error(email_id: int, status: str, error_message: str, db_path: str = DB_FILE):
@@ -2947,6 +2974,254 @@ def generate_campaign_drafts(
         "flagged_count": created_flagged,
         "email_ids": created_ids
     }
+
+
+# ------------------------------------------------------------------------------
+# 1:1 TARGETED OUTREACH THREAD & PIPELINE HELPERS
+# ------------------------------------------------------------------------------
+
+def get_thread_history(contact_email: str, db_path: str = DB_FILE) -> Dict[str, Any]:
+    """
+    Fetch the complete chronological conversation timeline for a single contact:
+    - contact: Dict representation of contact row with custom_variables parsed
+    - emails: List of email rows sent, scheduled, or drafted for this contact
+    - notifications: List of reply/inbox notification rows for this contact
+    - sequence_rules: List of active/completed sequence rules
+    - timeline: Chronological list of events (sent emails, scheduled emails, drafts, replies received)
+    """
+    clean_email = (contact_email or "").strip().lower()
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # 1. Contact record
+    cursor.execute("SELECT * FROM contacts WHERE LOWER(TRIM(email)) = ? LIMIT 1", (clean_email,))
+    row = cursor.fetchone()
+    contact = dict(row) if row else None
+    if contact:
+        cv_val = contact.get("custom_variables") or "{}"
+        if isinstance(cv_val, str):
+            try:
+                contact["custom_variables_dict"] = json.loads(cv_val)
+            except Exception:
+                contact["custom_variables_dict"] = {}
+        elif isinstance(cv_val, dict):
+            contact["custom_variables_dict"] = cv_val
+        else:
+            contact["custom_variables_dict"] = {}
+
+    # 2. Email history
+    cursor.execute("""
+        SELECT * FROM emails
+        WHERE LOWER(TRIM(recipient)) = ?
+        ORDER BY created_at ASC, id ASC
+    """, (clean_email,))
+    emails = [dict(r) for r in cursor.fetchall()]
+
+    # 3. Notification / reply history
+    cursor.execute("""
+        SELECT * FROM notifications
+        WHERE LOWER(TRIM(contact_email)) = ?
+        ORDER BY created_at ASC, id ASC
+    """, (clean_email,))
+    notifications = [dict(r) for r in cursor.fetchall()]
+
+    # 4. Sequence rules
+    cursor.execute("""
+        SELECT * FROM sequence_rules
+        WHERE LOWER(TRIM(contact_email)) = ?
+        ORDER BY step_number ASC, id ASC
+    """, (clean_email,))
+    sequence_rules = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    # 5. Build chronological timeline
+    timeline = []
+    for em in emails:
+        st_val = (em.get("status") or "").lower()
+        if st_val == "sent":
+            item_type = "email_sent"
+            item_dt = em.get("updated_at") or em.get("created_at") or ""
+        elif st_val in ["approved", "scheduled"] or em.get("scheduled_time"):
+            item_type = "email_scheduled"
+            item_dt = em.get("scheduled_time") or em.get("created_at") or ""
+        elif st_val in ["bounced", "error"]:
+            item_type = "email_error"
+            item_dt = em.get("updated_at") or em.get("created_at") or ""
+        else:
+            item_type = "email_draft"
+            item_dt = em.get("created_at") or ""
+
+        timeline.append({
+            "type": item_type,
+            "timestamp": item_dt,
+            "subject": em.get("subject") or "(No Subject)",
+            "body": em.get("email_html") or "",
+            "step": em.get("sequence_step") or 1,
+            "status": em.get("status") or "Draft",
+            "message_id": em.get("message_id") or "",
+            "in_reply_to": em.get("in_reply_to") or "",
+            "open_count": em.get("open_count") or 0,
+            "click_count": em.get("click_count") or 0,
+            "opened_at": em.get("opened_at") or "",
+            "id": em.get("id"),
+            "raw": em
+        })
+
+    for notif in notifications:
+        timeline.append({
+            "type": "reply_received",
+            "timestamp": notif.get("created_at") or "",
+            "subject": notif.get("title") or "Incoming Reply",
+            "body": notif.get("message") or "",
+            "step": None,
+            "status": "Received",
+            "message_id": "",
+            "in_reply_to": "",
+            "open_count": 0,
+            "click_count": 0,
+            "opened_at": "",
+            "id": notif.get("id"),
+            "raw": notif
+        })
+
+    # Sort timeline by timestamp ascending
+    timeline.sort(key=lambda x: str(x.get("timestamp") or ""))
+
+    return {
+        "contact": contact,
+        "emails": emails,
+        "notifications": notifications,
+        "sequence_rules": sequence_rules,
+        "timeline": timeline
+    }
+
+
+def get_targeted_pipeline_leads(db_path: str = DB_FILE) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Categorizes contacts into the 5 core Targeted Outreach pipeline stages:
+    - 'drafting': Has draft emails or brand new contact without sent emails.
+    - 'scheduled_sent': Initial or follow-up sent / scheduled, actively awaiting prospect response.
+    - 'followup_due': Next follow-up is scheduled for today or overdue, or active sequence rule is due.
+    - 'replied': Prospect sent an incoming reply, awaiting user action.
+    - 'closed': Closed terminal status (Interested, Meeting Booked, Not Interested, Bounced, Do Not Contact).
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM contacts ORDER BY id DESC")
+    all_contacts_raw = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM emails ORDER BY id ASC")
+    all_emails = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM notifications ORDER BY id ASC")
+    all_notifs = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM sequence_rules WHERE status = 'Scheduled' ORDER BY id ASC")
+    due_rules = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    emails_by_contact: Dict[str, List[Dict[str, Any]]] = {}
+    for em in all_emails:
+        rcp = (em.get("recipient") or "").strip().lower()
+        if rcp:
+            emails_by_contact.setdefault(rcp, []).append(em)
+
+    notifs_by_contact: Dict[str, List[Dict[str, Any]]] = {}
+    for n in all_notifs:
+        ce = (n.get("contact_email") or "").strip().lower()
+        if ce:
+            notifs_by_contact.setdefault(ce, []).append(n)
+
+    rules_by_contact: Dict[str, List[Dict[str, Any]]] = {}
+    for r in due_rules:
+        ce = (r.get("contact_email") or "").strip().lower()
+        if ce:
+            rules_by_contact.setdefault(ce, []).append(r)
+
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_date_str = now_iso[:10]
+
+    buckets: Dict[str, List[Dict[str, Any]]] = {
+        "drafting": [],
+        "scheduled_sent": [],
+        "followup_due": [],
+        "replied": [],
+        "closed": []
+    }
+
+    closed_statuses = {
+        "interested", "not interested", "meeting booked", "bounced",
+        "do not contact", "closed won", "closed lost"
+    }
+
+    for c in all_contacts_raw:
+        c_email = (c.get("email") or "").strip().lower()
+        c_status = (c.get("status") or "New").strip().lower()
+        c_tags = (c.get("tags") or "").lower()
+
+        c_emails = emails_by_contact.get(c_email, [])
+        sent_emails = [e for e in c_emails if (e.get("status") or "").lower() == "sent"]
+        scheduled_emails = [e for e in c_emails if (e.get("status") or "").lower() in ["approved", "scheduled"]]
+        draft_emails = [e for e in c_emails if (e.get("status") or "").lower() in ["pending", "draft", "flagged", "needs review"]]
+        c_notifs = notifs_by_contact.get(c_email, [])
+        unread_notifs = [n for n in c_notifs if n.get("is_read") == 0]
+        c_rules = rules_by_contact.get(c_email, [])
+
+        lead_summary = {
+            "id": c.get("id"),
+            "name": c.get("name") or "Unnamed Lead",
+            "company": c.get("company") or "",
+            "email": c.get("email") or "",
+            "status": c.get("status") or "New",
+            "last_contact_date": c.get("last_contact_date") or (sent_emails[-1]["created_at"][:10] if sent_emails else ""),
+            "next_follow_up": c.get("next_follow_up") or (c_rules[0]["due_at"][:10] if c_rules and c_rules[0].get("due_at") else ""),
+            "emails_sent_count": len(sent_emails),
+            "drafts_count": len(draft_emails),
+            "scheduled_count": len(scheduled_emails),
+            "unread_replies_count": len(unread_notifs),
+            "last_subject": sent_emails[-1]["subject"] if sent_emails else (draft_emails[-1]["subject"] if draft_emails else ""),
+            "raw_contact": c
+        }
+
+        # 1. Replied (needs user action)
+        if len(unread_notifs) > 0 or c_status == "replied" or "replied" in c_tags:
+            buckets["replied"].append(lead_summary)
+            continue
+
+        # 2. Closed outcomes
+        if c_status in closed_statuses or any(cs in c_tags for cs in ["bounced", "do not contact", "opted-out", "meeting booked"]):
+            buckets["closed"].append(lead_summary)
+            continue
+
+        # 3. Follow-up Due
+        is_fu_due = False
+        if c_rules:
+            for r in c_rules:
+                due_at = r.get("due_at") or ""
+                if due_at and due_at <= now_iso:
+                    is_fu_due = True
+                    break
+        if not is_fu_due and c.get("next_follow_up"):
+            nfu = c["next_follow_up"].strip()
+            if nfu and nfu <= now_date_str and len(sent_emails) > 0:
+                is_fu_due = True
+
+        if is_fu_due:
+            buckets["followup_due"].append(lead_summary)
+            continue
+
+        # 4. Scheduled / Sent (actively in progress awaiting response)
+        if len(scheduled_emails) > 0 or len(sent_emails) > 0:
+            buckets["scheduled_sent"].append(lead_summary)
+            continue
+
+        # 5. Drafting (draft created or not contacted yet)
+        buckets["drafting"].append(lead_summary)
+
+    return buckets
 
 # Initialize upon import if DB does not exist
 if not os.path.exists(DB_FILE):

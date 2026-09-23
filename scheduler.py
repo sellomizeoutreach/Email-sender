@@ -560,16 +560,21 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
         return
 
+    in_reply_to_header = email_record.get("in_reply_to") or None
+    msg_id_tracker = []
     success, msg = send_smtp_email(
         smtp_account=smtp_account,
         recipient=recipient,
         subject=subject,
         html_content=final_payload,
-        bcc_email=bcc_address
+        bcc_email=bcc_address,
+        in_reply_to=in_reply_to_header,
+        message_id_out=msg_id_tracker
     )
 
     if success:
-        mark_email_sent(email_id, db_path=db_path)
+        sent_msg_id = msg_id_tracker[0] if msg_id_tracker else ""
+        mark_email_sent(email_id, message_id=sent_msg_id, db_path=db_path)
         increment_smtp_sent(smtp_account["id"], db_path=db_path)
         update_email(
             email_id=email_id,

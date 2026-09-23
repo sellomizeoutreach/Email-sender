@@ -14,16 +14,18 @@ There are zero external AI/LLM API calls, zero API keys, and zero paid dependenc
 ```
                   ┌──────────────────────────────────────────────────────────┐
                   │                    Streamlit UI (app.py)                 │
-                  │  👥 Contacts       — Internal SQLite CRM (leads, tags,   │
-                  │                      custom variables, pipeline status)  │
-                  │  ✉️ Compose & Send — Unified single-send + multi-touch   │
-                  │                      campaign flow (progressive steps)   │
+                  │  🎯 Targeted Thread — 1:1 focused outreach (Level 1      │
+                  │                       Pipeline + Level 2 3-Pane Studio)   │
+                  │  👥 Contacts        — Internal SQLite CRM (leads, tags,  │
+                  │                       custom variables, pipeline status) │
+                  │  ✉️ Bulk Campaign   — Batch campaigns across recipients  │
+                  │                       (progressive multi-touch steps)    │
                   │  📥 Review & Outbox — Triage pending/flagged drafts,     │
-                  │                      approve, and view sent history      │
-                  │  📊 Analytics      — Open, click, reply, bounce metrics  │
-                  │  ⚙️ Settings       — Mailbox fleet, signature, keyword   │
-                  │                      shield, advanced telemetry          │
-                  │  ✍️ Templates      — Reusable template library (CRUD)    │
+                  │                       approve, and view sent history     │
+                  │  📊 Analytics       — Open, click, reply, bounce metrics │
+                  │  ⚙️ Settings        — Mailbox fleet, signature, keyword  │
+                  │                       shield, advanced telemetry         │
+                  │  ✍️ Templates       — Reusable template library (CRUD)   │
                   └──────────────────────────────┬───────────────────────────┘
                                                  │
                                                  ▼

@@ -104,11 +104,15 @@ def send_smtp_email(
     subject: str,
     html_content: str,
     bcc_email: Optional[str] = None,
-    timeout: int = 20
+    timeout: int = 20,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+    message_id_out: Optional[List[str]] = None
 ) -> Tuple[bool, str]:
     """
     Dispatch an email through an active Hostinger SMTP account.
     Constructs multipart (plain text + HTML) for maximum deliverability.
+    Supports RFC822 threading via In-Reply-To and References headers.
     """
     host = smtp_account.get("smtp_host", "smtp.hostinger.com").strip()
     port = int(smtp_account.get("smtp_port", 465))
@@ -131,7 +135,21 @@ def send_smtp_email(
     msg["From"] = formataddr((clean_sender, user))
     msg["To"] = target_recipient
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid(domain=domain)
+    msg_id = make_msgid(domain=domain)
+    msg["Message-ID"] = msg_id
+    if message_id_out is not None:
+        message_id_out.append(msg_id)
+
+    # Threading headers for 1:1 conversation follow-ups
+    if in_reply_to and str(in_reply_to).strip():
+        clean_irt = sanitize_header(str(in_reply_to).strip())
+        msg["In-Reply-To"] = clean_irt
+        if references and str(references).strip():
+            msg["References"] = sanitize_header(str(references).strip())
+        else:
+            msg["References"] = clean_irt
+    elif references and str(references).strip():
+        msg["References"] = sanitize_header(str(references).strip())
 
     # Attach plain text version
     plain_text = html_to_plain_text(html_content)

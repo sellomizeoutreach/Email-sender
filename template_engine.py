@@ -64,11 +64,15 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
     # Build mapping from contact data
     var_map = {}
     if "name" in contact_data and contact_data["name"]:
-        var_map["name"] = str(contact_data["name"])
+        full_n = str(contact_data["name"]).strip()
+        var_map["name"] = full_n
+        first_n = full_n.split()[0] if full_n else ""
+        var_map["firstname"] = first_n
+        var_map["first_name"] = first_n
     if "email" in contact_data and contact_data["email"]:
-        var_map["email"] = str(contact_data["email"])
+        var_map["email"] = str(contact_data["email"]).strip()
     if "company" in contact_data and contact_data["company"]:
-        var_map["company"] = str(contact_data["company"])
+        var_map["company"] = str(contact_data["company"]).strip()
 
     # Include custom variables
     custom_vars = contact_data.get("custom_variables_dict") or {}
@@ -83,25 +87,36 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
                 logger.warning(f"Error parsing custom_variables in inject_variables: {json_err}")
                 custom_vars = {}
 
-
     for k, v in custom_vars.items():
         var_map[k.lower()] = str(v)
+        var_map[k.lower().replace(" ", "").replace("_", "")] = str(v)
 
-    # Aliases for structured research fields
-    if "brandobservation" in var_map and "amazonobservation" not in var_map:
-        var_map["amazonobservation"] = var_map["brandobservation"]
-    elif "amazonobservation" in var_map and "brandobservation" not in var_map:
-        var_map["brandobservation"] = var_map["amazonobservation"]
-    if "listingissue" in var_map and "listingissues" not in var_map:
-        var_map["listingissues"] = var_map["listingissue"]
-    elif "listingissues" in var_map and "listingissue" not in var_map:
-        var_map["listingissue"] = var_map["listingissues"]
-    if "amazonissues" in var_map and "amazonissue" not in var_map:
-        var_map["amazonissue"] = var_map["amazonissues"]
-    elif "amazonissue" in var_map and "amazonissues" not in var_map:
-        var_map["amazonissues"] = var_map["amazonissue"]
-    if "verifiedlocation" in var_map and "location" not in var_map:
-        var_map["location"] = var_map["verifiedlocation"]
+    # Aliases for 1:1 targeted research fields and legacy variables
+    aliases = {
+        "observation": ["specific_observation", "specificobservation", "brandobservation", "amazonobservation", "listingissue", "listingissues"],
+        "specific_observation": ["observation", "specificobservation", "brandobservation", "amazonobservation"],
+        "pain_point": ["painpoint", "amazonissue", "amazonissues", "listingissues"],
+        "painpoint": ["pain_point", "amazonissue", "amazonissues"],
+        "compliment": ["praise"],
+        "offer_angle": ["offerangle", "angle"],
+        "offerangle": ["offer_angle", "angle"],
+        "trigger_event": ["triggerevent", "trigger"],
+        "triggerevent": ["trigger_event", "trigger"],
+        "proof_story": ["proofstory", "case_study", "casestudy"],
+        "proofstory": ["proof_story", "case_study", "casestudy"],
+        "first_name": ["firstname", "first"],
+        "firstname": ["first_name", "first"]
+    }
+    for canon, syns in aliases.items():
+        if canon in var_map:
+            for s in syns:
+                if s not in var_map:
+                    var_map[s] = var_map[canon]
+        else:
+            for s in syns:
+                if s in var_map:
+                    var_map[canon] = var_map[s]
+                    break
 
     # Regex to match [variable_name]
     def replacer(match):
@@ -116,7 +131,21 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
         # Return original token if no matching variable found
         return match.group(0)
 
+    # Regex to match {variable_name} when NOT spintax (no pipe)
+    def curly_replacer(match):
+        inner = match.group(1).strip()
+        if "|" in inner:
+            return match.group(0)
+        token = inner.lower().replace(" ", "").replace("_", "")
+        if token in var_map:
+            return var_map[token]
+        raw_tok = inner.lower()
+        if raw_tok in var_map:
+            return var_map[raw_tok]
+        return match.group(0)
+
     result = re.sub(r'\[([a-zA-Z0-9_\s-]+)\]', replacer, template_text)
+    result = re.sub(r'\{([a-zA-Z0-9_\s-]+)\}', curly_replacer, result)
     return result
 
 def parse_spintax(text: str) -> str:
