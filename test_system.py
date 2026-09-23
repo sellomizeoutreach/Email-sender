@@ -84,7 +84,12 @@ from database import (
     bulk_delete_emails,
     clear_outbox_emails,
     get_system_excluded_emails,
-    cleanup_internal_drafts
+    cleanup_internal_drafts,
+    create_proof_story,
+    get_proof_stories,
+    update_proof_story,
+    delete_proof_story,
+    CONTACT_STATUSES
 )
 from scheduler import process_due_sequence_rules
 from smtp_dispatcher import (
@@ -112,7 +117,10 @@ from template_engine import (
     audit_email_deliverability,
     COMMON_SPAM_TRIGGERS,
     format_email_html,
-    resolve_template
+    resolve_template,
+    suggest_outreach_angle,
+    classify_incoming_reply,
+    _missing_tokens
 )
 from scheduler import (
     run_scheduler_cycle,
@@ -990,11 +998,11 @@ class TestEmailAutomationSystem(unittest.TestCase):
         rec_onetime = get_email_by_id(e_onetime, db_path=TEST_DB)
         self.assertEqual(rec_onetime["status"], "Pending")
 
-        # 5. Check contact record: status must be 'Replied', note appended, tag added
+        # 5. Check contact record: status must be 'Replied' or 'Interested' (Phase 5 rule-based classification), note appended, tag added
         c_after = get_contact_by_id(cid, db_path=TEST_DB)
-        self.assertEqual(c_after["status"], "Replied")
+        self.assertIn(c_after["status"], ["Replied", "Interested"])
         self.assertIn("Replied", c_after["tags_list"])
-        self.assertIn("[Replied:", c_after["notes"])
+        self.assertTrue("[Replied:" in c_after["notes"] or "[Interested:" in c_after["notes"])
         self.assertEqual(c_after["last_reply_at"], "2026-09-19 14:22:00")
         self.assertIn("Let's talk", c_after["reply_subject"])
 
@@ -2372,6 +2380,140 @@ class TestEmailAutomationSystem(unittest.TestCase):
         # 3. Verify bcc_eid was deleted while prospect_eid remains intact
         self.assertIsNone(get_email_by_id(bcc_eid, db_path=TEST_DB))
         self.assertIsNotNone(get_email_by_id(prospect_eid, db_path=TEST_DB))
+
+    def test_66_proof_stories_crud(self):
+        """Test Proof Stories CRUD operations and seeding."""
+        stories = get_proof_stories(db_path=TEST_DB)
+        self.assertGreaterEqual(len(stories), 4)
+
+        sid = create_proof_story(
+            client_name="Test Brand Co",
+            angle="Creative / A+",
+            headline="Redesigned A+ and brand story",
+            metric_highlight="+42% conversion lift in 30 days",
+            full_story_snippet="Test full blurb for email insertion.",
+            db_path=TEST_DB
+        )
+        self.assertIsNotNone(sid)
+
+        all_stories = get_proof_stories(db_path=TEST_DB)
+        custom_story = next((s for s in all_stories if s["id"] == sid), None)
+        self.assertIsNotNone(custom_story)
+        self.assertEqual(custom_story["client_name"], "Test Brand Co")
+        self.assertEqual(custom_story["metric_highlight"], "+42% conversion lift in 30 days")
+
+        update_proof_story(sid, metric_highlight="+55% conversion lift", db_path=TEST_DB)
+        all_stories = get_proof_stories(db_path=TEST_DB)
+        updated_s = next(s for s in all_stories if s["id"] == sid)
+        self.assertEqual(updated_s["metric_highlight"], "+55% conversion lift")
+
+        delete_proof_story(sid, db_path=TEST_DB)
+        all_stories = get_proof_stories(db_path=TEST_DB)
+        self.assertIsNone(next((s for s in all_stories if s["id"] == sid), None))
+
+    def test_67_deterministic_angle_suggestion(self):
+        """Test rule-based deterministic outreach angle mapping without AI."""
+        c1 = {"RelevantService": "Creative / A+", "BrandObservation": "Missing lifestyle images"}
+        angle1, rationale1 = suggest_outreach_angle(c1)
+        self.assertEqual(angle1, "Creative / A+")
+        self.assertTrue(len(rationale1) > 0)
+
+        c2 = {"AmazonIssues": "Bleeding ad spend on generic keywords", "RelevantService": "PPC"}
+        angle2, _ = suggest_outreach_angle(c2)
+        self.assertEqual(angle2, "PPC / Ads")
+
+        c3 = {"ListingIssues": "Titles truncated, bullet points not indexed"}
+        angle3, _ = suggest_outreach_angle(c3)
+        self.assertEqual(angle3, "Listing Optimization")
+
+        c4 = {}
+        angle4, _ = suggest_outreach_angle(c4)
+        self.assertEqual(angle4, "Listing Optimization")
+
+    def test_68_rule_based_reply_classification(self):
+        """Test keyword-based reply classifier for Interested, Not Interested, DNC, and OOO."""
+        interested_sample = "Thanks for reaching out! Let's set up a call on Zoom next Tuesday."
+        res = classify_incoming_reply(interested_sample)
+        self.assertEqual(res, "interested")
+
+        not_interested_sample = "No thanks, we already have an internal team handling Amazon."
+        res = classify_incoming_reply(not_interested_sample)
+        self.assertEqual(res, "not_interested")
+
+        dnc_sample = "Please do not email me again and take me off your list."
+        res = classify_incoming_reply(dnc_sample)
+        self.assertEqual(res, "dnc")
+
+        ooo_sample = "I am currently out of the office on annual leave until October 15 with limited access to email."
+        res = classify_incoming_reply(ooo_sample)
+        self.assertEqual(res, "ooo")
+
+    def test_69_ooo_reply_preserves_sequence_and_status(self):
+        """Test critical rule: Out of Office (OOO) does NOT stop sequences or cancel follow-ups."""
+        import sqlite3
+        cid = create_contact("Vacation Contact", "vacation@lead.com", status="Sent", db_path=TEST_DB)
+        seq_id = "seq_ooo_test"
+
+        from database import create_sequence_rule
+        rid = create_sequence_rule(
+            sequence_id=seq_id,
+            contact_id=cid,
+            contact_email="vacation@lead.com",
+            step_number=2,
+            delay_value=3,
+            delay_unit="days",
+            template_id=None,
+            custom_body="<p>Follow up 2</p>",
+            db_path=TEST_DB
+        )
+
+        record_email_reply(
+            sender_email="vacation@lead.com",
+            reply_subject="Automatic reply: Out of Office until next week",
+            reply_body_snippet="Thank you for your email. I am currently out of office on vacation.",
+            db_path=TEST_DB
+        )
+
+        contact = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(contact["status"], "Sent")
+        self.assertIn("OOO", contact["notes"])
+
+        conn = sqlite3.connect(TEST_DB)
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM sequence_rules WHERE id = ?", (rid,))
+        rule_row = cursor.fetchone()
+        conn.close()
+        self.assertEqual(rule_row[0], "Waiting_Trigger")
+
+    def test_70_approve_email_advances_contact_status(self):
+        """Test that approving an email advances contact status to Approved."""
+        cid = create_contact("Approve Lead", "approvelead@test.com", status="Needs Review", db_path=TEST_DB)
+        eid = create_email("<p>Pitch</p>", "Subject", "approvelead@test.com", status="Needs Review", db_path=TEST_DB)
+
+        approve_email(
+            email_id=eid,
+            recipient="approvelead@test.com",
+            scheduled_time="2026-09-24 10:00:00",
+            email_html="<p>Clean Pitch</p>",
+            subject="Clean Subject",
+            db_path=TEST_DB
+        )
+
+        c_after = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(c_after["status"], "Approved")
+
+    def test_71_send_guard_missing_tokens_detector(self):
+        """Test that _missing_tokens identifies unfilled bracketed tokens."""
+        clean_text = "Hi Jane, noticed your brand has great reviews on Amazon."
+        self.assertEqual(_missing_tokens(clean_text), [])
+
+        dirty_text = "Hi [Name], loved your [ProductCategory] listing but noticed [AmazonObservation] on your page."
+        missing = _missing_tokens(dirty_text)
+        self.assertEqual(len(missing), 3)
+        self.assertIn("[Name]", missing)
+        self.assertIn("[ProductCategory]", missing)
+        self.assertIn("[AmazonObservation]", missing)
+
 
 if __name__ == "__main__":
     unittest.main()

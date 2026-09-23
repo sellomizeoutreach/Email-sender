@@ -27,6 +27,10 @@ get_effective_daily_limit = lambda *a, **kw: getattr(db, "get_effective_daily_li
 get_warmup_info = lambda *a, **kw: getattr(db, "get_warmup_info", lambda acc, t=None: {"is_warmup": False, "effective_limit": int(acc.get("daily_limit", 50))})(*a, **kw)
 is_within_sending_window = lambda *a, **kw: getattr(db, "is_within_sending_window", lambda dt=None: (True, "OK"))(*a, **kw)
 cleanup_duplicate_notifications = lambda *a, **kw: getattr(db, "cleanup_duplicate_notifications", lambda: 0)(*a, **kw)
+get_proof_stories = lambda *a, **kw: getattr(db, "get_proof_stories", lambda **k: [])(*a, **kw)
+create_proof_story = lambda *a, **kw: getattr(db, "create_proof_story", lambda **k: 0)(*a, **kw)
+update_proof_story = lambda *a, **kw: getattr(db, "update_proof_story", lambda **k: True)(*a, **kw)
+delete_proof_story = lambda *a, **kw: getattr(db, "delete_proof_story", lambda sid: True)(*a, **kw)
 WEEKDAY_NAMES = getattr(db, "WEEKDAY_NAMES", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
 DB_FILE = getattr(db, "DB_FILE", "email_system.db")
 get_log_file_path = lambda *a, **kw: getattr(db, "get_log_file_path", lambda: "sellomize.log")(*a, **kw)
@@ -55,10 +59,10 @@ def get_local_ip() -> str:
 
 
 def render_settings_tab():
-    """Render ⚙️ Rules & Settings Hub compartmentalized into 4 secondary sub-tabs."""
+    """Render ⚙️ Rules & Settings Hub compartmentalized into 5 clean sub-tabs."""
     render_tab_header(
         "⚙️ Rules & Settings Hub",
-        "Centralized management for mailbox fleet, signatures, keyword shield, and advanced dispatch telemetry."
+        "Centralized management for mailbox fleet, signatures, keyword shield, proof library, and advanced dispatch telemetry."
     )
 
     current_configs = get_all_configs()
@@ -66,7 +70,8 @@ def render_settings_tab():
     settings_tabs = st.tabs([
         "📧 Mailbox Fleet",
         "✒️ Signature",
-        "🛡️ Keyword Shield",
+        "🛡️ Shield & Reply Rules",
+        "📚 Proof Library",
         "⚙️ Advanced Telemetry"
     ])
 
@@ -342,13 +347,110 @@ def render_settings_tab():
         )
         if st.button("💾 Save Fallback Setting", key="btn_save_fallback"):
             set_config("variable_fallback", new_fallback.strip())
-            trigger_toast("Variable fallback setting saved.", icon="✅")
-            st.rerun()
+        st.markdown("---")
+        st.markdown("### 💬 Rule-Based Reply Classification Rules (Phase 5)")
+        st.caption("When prospects respond to outreach, the IMAP receiver uses these keyword dictionaries to categorize intent and update pipeline status with zero external AI/API.")
+
+        col_rk1, col_rk2 = st.columns(2)
+        with col_rk1:
+            def_int = "yes, interested, sure, call, calendar, time, chat, discuss, send more, sounds good, let's talk, book a call, speak, reach out, calendly, zoom"
+            curr_int = current_configs.get("reply_interested_keywords", def_int)
+            set_int_kw = st.text_area("🔥 Interested Keywords (Auto-sets status: 'Interested')", value=curr_int, height=95, key="set_int_kw", help="Comma-separated tokens indicating positive intent.")
+
+            def_not_int = "not interested, unsubscribe, remove, stop, no thanks, not at this time, pass, please remove, no thank you, wrong person"
+            curr_not_int = current_configs.get("reply_not_interested_keywords", def_not_int)
+            set_not_int_kw = st.text_area("🛑 Not Interested Keywords (Auto-sets status: 'Not Interested')", value=curr_not_int, height=95, key="set_not_int_kw", help="Comma-separated tokens indicating rejection.")
+
+        with col_rk2:
+            def_dnc = "never contact, take me off, spam, harassment, report, do not email, legal action, cease and desist"
+            curr_dnc = current_configs.get("reply_dnc_keywords", def_dnc)
+            set_dnc_kw = st.text_area("⛔ Do Not Contact (DNC) Keywords (Auto-sets status: 'Do Not Contact')", value=curr_dnc, height=95, key="set_dnc_kw", help="Aggressive removal or harassment tokens.")
+
+            def_ooo = "out of the office, on leave, auto-reply, away from, vacation, holiday, back on, returning on, maternity leave, paternity leave, automated response"
+            curr_ooo = current_configs.get("reply_ooo_keywords", def_ooo)
+            set_ooo_kw = st.text_area("✈️ Out of Office (OOO) Keywords (CRITICAL: Sequence Continues)", value=curr_ooo, height=95, key="set_ooo_kw", help="Tokens indicating out-of-office autoreplies. These strictly DO NOT cancel follow-up sequences!")
+
+        st.caption("ℹ️ **Out of Office Protection:** OOO auto-replies are logged in contact notes, but follow-up touches and sequence dispatches remain fully active.")
+
+        col_save_rep, col_reset_rep = st.columns([1.5, 1.5])
+        with col_save_rep:
+            if st.button("💾 Save Reply Classification Rules", type="primary", use_container_width=True, key="btn_save_reply_rules"):
+                set_config("reply_interested_keywords", set_int_kw.strip())
+                set_config("reply_not_interested_keywords", set_not_int_kw.strip())
+                set_config("reply_dnc_keywords", set_dnc_kw.strip())
+                set_config("reply_ooo_keywords", set_ooo_kw.strip())
+                trigger_toast("Reply classification rules updated.", icon="💬")
+                st.rerun()
+        with col_reset_rep:
+            if st.button("🔄 Reset Reply Rules to Defaults", use_container_width=True, key="btn_reset_reply_rules"):
+                set_config("reply_interested_keywords", def_int)
+                set_config("reply_not_interested_keywords", def_not_int)
+                set_config("reply_dnc_keywords", def_dnc)
+                set_config("reply_ooo_keywords", def_ooo)
+                trigger_toast("Reset reply rules to recommended defaults.", icon="🔄")
+                st.rerun()
 
     # ==========================================================================
-    # SUB-TAB 4: ⚙️ ADVANCED TELEMETRY & INFRASTRUCTURE
+    # SUB-TAB 4: 📚 CLIENT PROOF & CASE STORIES LIBRARY (Phase 2)
     # ==========================================================================
     with settings_tabs[3]:
+        st.markdown("### 📚 Client Proof & Case Studies Library")
+        st.caption("Store proven results, metrics, and case studies without any external AI. These are recommended deterministically based on research fields during email composition.")
+
+        with st.expander("➕ Add New Client Proof Story", expanded=False):
+            with st.form("form_add_proof_story", clear_on_submit=True):
+                p_c1, p_c2 = st.columns(2)
+                with p_c1:
+                    ps_name = st.text_input("Client / Brand Name *", placeholder="e.g. Skinfix Barrier Care")
+                    ps_type = st.text_input("Client Type", placeholder="e.g. Skincare Brand, DTC, Wholesale")
+                with p_c2:
+                    ps_angle = st.selectbox("Outreach Angle *", ["Creative / A+", "Listing Optimization", "PPC / Ads", "Full Management"])
+                    ps_metric = st.text_input("Metric Highlight *", placeholder="e.g. +42% Unit Session % in 45 Days")
+
+                ps_headline = st.text_input("Headline *", placeholder="e.g. +42% Conversion Rate via Mobile A+ Module Revamp")
+                ps_snippet = st.text_area("Full Story Snippet *", placeholder="Describe what was audited, what was changed, and the measurable business outcome...", height=85)
+                ps_tags = st.text_input("Relevance Tags (comma-separated)", placeholder="e.g. A+, Infographics, Mobile, Skincare")
+
+                if st.form_submit_button("💾 Save Proof Story", type="primary"):
+                    if not ps_name.strip() or not ps_headline.strip() or not ps_metric.strip() or not ps_snippet.strip():
+                        st.error("Client Name, Headline, Metric Highlight, and Story Snippet are required.")
+                    else:
+                        create_proof_story(
+                            client_name=ps_name.strip(),
+                            angle=ps_angle,
+                            headline=ps_headline.strip(),
+                            metric_highlight=ps_metric.strip(),
+                            full_story_snippet=ps_snippet.strip(),
+                            client_type=ps_type.strip() or "Brand",
+                            relevance_tags=ps_tags.strip()
+                        )
+                        trigger_toast("Proof story added successfully!", icon="📚")
+                        st.rerun()
+
+        st.markdown("#### Existing Stories in Library")
+        all_stories = get_proof_stories()
+        if not all_stories:
+            st.info("No proof stories currently saved.")
+        else:
+            for s in all_stories:
+                with st.container(border=True):
+                    sc1, sc2 = st.columns([4, 1])
+                    with sc1:
+                        st.markdown(f"**{s['client_name']}** (`{s.get('client_type', 'Brand')}`) • <span style='background:#E0F2FE; color:#0369A1; font-weight:700; font-size:0.8rem; padding:2px 8px; border-radius:10px;'>{s['angle']}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**{s['headline']}** — *{s['metric_highlight']}*")
+                        st.caption(s['full_story_snippet'])
+                        if s.get("relevance_tags"):
+                            st.caption(f"🏷️ Tags: `{s['relevance_tags']}`")
+                    with sc2:
+                        if st.button("🗑️ Delete", key=f"btn_del_story_{s['id']}", use_container_width=True):
+                            delete_proof_story(s['id'])
+                            trigger_toast("Proof story deleted.", icon="🗑️")
+                            st.rerun()
+
+    # ==========================================================================
+    # SUB-TAB 5: ⚙️ ADVANCED TELEMETRY & INFRASTRUCTURE
+    # ==========================================================================
+    with settings_tabs[4]:
         st.markdown("### ⚙️ Advanced Telemetry & Infrastructure")
         st.caption("Sending schedules, multi-country destination timezones, anti-spam delay intervals, system health diagnostics, and LAN access.")
 

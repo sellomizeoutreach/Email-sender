@@ -23,7 +23,8 @@ from database import (
     bulk_update_contact_grid,
     get_system_excluded_emails,
     parse_variables_from_text,
-    format_variables_as_lines
+    format_variables_as_lines,
+    CONTACT_STATUSES
 )
 from contacts_handler import (
     generate_csv_template,
@@ -78,9 +79,11 @@ def render_edit_contact_dialog(contact: dict):
         with ec_r3:
             e_owner = st.text_input("Lead Owner", value=contact.get("owner") or "", key=f"dlg_own_{c_id}")
         with ec_r4:
-            stat_opts = ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]
-            curr_st = contact.get("status") or "Not Contacted"
-            st_idx = stat_opts.index(curr_st) if curr_st in stat_opts else 0
+            stat_opts = list(CONTACT_STATUSES)
+            curr_st = contact.get("status") or "New"
+            if curr_st not in stat_opts:
+                stat_opts = [curr_st] + stat_opts
+            st_idx = stat_opts.index(curr_st)
             e_status = st.selectbox("Pipeline Status", stat_opts, index=st_idx, key=f"dlg_stat_{c_id}")
 
         e_notes = st.text_input("Internal Notes", value=contact.get("notes") or "", key=f"dlg_notes_{c_id}")
@@ -99,7 +102,7 @@ def render_edit_contact_dialog(contact: dict):
         with col_et2:
             e_new_tag = st.text_input("Add Custom Tag(s)", placeholder="e.g. Q4 Audit, Tier 1", key=f"dlg_newtag_{c_id}")
 
-        st.markdown("##### 🧩 Outreach Variables")
+        st.markdown("##### 🧩 Basic Outreach Variables")
         c_cv = contact.get("custom_variables_dict") or {}
         col_ecv1, col_ecv2, col_ecv3 = st.columns(3)
         with col_ecv1:
@@ -109,14 +112,50 @@ def render_edit_contact_dialog(contact: dict):
         with col_ecv3:
             e_asin = st.text_input("Amazon ASIN / Product ID", value=str(c_cv.get("ASIN", "")), key=f"dlg_asin_{c_id}", help="Accessible via [ASIN] in email templates")
 
-        other_vars = {k: v for k, v in c_cv.items() if k not in ["Role", "Website", "ASIN"]}
+        st.markdown("##### 🔬 Structured Research (Verified Facts)")
+        st.caption("No AI hallucination. Fact-checked fields populated by human research, accessible as tokens in templates.")
+        
+        rel_svc_opts = ["-- Select Service --", "Listing Optimization", "A+ Content / Brand Story", "Storefront Redesign", "PPC & Sponsored Ads", "Full Account Management", "Catalog / Variation Audit", "Other"]
+        curr_rel_svc = str(c_cv.get("Relevant Service", "")).strip()
+        svc_idx = rel_svc_opts.index(curr_rel_svc) if curr_rel_svc in rel_svc_opts else 0
+
+        rc1, rc2, rc3 = st.columns(3)
+        with rc1:
+            e_amazon_url = st.text_input("Amazon Store URL", value=str(c_cv.get("Amazon Store URL", "")), key=f"dlg_amzurl_{c_id}", help="Accessible via [AmazonStoreUrl]")
+        with rc2:
+            e_prod_cat = st.text_input("Product Category", value=str(c_cv.get("Product Category", "")), key=f"dlg_prodcat_{c_id}", help="Accessible via [ProductCategory]")
+        with rc3:
+            e_rel_svc = st.selectbox("Relevant Service", rel_svc_opts, index=svc_idx, key=f"dlg_relsvc_{c_id}", help="Accessible via [RelevantService]")
+
+        rc4, rc5 = st.columns(2)
+        with rc4:
+            e_list_issues = st.text_area("Listing Issues", value=str(c_cv.get("Listing Issues", "")), height=70, key=f"dlg_listissues_{c_id}", help="e.g. Missing comparison chart in A+ module [ListingIssue]")
+        with rc5:
+            e_amz_issues = st.text_area("Amazon Issues", value=str(c_cv.get("Amazon Issues", "")), height=70, key=f"dlg_amzissues_{c_id}", help="e.g. High ACoS on branded terms [AmazonIssue]")
+
+        e_brand_obs = st.text_area("Brand Observation", value=str(c_cv.get("Brand Observation", "")), height=65, key=f"dlg_brandobs_{c_id}", help="Specific observation on their store / products [BrandObservation] or [AmazonObservation]")
+
+        rc6, rc7, rc8 = st.columns(3)
+        with rc6:
+            e_verif_loc = st.text_input("Verified Location", value=str(c_cv.get("Verified Location", "")), key=f"dlg_verifloc_{c_id}", help="Verified location only (e.g. brand website / registered address). Leave empty if not 100% verified! [VerifiedLocation]")
+        with rc7:
+            e_res_date = st.text_input("Research Date", value=str(c_cv.get("Research Date", datetime.now().strftime("%Y-%m-%d"))), key=f"dlg_resdate_{c_id}", help="Accessible via [ResearchDate]")
+        with rc8:
+            e_res_src = st.text_input("Research Source", value=str(c_cv.get("Research Source", "Amazon Storefront & Brand Site")), key=f"dlg_ressrc_{c_id}", help="Accessible via [ResearchSource]")
+
+        known_research_keys = {
+            "Role", "Website", "ASIN", "Amazon Store URL", "Product Category",
+            "Relevant Service", "Listing Issues", "Amazon Issues", "Brand Observation",
+            "Verified Location", "Research Date", "Research Source"
+        }
+        other_vars = {k: v for k, v in c_cv.items() if k not in known_research_keys}
         with st.expander("➕ Additional Variables (Key: Value)", expanded=bool(other_vars)):
             e_other_vars_txt = st.text_area(
                 "Additional Custom Variables",
                 value=format_variables_as_lines(other_vars),
                 key=f"dlg_othervars_{c_id}",
                 height=65,
-                help="One variable per line (e.g. Category: Skincare or Location: NYC). No JSON syntax required!"
+                help="One variable per line (e.g. Margin: 35% or SKU: 120). No JSON syntax required!"
             )
 
     col_out1, col_out2 = st.columns(2)
@@ -153,9 +192,35 @@ def render_edit_contact_dialog(contact: dict):
                     parsed_cv["Website"] = e_web.strip()
                 if e_asin.strip():
                     parsed_cv["ASIN"] = e_asin.strip()
+                if e_amazon_url.strip():
+                    parsed_cv["Amazon Store URL"] = e_amazon_url.strip()
+                if e_prod_cat.strip():
+                    parsed_cv["Product Category"] = e_prod_cat.strip()
+                if e_rel_svc and e_rel_svc != "-- Select Service --":
+                    parsed_cv["Relevant Service"] = e_rel_svc.strip()
+                if e_list_issues.strip():
+                    parsed_cv["Listing Issues"] = e_list_issues.strip()
+                if e_amz_issues.strip():
+                    parsed_cv["Amazon Issues"] = e_amz_issues.strip()
+                if e_brand_obs.strip():
+                    parsed_cv["Brand Observation"] = e_brand_obs.strip()
+                if e_verif_loc.strip():
+                    parsed_cv["Verified Location"] = e_verif_loc.strip()
+                if e_res_date.strip():
+                    parsed_cv["Research Date"] = e_res_date.strip()
+                if e_res_src.strip():
+                    parsed_cv["Research Source"] = e_res_src.strip()
 
                 extra_t = [t.strip() for t in e_new_tag.split(",") if t.strip()]
                 final_t = list(set(e_tags + extra_t))
+
+                # Event-driven transition: If status was New, and research was added, auto-advance to Researched
+                final_status = e_status
+                if e_status == "New" and any([
+                    e_amazon_url.strip(), e_prod_cat.strip(), e_list_issues.strip(),
+                    e_amz_issues.strip(), e_brand_obs.strip(), e_verif_loc.strip()
+                ]):
+                    final_status = "Researched"
 
                 update_contact(
                     contact_id=c_id,
@@ -167,7 +232,7 @@ def render_edit_contact_dialog(contact: dict):
                     lead_source=e_source,
                     priority=e_priority,
                     owner=e_owner.strip() if e_owner else None,
-                    status=e_status,
+                    status=final_status,
                     notes=e_notes.strip() if e_notes else None
                 )
                 st.session_state["crm_editing_id"] = None
@@ -291,7 +356,7 @@ def render_crm_tab(all_contacts=None):
                 with col_crm4:
                     c_status = st.selectbox(
                         "Pipeline Status",
-                        ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                        CONTACT_STATUSES,
                         index=0,
                         key="onboard_status"
                     )
@@ -318,6 +383,22 @@ def render_crm_tab(all_contacts=None):
                 with col_cv3:
                     cv_asin = st.text_input("Product ID / ASIN", placeholder="e.g. B08N5WRWNW", help="Accessible via [ASIN]", key="onboard_cv_asin")
 
+                with st.expander("🔬 Structured Research (Verified Facts)", expanded=False):
+                    st.caption("No AI hallucination. Fact-checked fields populated by human research, accessible as tokens in templates.")
+                    rel_svc_opts = ["-- Select Service --", "Listing Optimization", "A+ Content / Brand Story", "Storefront Redesign", "PPC & Sponsored Ads", "Full Account Management", "Catalog / Variation Audit", "Other"]
+                    orc1, orc2 = st.columns(2)
+                    with orc1:
+                        ob_amz_url = st.text_input("Amazon Store URL", placeholder="https://amazon.com/stores/...", key="ob_amz_url", help="[AmazonStoreUrl]")
+                        ob_prod_cat = st.text_input("Product Category", placeholder="e.g. Skincare & Beauty", key="ob_prod_cat", help="[ProductCategory]")
+                    with orc2:
+                        ob_rel_svc = st.selectbox("Relevant Service", rel_svc_opts, index=0, key="ob_rel_svc", help="[RelevantService]")
+                        ob_verif_loc = st.text_input("Verified Location", placeholder="e.g. Austin, TX", key="ob_verif_loc", help="Verified location only. [VerifiedLocation]")
+                    ob_list_issues = st.text_area("Listing Issues", placeholder="e.g. Missing comparison chart in A+ module", height=65, key="ob_list_issues", help="[ListingIssue]")
+                    ob_amz_issues = st.text_area("Amazon Issues", placeholder="e.g. High ACoS on branded terms", height=65, key="ob_amz_issues", help="[AmazonIssue]")
+                    ob_brand_obs = st.text_area("Brand Observation", placeholder="e.g. Top seller on Sephora but conversion lagging on Amazon", height=65, key="ob_brand_obs", help="[BrandObservation]")
+                    ob_res_date = st.text_input("Research Date", value=datetime.now().strftime("%Y-%m-%d"), key="ob_res_date", help="[ResearchDate]")
+                    ob_res_src = st.text_input("Research Source", value="Amazon Storefront & Brand Site", key="ob_res_src", help="[ResearchSource]")
+
                 with st.expander("➕ Additional Variables (Key: Value)", expanded=False):
                     more_vars_raw = st.text_area(
                         "Additional Custom Variables",
@@ -337,9 +418,34 @@ def render_crm_tab(all_contacts=None):
                             cv_parsed["Website"] = cv_website.strip()
                         if cv_asin.strip():
                             cv_parsed["ASIN"] = cv_asin.strip()
+                        if ob_amz_url.strip():
+                            cv_parsed["Amazon Store URL"] = ob_amz_url.strip()
+                        if ob_prod_cat.strip():
+                            cv_parsed["Product Category"] = ob_prod_cat.strip()
+                        if ob_rel_svc and ob_rel_svc != "-- Select Service --":
+                            cv_parsed["Relevant Service"] = ob_rel_svc.strip()
+                        if ob_list_issues.strip():
+                            cv_parsed["Listing Issues"] = ob_list_issues.strip()
+                        if ob_amz_issues.strip():
+                            cv_parsed["Amazon Issues"] = ob_amz_issues.strip()
+                        if ob_brand_obs.strip():
+                            cv_parsed["Brand Observation"] = ob_brand_obs.strip()
+                        if ob_verif_loc.strip():
+                            cv_parsed["Verified Location"] = ob_verif_loc.strip()
+                        if ob_res_date.strip():
+                            cv_parsed["Research Date"] = ob_res_date.strip()
+                        if ob_res_src.strip():
+                            cv_parsed["Research Source"] = ob_res_src.strip()
 
                         extra_tags = [t.strip() for t in new_tags_raw.split(",") if t.strip()]
                         combined_tags = list(set(selected_tags + extra_tags))
+
+                        final_st = c_status
+                        if c_status == "New" and any([
+                            ob_amz_url.strip(), ob_prod_cat.strip(), ob_list_issues.strip(),
+                            ob_amz_issues.strip(), ob_brand_obs.strip(), ob_verif_loc.strip()
+                        ]):
+                            final_st = "Researched"
 
                         cid, is_new = upsert_contact_by_email(
                             name=c_name.strip(),
@@ -350,7 +456,7 @@ def render_crm_tab(all_contacts=None):
                             lead_source=c_source,
                             priority=c_priority,
                             owner=c_owner.strip() if c_owner else None,
-                            status=c_status,
+                            status=final_st,
                             notes=c_notes.strip() if c_notes else None
                         )
                         trigger_toast(f"Contact '{c_name}' successfully added (ID #{cid})!", icon="✅")
@@ -393,7 +499,7 @@ def render_crm_tab(all_contacts=None):
                 with col_crm4:
                     c_status = st.selectbox(
                         "Pipeline Status",
-                        ["Not Contacted", "Contacted", "Follow-Up Sent", "Replied", "Meeting Booked", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"],
+                        CONTACT_STATUSES,
                         index=0
                     )
                 c_notes = st.text_input("Internal Notes", placeholder="e.g. Needs Amazon brand listing audit")
@@ -419,6 +525,22 @@ def render_crm_tab(all_contacts=None):
                 with col_cv3:
                     cv_asin = st.text_input("Product ID / ASIN", placeholder="e.g. B08N5WRWNW", help="Accessible via [ASIN]")
 
+                with st.expander("🔬 Structured Research (Verified Facts)", expanded=False):
+                    st.caption("No AI hallucination. Fact-checked fields populated by human research, accessible as tokens in templates.")
+                    rel_svc_opts = ["-- Select Service --", "Listing Optimization", "A+ Content / Brand Story", "Storefront Redesign", "PPC & Sponsored Ads", "Full Account Management", "Catalog / Variation Audit", "Other"]
+                    arc1, arc2 = st.columns(2)
+                    with arc1:
+                        add_amz_url = st.text_input("Amazon Store URL", placeholder="https://amazon.com/stores/...", key="add_amz_url", help="[AmazonStoreUrl]")
+                        add_prod_cat = st.text_input("Product Category", placeholder="e.g. Skincare & Beauty", key="add_prod_cat", help="[ProductCategory]")
+                    with arc2:
+                        add_rel_svc = st.selectbox("Relevant Service", rel_svc_opts, index=0, key="add_rel_svc", help="[RelevantService]")
+                        add_verif_loc = st.text_input("Verified Location", placeholder="e.g. Austin, TX", key="add_verif_loc", help="Verified location only. [VerifiedLocation]")
+                    add_list_issues = st.text_area("Listing Issues", placeholder="e.g. Missing comparison chart in A+ module", height=65, key="add_list_issues", help="[ListingIssue]")
+                    add_amz_issues = st.text_area("Amazon Issues", placeholder="e.g. High ACoS on branded terms", height=65, key="add_amz_issues", help="[AmazonIssue]")
+                    add_brand_obs = st.text_area("Brand Observation", placeholder="e.g. Top seller on Sephora but conversion lagging on Amazon", height=65, key="add_brand_obs", help="[BrandObservation]")
+                    add_res_date = st.text_input("Research Date", value=datetime.now().strftime("%Y-%m-%d"), key="add_res_date", help="[ResearchDate]")
+                    add_res_src = st.text_input("Research Source", value="Amazon Storefront & Brand Site", key="add_res_src", help="[ResearchSource]")
+
                 with st.expander("➕ Additional Variables (Key: Value)", expanded=False):
                     more_vars_raw = st.text_area(
                         "Additional Custom Variables",
@@ -437,9 +559,34 @@ def render_crm_tab(all_contacts=None):
                             cv_parsed["Website"] = cv_website.strip()
                         if cv_asin.strip():
                             cv_parsed["ASIN"] = cv_asin.strip()
+                        if add_amz_url.strip():
+                            cv_parsed["Amazon Store URL"] = add_amz_url.strip()
+                        if add_prod_cat.strip():
+                            cv_parsed["Product Category"] = add_prod_cat.strip()
+                        if add_rel_svc and add_rel_svc != "-- Select Service --":
+                            cv_parsed["Relevant Service"] = add_rel_svc.strip()
+                        if add_list_issues.strip():
+                            cv_parsed["Listing Issues"] = add_list_issues.strip()
+                        if add_amz_issues.strip():
+                            cv_parsed["Amazon Issues"] = add_amz_issues.strip()
+                        if add_brand_obs.strip():
+                            cv_parsed["Brand Observation"] = add_brand_obs.strip()
+                        if add_verif_loc.strip():
+                            cv_parsed["Verified Location"] = add_verif_loc.strip()
+                        if add_res_date.strip():
+                            cv_parsed["Research Date"] = add_res_date.strip()
+                        if add_res_src.strip():
+                            cv_parsed["Research Source"] = add_res_src.strip()
 
                         extra_tags = [t.strip() for t in new_tags_raw.split(",") if t.strip()]
                         combined_tags = list(set(selected_tags + extra_tags))
+
+                        final_st = c_status
+                        if c_status == "New" and any([
+                            add_amz_url.strip(), add_prod_cat.strip(), add_list_issues.strip(),
+                            add_amz_issues.strip(), add_brand_obs.strip(), add_verif_loc.strip()
+                        ]):
+                            final_st = "Researched"
 
                         cid, is_new = upsert_contact_by_email(
                             name=c_name.strip(),
@@ -450,7 +597,7 @@ def render_crm_tab(all_contacts=None):
                             lead_source=c_source,
                             priority=c_priority,
                             owner=c_owner.strip() if c_owner else None,
-                            status=c_status,
+                            status=final_st,
                             notes=c_notes.strip() if c_notes else None
                         )
                         action_msg = "added" if is_new else "updated (merged tags & details)"

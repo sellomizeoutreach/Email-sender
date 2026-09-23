@@ -24,7 +24,9 @@ def generate_csv_template() -> str:
         "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
         "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
         "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags",
-        "Role", "Website", "ASIN"
+        "Role", "Website", "Amazon Store URL", "Product Category", "Relevant Service",
+        "Listing Issues", "Amazon Issues", "Brand Observation", "Verified Location",
+        "Research Date", "Research Source", "ASIN"
     ])
     writer.writerow([
         "L-0001",
@@ -44,6 +46,15 @@ def generate_csv_template() -> str:
         "Amazon Brand, High Priority",
         "Brand Director",
         "https://skinfix.com",
+        "https://amazon.com/stores/skinfix",
+        "Skincare & Barrier Creams",
+        "Listing + A+",
+        "Missing comparison chart in A+ module",
+        "High ACoS on branded terms",
+        "Top seller on Sephora but listing conversion lagging on Amazon",
+        "New York, NY",
+        "2026-09-23",
+        "Amazon Storefront & Brand Site",
         "B07XYZ1234"
     ])
     writer.writerow([
@@ -160,6 +171,26 @@ def normalize_variable_header(col_name: str) -> str:
     clean = col_name.strip()
     lower = clean.lower().replace("_", " ").replace("-", " ")
     
+    # Structured Research Fields
+    if lower in ["amazon store url", "amazon url", "store link", "amazon storefront", "amazon store"]:
+        return "Amazon Store URL"
+    if lower in ["product category", "product niche", "brand category"]:
+        return "Product Category"
+    if lower in ["relevant service", "service needed", "pitch service", "target service"]:
+        return "Relevant Service"
+    if lower in ["listing issue", "listing issues", "listing problem", "listing audit"]:
+        return "Listing Issues"
+    if lower in ["amazon issue", "amazon issues", "amazon problem"]:
+        return "Amazon Issues"
+    if lower in ["brand observation", "amazon observation", "brand observations", "audit notes"]:
+        return "Brand Observation"
+    if lower in ["verified location", "hq location", "verified city"]:
+        return "Verified Location"
+    if lower in ["research date", "date researched"]:
+        return "Research Date"
+    if lower in ["research source", "source researched"]:
+        return "Research Source"
+
     if lower in ["role", "job title", "title", "position", "designation", "job"]:
         return "Role"
     if lower in ["website", "domain", "url", "web", "website url", "store url", "shop url"]:

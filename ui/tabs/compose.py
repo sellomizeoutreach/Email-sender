@@ -34,6 +34,7 @@ from database import (
     get_system_excluded_emails,
     get_all_distinct_tags,
     create_notification,
+    get_proof_stories,
     DB_FILE,
 )
 from mx_checker import verify_email_domain_mx
@@ -527,8 +528,8 @@ def _render_customization_bar(touch_step: int, k_body: str, saved: dict, default
         if st.button("― Line", key=f"btn_hr_{touch_step}", use_container_width=True, help="Insert horizontal divider line"):
             _append_to_body(k_body, saved, "<hr style='border:none; border-top:1px solid #E2E8F0; margin:16px 0;' />", default_body)
 
-    # Row 2: Rich HTML Elements (Image, Link, CTA, Highlight, Signature)
-    col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+    # Row 2: Rich HTML Elements (Image, Link, CTA, Proof Story, Highlight, Signature)
+    col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns(6)
     with col_r1:
         if st.button("🖼️ Add Image", key=f"btn_toggle_img_{touch_step}", use_container_width=True, help="Upload an image from your PC or insert from URL"):
             st.session_state[f"exp_img_{touch_step}"] = not st.session_state.get(f"exp_img_{touch_step}", False)
@@ -542,9 +543,13 @@ def _render_customization_bar(touch_step: int, k_body: str, saved: dict, default
             st.session_state[f"exp_cta_{touch_step}"] = not st.session_state.get(f"exp_cta_{touch_step}", False)
             st.rerun()
     with col_r4:
-        if st.button("📦 Highlight Box", key=f"btn_box_{touch_step}", use_container_width=True, help="Insert styled callout box"):
-            _append_to_body(k_body, saved, "<div style='background-color:#F8FAFC; border-left:4px solid #083731; border-radius:4px; padding:12px 16px; margin:14px 0; color:#1E293B;'><strong>Highlight:</strong> Important note, offer, or case study metric here.</div>", default_body)
+        if st.button("📚 Case Story", key=f"btn_toggle_proof_{touch_step}", use_container_width=True, help="Insert proven client case studies & metrics"):
+            st.session_state[f"exp_proof_{touch_step}"] = not st.session_state.get(f"exp_proof_{touch_step}", False)
+            st.rerun()
     with col_r5:
+        if st.button("📦 Highlight", key=f"btn_box_{touch_step}", use_container_width=True, help="Insert styled callout box"):
+            _append_to_body(k_body, saved, "<div style='background-color:#F8FAFC; border-left:4px solid #083731; border-radius:4px; padding:12px 16px; margin:14px 0; color:#1E293B;'><strong>Highlight:</strong> Important note, offer, or case study metric here.</div>", default_body)
+    with col_r6:
         if st.button("✍️ Sign-off", key=f"btn_sig_{touch_step}", use_container_width=True, help="Insert professional sign-off"):
             _append_to_body(k_body, saved, "<br><br>Best regards,<br><strong>Your Name</strong><br><span style='color:#64748B; font-size:13px;'>Founder • Company<br><a href='https://yourwebsite.com' style='color:#083731; text-decoration:none;'>yourwebsite.com</a></span>", default_body)
 
@@ -651,13 +656,51 @@ def _render_customization_bar(touch_step: int, k_body: str, saved: dict, default
                     st.session_state[f"exp_cta_{touch_step}"] = False
                     _append_to_body(k_body, saved, btn_html, default_body)
 
+    # ── Expandable Drawer 4: 📚 Client Proof / Case Story Tool (Phase 2) ───
+    if st.session_state.get(f"exp_proof_{touch_step}", False):
+        with st.container(border=True):
+            st.markdown("##### 📚 Client Proof & Case Studies Library")
+            st.caption("Insert proven results and case studies into your email body to build immediate trust.")
+            story_angles = ["All Angles", "Creative / A+", "Listing Optimization", "PPC / Ads", "Full Management"]
+            sel_story_angle = st.selectbox("Filter stories by angle", story_angles, index=0, key=f"sel_story_angle_{touch_step}")
+            filter_arg = None if sel_story_angle == "All Angles" else sel_story_angle
+            stories = get_proof_stories(angle=filter_arg)
+            if not stories:
+                st.info("No proof stories found for this angle. You can add more in Settings → Proof Library.")
+            else:
+                for st_item in stories:
+                    with st.container(border=True):
+                        c_top1, c_top2 = st.columns([3.5, 1])
+                        with c_top1:
+                            st.markdown(f"**{st_item['client_name']}** ({st_item.get('client_type', 'Brand')}) — *{st_item['angle']}*")
+                            st.markdown(f"<span style='background:#E0F2FE; color:#0369A1; font-weight:700; font-size:0.8rem; padding:2px 8px; border-radius:4px;'>🏆 {st_item['metric_highlight']}</span>", unsafe_allow_html=True)
+                            st.caption(st_item['full_story_snippet'])
+                        with c_top2:
+                            if st.button("➕ Insert", key=f"btn_insert_proof_{touch_step}_{st_item['id']}", type="primary", use_container_width=True):
+                                block = (
+                                    f"<div style='border-left: 3px solid #083731; padding-left: 12px; margin: 14px 0; color: #334155;'>"
+                                    f"<strong>Case Study — {st_item['client_name']}:</strong> {st_item['full_story_snippet']}"
+                                    f"</div>"
+                                )
+                                st.session_state[f"exp_proof_{touch_step}"] = False
+                                _append_to_body(k_body, saved, block, default_body)
+
     # ── Variable Tokens (Campaign Only) OR Direct Single Send Notice ───────
     if not is_single_recipient:
-        st.caption("Click to insert campaign personalization token into body:")
+        st.caption("Click to insert personalization token into body:")
         chip_cols = st.columns(4)
-        chips = [("[+ Name]", "[Name]"), ("[+ Company]", "[Company]"), ("[+ Email]", "[Email]"), ("[+ Spintax]", "{Hi|Hello|Hey}")]
+        chips = [
+            ("[+ Name]", "[Name]"),
+            ("[+ Company]", "[Company]"),
+            ("[+ Storefront]", "[AmazonStoreUrl]"),
+            ("[+ Listing Issue]", "[ListingIssue]"),
+            ("[+ Observation]", "[BrandObservation]"),
+            ("[+ Service]", "[RelevantService]"),
+            ("[+ Location]", "[VerifiedLocation]"),
+            ("[+ Spintax]", "{Hi|Hello|Hey}"),
+        ]
         for c_idx, (chip_lbl, chip_val) in enumerate(chips):
-            with chip_cols[c_idx]:
+            with chip_cols[c_idx % 4]:
                 if st.button(chip_lbl, key=f"chip_btn_{touch_step}_{c_idx}", use_container_width=True):
                     curr_val = st.session_state.get(k_body, saved.get(k_body, default_body))
                     st.session_state[k_body] = f"{curr_val} {chip_val}".strip()
@@ -736,6 +779,19 @@ def _render_touch_block(
         with col_di:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
             st.caption(f"Generates +{d_val} {d_unit.lower()} after Touch {touch_step - 1} if no reply received.")
+
+    # Suggested Outreach Angle (Phase 4 rule-based suggestion)
+    suggested_angle, angle_rationale = te.suggest_outreach_angle(sample_contact)
+    col_ang1, col_ang2 = st.columns([1.5, 2.5], vertical_alignment="center")
+    with col_ang1:
+        st.markdown(
+            f"<div style='font-size:0.75rem; font-weight:700; color:#083731; text-transform:uppercase;'>"
+            f"🎯 Angle: <span style='background:#E0F2FE; color:#0369A1; padding:2px 8px; border-radius:12px;'>{suggested_angle}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with col_ang2:
+        st.caption(f"💡 {angle_rationale}")
 
     # Authoring mode
     mode_opts = ["Use saved template", "Write your own"]
@@ -842,6 +898,17 @@ def _render_spam_preview(preview_subj: str, final_html: str, triggers: list, tou
     with st.expander(f"Preview — {sample_name} ({touch_label})", expanded=expanded):
         st.markdown(f"**Subject:** `{preview_subj}`")
         render_html_preview(highlighted_html, height=180)
+
+    # Send Guard: check for unfilled tokens
+    unfilled = _missing_tokens(preview_subj) + _missing_tokens(final_html)
+    if unfilled:
+        missing_badges = ", ".join(f"`[{m}]`" for m in sorted(list(set(unfilled))))
+        st.warning(
+            f"🛡️ **Send Guard Warning:** Unfilled research token(s) {missing_badges} detected in preview! "
+            f"This contact has not had these research fields filled out. When generated, these drafts will be "
+            f"quarantined in **Needs Review** to prevent sending unfilled brackets to prospects.",
+            icon="🛑",
+        )
 
     if triggers:
         # Show exact words found + suggestions
@@ -1150,8 +1217,13 @@ def _generate_drafts(recipients, touch_configs, sched_params, neg_keywords_setti
         resolved_body = resolve_template(raw_body, contact)
         resolved_subj = parse_spintax(inject_variables(raw_subj, contact))
 
+        # Check for unfilled tokens before fallback (Phase 1 Send Guard)
+        missing_subj_tokens = _missing_tokens(resolved_subj)
+        missing_body_tokens = _missing_tokens(resolved_body)
+        unfilled_tokens = list(set(missing_subj_tokens + missing_body_tokens))
+
         # Variable fallback: replace remaining [Token] placeholders
-        if _missing_tokens(resolved_subj) or _missing_tokens(resolved_body):
+        if unfilled_tokens:
             resolved_subj = _apply_variable_fallback(resolved_subj, variable_fallback)
             resolved_body = _apply_variable_fallback(resolved_body, variable_fallback)
 
@@ -1159,7 +1231,13 @@ def _generate_drafts(recipients, touch_configs, sched_params, neg_keywords_setti
         combined_text = f"{resolved_subj} {final_html}"
         triggers = scan_all_negative_keywords(combined_text, neg_keywords_setting)
 
-        if triggers:
+        if unfilled_tokens:
+            status = "Needs Review"
+            missing_str = ", ".join(f"[{t}]" for t in unfilled_tokens)
+            notes = f"Send Guard: Missing research token(s): {missing_str}"
+            created_flagged += 1
+            flagged_details.append({"recipient": email_clean, "touch": "Touch 1", "triggers": [f"Missing {t}" for t in unfilled_tokens]})
+        elif triggers:
             status = "Flagged"
             trig_str = ", ".join(f"'{t}'" for t in triggers)
             notes = f"Touch 1/{num_touches}: Flagged for trigger keyword(s): {trig_str}" if num_touches > 1 else f"Flagged for trigger keyword(s): {trig_str}"
@@ -1188,6 +1266,14 @@ def _generate_drafts(recipients, touch_configs, sched_params, neg_keywords_setti
         )
 
         contact_id = contact.get("id")
+        if contact_id:
+            curr_c_status = contact.get("status") or "New"
+            if unfilled_tokens:
+                from database import update_contact
+                update_contact(contact_id=contact_id, status="Needs Review")
+            elif curr_c_status in ["New", "Researched"]:
+                from database import update_contact
+                update_contact(contact_id=contact_id, status="Drafted")
 
         if num_touches >= 2 and contact_id:
             t2_cfg = touch_configs[1]

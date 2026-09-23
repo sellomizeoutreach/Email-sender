@@ -150,24 +150,88 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
     with tab_overview:
         total_dispatched = analytics_live.get("total_sent", 0)
         reply_rate = analytics_live.get("reply_rate", 0.0)
+        positive_rate = analytics_live.get("positive_rate", 0.0)
         bounce_rate = analytics_live.get("bounce_rate", 0.0)
         active_seq_leads = sum(
             1 for c in all_contacts
-            if (c.get("follow_ups_sent", 0) > 0 or c.get("status") in ["Contacted", "Follow-Up Sent"])
+            if (c.get("follow_ups_sent", 0) > 0 or c.get("status") in ["Contacted", "Follow-Up Sent", "Follow-Up 1", "Follow-Up 2", "Follow-Up 3", "Queued"])
             and not c.get("is_bounced")
-            and c.get("status") != "Replied"
+            and c.get("status") not in ["Replied", "Interested", "Not Interested", "Meeting Booked", "Do Not Contact"]
         )
 
-        # Top KPI Metric Cards
-        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+        # Top KPI Metric Cards (5 columns)
+        col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
         with col_k1:
             st.metric("Total Dispatched", f"{total_dispatched}")
         with col_k2:
             st.metric("Reply Rate", f"{reply_rate:.1f}%")
         with col_k3:
-            st.metric("Bounce Rate", f"{bounce_rate:.1f}%")
+            st.metric("Positive Rate", f"{positive_rate:.1f}%", help="Confirmed interested prospects and meeting bookings over sent leads.")
         with col_k4:
-            st.metric("Leads in Sequences", f"{active_seq_leads}")
+            st.metric("Bounce Rate", f"{bounce_rate:.1f}%")
+        with col_k5:
+            st.metric("In Sequences", f"{active_seq_leads}")
+
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+        # Campaign & Batch Outcomes Summary Table
+        st.markdown("##### 🎯 Campaign & Batch Outcomes")
+        st.caption("Grouped by outreach batch (`sequence_id`). Real business outcomes (replies and positive interest) take priority over open-pixel telemetry.")
+
+        contact_map = {c["email"].strip().lower(): c for c in all_contacts if c.get("email")}
+
+        batches = {}
+        for em in all_emails:
+            seq_id = em.get("sequence_id") or ""
+            key = seq_id if seq_id else "One-Time Dispatches"
+            batches.setdefault(key, []).append(em)
+
+        if not batches:
+            st.info("No outreach batches found. Dispatches will appear grouped here.")
+        else:
+            batch_rows = []
+            for batch_name, b_emails in batches.items():
+                batch_recipients = set((e.get("recipient") or "").strip().lower() for e in b_emails if e.get("recipient"))
+                total_leads = len(batch_recipients)
+
+                sent_emails = [e for e in b_emails if e.get("status") == "Sent"]
+                sent_recipients = set((e.get("recipient") or "").strip().lower() for e in sent_emails)
+                sent_count = len(sent_recipients)
+
+                follow_ups_sent = len([e for e in sent_emails if e.get("sequence_step", 1) > 1])
+
+                b_contacts = [contact_map[r] for r in batch_recipients if r in contact_map]
+
+                replies = len([
+                    c for c in b_contacts
+                    if c.get("status") in ["Replied", "Interested", "Not Interested", "Meeting Booked", "Do Not Contact"]
+                    or c.get("last_reply_at") or c.get("reply_subject")
+                ])
+                interested = len([c for c in b_contacts if c.get("status") in ["Interested", "Meeting Booked"]])
+                not_interested = len([c for c in b_contacts if c.get("status") == "Not Interested"])
+                dnc = len([c for c in b_contacts if c.get("status") == "Do Not Contact" or c.get("is_unsubscribed")])
+                bounces = len([c for c in b_contacts if c.get("is_bounced") or c.get("status") == "Bounced"] or [e for e in b_emails if e.get("is_bounced")])
+
+                denom = sent_count if sent_count > 0 else (total_leads if total_leads > 0 else 1)
+                b_reply_rate = round((replies / denom) * 100, 1) if sent_count > 0 else 0.0
+                b_pos_rate = round((interested / denom) * 100, 1) if sent_count > 0 else 0.0
+
+                batch_rows.append({
+                    "Campaign / Batch": batch_name,
+                    "Total Leads": total_leads,
+                    "Sent": sent_count,
+                    "Follow-ups": follow_ups_sent,
+                    "Replies": replies,
+                    "Reply Rate": f"{b_reply_rate:.1f}%",
+                    "Interested": interested,
+                    "Positive Rate": f"{b_pos_rate:.1f}%",
+                    "Not Interested": not_interested,
+                    "DNC": dnc,
+                    "Bounces": bounces
+                })
+
+            st.dataframe(pd.DataFrame(batch_rows), use_container_width=True, hide_index=True)
+            st.caption("💡 *Note: Open-pixel telemetry is intentionally deprioritized because privacy protections (Apple MPP, email gateways) cause false positives. Confirmed replies and positive rates are the true signals of resonance.*")
 
         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
@@ -226,10 +290,10 @@ def render_analytics_tab(all_contacts=None, all_emails=None):
         # Actionable Re-engagement Section for Contacted Unreplied Leads
         unreplied_contacted_leads = [
             c for c in all_contacts
-            if c.get("status") in ["Contacted", "Follow-Up Sent"]
+            if c.get("status") in ["Contacted", "Follow-Up Sent", "Sent", "Follow-Up 1", "Follow-Up 2", "Follow-Up 3"]
             and not c.get("is_bounced")
             and not c.get("is_unsubscribed")
-            and c.get("status") != "Replied"
+            and c.get("status") not in ["Replied", "Interested", "Not Interested", "Meeting Booked", "Do Not Contact"]
             and not any(r.get("email", "").lower() == (c.get("email") or "").strip().lower() for r in replied_leads)
         ]
 

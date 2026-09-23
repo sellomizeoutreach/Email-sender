@@ -3,6 +3,10 @@
 A locally-hosted (and Streamlit Cloud deployable) cold-outreach platform built on SQLite, Streamlit, and direct SMTP dispatch.
 No external spreadsheets, no AI dependencies, no per-email API fees.
 
+### Core Model
+> **The user does the research and writing; the app does the mechanical work.**
+There are zero external AI/LLM API calls, zero API keys, and zero paid dependencies anywhere in the app. Personalization stems from structured research fields entered by the user + reusable client proof stories + rule-based angle suggestions and deterministic reply handling.
+
 ---
 
 ## Architecture

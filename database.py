@@ -62,6 +62,65 @@ def validate_identifier(name: str) -> str:
         raise ValueError(f"Invalid SQL column identifier: {name!r}")
     return str(name).strip()
 
+CONTACT_STATUSES = [
+    "New",
+    "Researched",
+    "Drafted",
+    "Needs Review",
+    "Approved",
+    "Queued",
+    "Sent",
+    "Follow-Up 1",
+    "Follow-Up 2",
+    "Follow-Up 3",
+    "Replied",
+    "Interested",
+    "Not Interested",
+    "Meeting Booked",
+    "Bounced",
+    "Do Not Contact",
+    "Paused",
+]
+
+DEFAULT_PROOF_STORIES = [
+    {
+        "client_name": "Skinfix Barrier Care",
+        "client_type": "Skincare Brand",
+        "angle": "Creative / A+",
+        "headline": "+42% Conversion Rate via Mobile A+ Module Revamp",
+        "metric_highlight": "+42% Conversion Rate in 45 Days",
+        "full_story_snippet": "Replaced dense wall of text with side-by-side ingredient comparison tiles and mobile-first infographics, lifting unit session percentage from 8.2% to 11.6% in 45 days.",
+        "relevance_tags": "A+, Creative, Infographics, Mobile, Skincare"
+    },
+    {
+        "client_name": "Apex Outdoors",
+        "client_type": "Outdoor DTC Brand",
+        "angle": "Listing Optimization",
+        "headline": "+28% Organic Search Visibility in 30 Days",
+        "metric_highlight": "+28% Organic Visibility & Top 5 Rank",
+        "full_story_snippet": "Restructured titles and rewritten bullet points with high-intent backend search terms, resulting in top 5 ranking for 14 high-volume category keywords.",
+        "relevance_tags": "Listing, Copy, Keywords, SEO, Rank"
+    },
+    {
+        "client_name": "Minori Clean Beauty",
+        "client_type": "Cosmetics Brand",
+        "angle": "PPC / Ads",
+        "headline": "ACoS Reduced from 52% to 26% While Scaling 2.1x",
+        "metric_highlight": "ACoS cut in half (-50%) & $4,200/mo saved",
+        "full_story_snippet": "Restructured ad campaigns into single-keyword ad groups (SKAGs) and negative matched non-converting discovery queries, cutting wasted ad spend by $4,200/mo.",
+        "relevance_tags": "PPC, ACoS, Ads, Spend, Sponsored"
+    },
+    {
+        "client_name": "PureGlow Wellness",
+        "client_type": "Health & Wellness Brand",
+        "angle": "Full Management",
+        "headline": "+84% Overall Catalog Revenue in 90 Days",
+        "metric_highlight": "+84% Catalog Sales Growth",
+        "full_story_snippet": "Audited entire 32-SKU catalog, fixed suppressed parent-child variations, resolved stranded inventory, and harmonized brand storefront design.",
+        "relevance_tags": "Full Management, Variations, Catalog, Storefront"
+    },
+]
+
 KEYRING_SERVICE_NAME = "SellomizeReach"
 KEYRING_USERNAME = "smtp_fernet_key"
 
@@ -422,6 +481,31 @@ def init_db(db_path: str = DB_FILE):
     except Exception:
         pass
 
+    # 9. Proof / Client Story Library table (Phase 2)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proof_stories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_name TEXT NOT NULL,
+            client_type TEXT DEFAULT 'Brand',
+            angle TEXT NOT NULL,
+            headline TEXT NOT NULL,
+            metric_highlight TEXT NOT NULL,
+            full_story_snippet TEXT NOT NULL,
+            relevance_tags TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_proof_angle ON proof_stories(angle)")
+
+    cursor.execute("SELECT COUNT(*) as count FROM proof_stories")
+    if cursor.fetchone()["count"] == 0:
+        now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        for ps in DEFAULT_PROOF_STORIES:
+            cursor.execute("""
+                INSERT INTO proof_stories (client_name, client_type, angle, headline, metric_highlight, full_story_snippet, relevance_tags, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (ps["client_name"], ps["client_type"], ps["angle"], ps["headline"], ps["metric_highlight"], ps["full_story_snippet"], ps["relevance_tags"], now_iso))
+
     # Populate default configuration keys if not already present
     default_configs = {
         "dispatch_method": "hostinger_smtp",
@@ -436,7 +520,11 @@ def init_db(db_path: str = DB_FILE):
         "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
         "sending_start_time": "09:00",
         "sending_end_time": "18:00",
-        "enforce_sending_window": "true"
+        "enforce_sending_window": "true",
+        "reply_interested_keywords": "yes, interested, sure, call, calendar, time, chat, discuss, send more, sounds good, let's talk, book a call, speak, reach out, calendly, zoom",
+        "reply_not_interested_keywords": "not interested, unsubscribe, remove, stop, no thanks, not at this time, pass, please remove, no thank you, wrong person",
+        "reply_dnc_keywords": "never contact, take me off, spam, harassment, report, do not email, legal action, cease and desist",
+        "reply_ooo_keywords": "out of the office, on leave, auto-reply, away from, vacation, holiday, back on, returning on, maternity leave, paternity leave, automated response"
     }
 
     for key, val in default_configs.items():
@@ -972,10 +1060,18 @@ def advance_contact_followup(
         curr_sent = 1
     curr_status = row["status"] or "Not Contacted"
 
-    if curr_status in ["Not Contacted", "", None]:
+    if curr_status == "Not Contacted":
         new_status = "Contacted"
-    elif curr_status in ["Contacted", "Follow-Up Sent"]:
+    elif curr_status == "Contacted":
         new_status = "Follow-Up Sent"
+    elif curr_status in ["New", "Researched", "Drafted", "Needs Review", "Approved", "Queued", "", None]:
+        new_status = "Sent"
+    elif curr_status in ["Sent"]:
+        new_status = "Follow-Up 1"
+    elif curr_status in ["Follow-Up 1", "Follow-Up Sent"]:
+        new_status = "Follow-Up 2"
+    elif curr_status in ["Follow-Up 2"]:
+        new_status = "Follow-Up 3"
     else:
         new_status = curr_status
 
@@ -1309,6 +1405,108 @@ def delete_template(template_id: int, db_path: str = DB_FILE):
     conn.close()
 
 # ------------------------------------------------------------------------------
+# PROOF / CLIENT STORY LIBRARY HELPERS (Phase 2)
+# ------------------------------------------------------------------------------
+
+def get_proof_stories(angle: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all proof stories, optionally filtered by angle."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    if angle and angle.strip():
+        cursor.execute("SELECT * FROM proof_stories WHERE LOWER(TRIM(angle)) = LOWER(TRIM(?)) ORDER BY id ASC", (angle.strip(),))
+    else:
+        cursor.execute("SELECT * FROM proof_stories ORDER BY id ASC")
+    rows = cursor.fetchall()
+    stories = [dict(r) for r in rows]
+    conn.close()
+    return stories
+
+def create_proof_story(
+    client_name: str,
+    angle: str,
+    headline: str,
+    metric_highlight: str,
+    full_story_snippet: str,
+    client_type: str = "Brand",
+    relevance_tags: str = "",
+    db_path: str = DB_FILE
+) -> int:
+    """Insert a new client proof / case study story."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        INSERT INTO proof_stories (
+            client_name, client_type, angle, headline, metric_highlight,
+            full_story_snippet, relevance_tags, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        client_name.strip(), client_type.strip(), angle.strip(), headline.strip(),
+        metric_highlight.strip(), full_story_snippet.strip(), relevance_tags.strip(),
+        now_iso
+    ))
+    story_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return story_id
+
+def update_proof_story(
+    story_id: int,
+    client_name: Optional[str] = None,
+    angle: Optional[str] = None,
+    headline: Optional[str] = None,
+    metric_highlight: Optional[str] = None,
+    full_story_snippet: Optional[str] = None,
+    client_type: Optional[str] = None,
+    relevance_tags: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> bool:
+    """Update fields of an existing proof story."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    fields = []
+    values = []
+    if client_name is not None:
+        fields.append("client_name = ?")
+        values.append(client_name.strip())
+    if angle is not None:
+        fields.append("angle = ?")
+        values.append(angle.strip())
+    if headline is not None:
+        fields.append("headline = ?")
+        values.append(headline.strip())
+    if metric_highlight is not None:
+        fields.append("metric_highlight = ?")
+        values.append(metric_highlight.strip())
+    if full_story_snippet is not None:
+        fields.append("full_story_snippet = ?")
+        values.append(full_story_snippet.strip())
+    if client_type is not None:
+        fields.append("client_type = ?")
+        values.append(client_type.strip())
+    if relevance_tags is not None:
+        fields.append("relevance_tags = ?")
+        values.append(relevance_tags.strip())
+
+    if fields:
+        values.append(story_id)
+        cursor.execute(f"UPDATE proof_stories SET {', '.join(fields)} WHERE id = ?", tuple(values))
+        conn.commit()
+    conn.close()
+    return True
+
+def delete_proof_story(story_id: int, db_path: str = DB_FILE) -> bool:
+    """Delete a proof story by ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM proof_stories WHERE id = ?", (story_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+# ------------------------------------------------------------------------------
 # EMAILS QUEUE HELPERS
 # ------------------------------------------------------------------------------
 
@@ -1443,6 +1641,11 @@ def approve_email(
         revision_notes=None,
         db_path=db_path
     )
+    if recipient:
+        contact = get_contact_by_email(recipient, db_path=db_path)
+        if contact and contact.get("status") in ["New", "Researched", "Drafted", "Needs Review"]:
+            update_contact(contact["id"], status="Approved", db_path=db_path)
+
 
 def flag_email(email_id: int, trigger_word: Union[str, List[str]], db_path: str = DB_FILE):
     """Mark email status as Flagged due to detected negative keyword(s)."""
@@ -1792,17 +1995,42 @@ def record_email_reply(
 ) -> Dict[str, Any]:
     """
     Called when an incoming reply from a contact/lead is detected:
-    1. Updates contact status to 'Replied' and tags with 'Replied'.
-    2. Records reply timestamp and notes.
-    3. Automatically cancels all pending/approved follow-up emails queued for this contact.
+    1. Runs rule-based classification (replaces AI classifier):
+       - 'ooo': Out of Office. CRITICAL: Follow-ups remain queued! Status preserved!
+       - 'interested': status -> 'Interested', cancels sequence follow-ups, alerts user.
+       - 'not_interested': status -> 'Not Interested', cancels sequence follow-ups.
+       - 'dnc': status -> 'Do Not Contact', cancels sequence follow-ups, adds to DNC.
+       - 'replied': status -> 'Replied', cancels sequence follow-ups.
+    2. Updates contact notes, tags, and timestamps.
     Returns details of affected contacts and cancelled emails.
     """
     clean_email = sender_email.strip().lower()
     if not clean_email:
-        return {"contact_found": False, "cancelled_drafts_count": 0, "cancelled_email_ids": []}
+        return {"contact_found": False, "cancelled_drafts_count": 0, "cancelled_email_ids": [], "category": "none"}
 
     now_iso = received_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+
+    # Load keyword configurations from system_config
+    int_kw_raw = get_config("reply_interested_keywords", "yes, interested, sure, call, calendar, time, chat, discuss, send more, sounds good, let's talk, book a call, speak, reach out, calendly, zoom", db_path=db_path)
+    not_int_kw_raw = get_config("reply_not_interested_keywords", "not interested, unsubscribe, remove, stop, no thanks, not at this time, pass, please remove, no thank you, wrong person", db_path=db_path)
+    dnc_kw_raw = get_config("reply_dnc_keywords", "never contact, take me off, spam, harassment, report, do not email, legal action, cease and desist", db_path=db_path)
+    ooo_kw_raw = get_config("reply_ooo_keywords", "out of the office, on leave, auto-reply, away from, vacation, holiday, back on, returning on, maternity leave, paternity leave, automated response", db_path=db_path)
+
+    int_kw = [k.strip() for k in (int_kw_raw or "").split(",") if k.strip()]
+    not_int_kw = [k.strip() for k in (not_int_kw_raw or "").split(",") if k.strip()]
+    dnc_kw = [k.strip() for k in (dnc_kw_raw or "").split(",") if k.strip()]
+    ooo_kw = [k.strip() for k in (ooo_kw_raw or "").split(",") if k.strip()]
+
+    from template_engine import classify_incoming_reply
+    reply_full_text = f"{reply_subject} {reply_body_snippet}".strip()
+    category = classify_incoming_reply(
+        reply_full_text,
+        interested_keywords=int_kw,
+        not_interested_keywords=not_int_kw,
+        dnc_keywords=dnc_kw,
+        ooo_keywords=ooo_kw
+    )
 
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -1813,17 +2041,83 @@ def record_email_reply(
     contact_found = len(contact_rows) > 0
     contact_names = []
 
+    # ── CASE 1: OUT OF OFFICE (OOO) ──────────────────────────────────────────
+    # CRITICAL: OOO does NOT stop the sequence. Follow-ups remain queued!
+    if category == "ooo":
+        for crow in contact_rows:
+            cid = crow["id"]
+            contact_names.append(crow["name"])
+            curr_notes = crow["notes"] or ""
+            snippet_part = f" - '{reply_subject[:35]}'" if reply_subject else ""
+            ooo_note = f"[OOO: {today_str}{snippet_part} - sequence continues]"
+            if ooo_note not in curr_notes:
+                updated_notes = f"{curr_notes} {ooo_note}".strip() if curr_notes else ooo_note
+            else:
+                updated_notes = curr_notes
+
+            cursor.execute("""
+                UPDATE contacts SET
+                    last_contact_date = ?,
+                    last_reply_at = ?,
+                    reply_subject = ?,
+                    notes = ?
+                WHERE id = ?
+            """, (today_str, now_iso, (reply_subject or "")[:120], updated_notes, cid))
+
+        disp_name = contact_names[0] if contact_names else clean_email
+        notif_title = f"✈️ Out of Office from {disp_name}"
+        notif_body = f"Auto-reply received from {clean_email}. Outreach sequence continues uninterrupted."
+        cursor.execute("""
+            INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
+            VALUES (?, ?, ?, ?, 0, ?)
+        """, ("ooo", notif_title, notif_body, clean_email, now_iso))
+
+        conn.commit()
+        conn.close()
+        return {
+            "contact_found": contact_found,
+            "contact_names": contact_names,
+            "cancelled_drafts_count": 0,
+            "cancelled_email_ids": [],
+            "sender_email": clean_email,
+            "category": "ooo"
+        }
+
+    # ── CASE 2: REGULAR REPLIES (Interested, Not Interested, DNC, Replied) ─────
+    if category == "interested":
+        new_status = "Interested"
+        category_tag = "Interested"
+        notif_icon = "🔥"
+        notif_desc = "expressed interest in outreach!"
+    elif category == "not_interested":
+        new_status = "Not Interested"
+        category_tag = "Not Interested"
+        notif_icon = "🛑"
+        notif_desc = "indicated they are not interested."
+    elif category == "dnc":
+        new_status = "Do Not Contact"
+        category_tag = "Do Not Contact"
+        notif_icon = "⛔"
+        notif_desc = "requested Do Not Contact / removal."
+    else:
+        new_status = "Replied"
+        category_tag = "Replied"
+        notif_icon = "💬"
+        notif_desc = "responded to outreach."
+
     for crow in contact_rows:
         cid = crow["id"]
         contact_names.append(crow["name"])
         old_tags = [t.strip() for t in (crow["tags"] or "").split(",") if t.strip()]
         if "Replied" not in old_tags:
             old_tags.append("Replied")
+        if category_tag not in old_tags:
+            old_tags.append(category_tag)
         tags_str = ", ".join(sorted(list(set(old_tags))))
 
         curr_notes = crow["notes"] or ""
         snippet_part = f" - '{reply_subject[:40]}'" if reply_subject else ""
-        reply_note = f"[Replied: {today_str}{snippet_part}]"
+        reply_note = f"[{new_status}: {today_str}{snippet_part}]"
         if reply_note not in curr_notes:
             updated_notes = f"{curr_notes} {reply_note}".strip() if curr_notes else reply_note
         else:
@@ -1831,7 +2125,7 @@ def record_email_reply(
 
         cursor.execute("""
             UPDATE contacts SET
-                status = 'Replied',
+                status = ?,
                 contacted = 'Yes',
                 last_contact_date = ?,
                 last_reply_at = ?,
@@ -1839,11 +2133,9 @@ def record_email_reply(
                 tags = ?,
                 notes = ?
             WHERE id = ?
-        """, (today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
+        """, (new_status, today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
 
-    # 2. Auto-cancel queued sequence follow-up touches (sequence_step > 1) for this contact.
-    # One-time emails (sequence_step <= 1, single outreach, or marketing campaigns) are preserved
-    # so users can freely send single 1-to-1 emails or marketing campaign blasts after a reply.
+    # Auto-cancel queued sequence follow-up touches (sequence_step > 1) for this contact.
     cursor.execute("""
         SELECT id FROM emails
         WHERE LOWER(TRIM(recipient)) = ? 
@@ -1857,24 +2149,22 @@ def record_email_reply(
         cursor.execute("""
             UPDATE emails SET
                 status = 'Cancelled',
-                error_message = 'Auto-cancelled: Prospect replied to outreach (sequence follow-up cancelled; one-time mails preserved)'
+                error_message = ?
             WHERE LOWER(TRIM(recipient)) = ? 
               AND status IN ('Pending', 'Approved', 'Flagged')
               AND sequence_step > 1
-        """, (clean_email,))
+        """, (f"Auto-cancelled: Prospect replied ({new_status})", clean_email))
 
-    # Cancel any pending follow-up sequence rules for this contact
     cursor.execute("""
         UPDATE sequence_rules SET status = 'Cancelled'
         WHERE LOWER(TRIM(contact_email)) = ? AND status IN ('Waiting_Trigger', 'Scheduled')
     """, (clean_email,))
 
-    # 3. Record persistent in-app reply notification (deduplicated against existing unread alerts)
     disp_name = contact_names[0] if contact_names else clean_email
-    notif_title = f"💬 New Reply from {disp_name}"
+    notif_title = f"{notif_icon} {new_status} Reply from {disp_name}"
     subj_part = f" ('{reply_subject[:45]}')" if reply_subject else ""
-    canc_part = f" — {len(cancelled_ids)} scheduled sequence follow-up(s) auto-cancelled (one-time mails preserved)." if cancelled_ids else " (one-time emails preserved)."
-    notif_body = f"Prospect {clean_email} responded to outreach{subj_part}{canc_part}"
+    canc_part = f" — {len(cancelled_ids)} scheduled sequence follow-up(s) auto-cancelled." if cancelled_ids else ""
+    notif_body = f"Prospect {clean_email} {notif_desc}{subj_part}{canc_part}"
 
     cursor.execute("""
         SELECT id FROM notifications
@@ -1897,7 +2187,8 @@ def record_email_reply(
         "contact_names": contact_names,
         "cancelled_drafts_count": len(cancelled_ids),
         "cancelled_email_ids": cancelled_ids,
-        "sender_email": clean_email
+        "sender_email": clean_email,
+        "category": category
     }
 
 # ------------------------------------------------------------------------------
@@ -2233,8 +2524,11 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
     """, (today_str,))
     followups_due = cursor.fetchone()["due"]
 
-    cursor.execute("SELECT COUNT(*) as total_replied FROM contacts WHERE status = 'Replied' OR tags LIKE '%Replied%'")
+    cursor.execute("SELECT COUNT(*) as total_replied FROM contacts WHERE status IN ('Replied', 'Interested', 'Not Interested', 'Meeting Booked') OR tags LIKE '%Replied%'")
     total_replied = cursor.fetchone()["total_replied"]
+
+    cursor.execute("SELECT COUNT(*) as total_interested FROM contacts WHERE status IN ('Interested', 'Meeting Booked') OR tags LIKE '%Interested%'")
+    total_interested = cursor.fetchone()["total_interested"]
 
     # Emails stats
     cursor.execute("SELECT COUNT(*) as total_sent FROM emails WHERE status = 'Sent'")
@@ -2254,6 +2548,7 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
     open_rate = round((total_opened / total_sent * 100), 1) if total_sent > 0 else 0.0
     bounce_rate = round((total_bounced / total_sent * 100), 1) if total_sent > 0 else 0.0
     reply_rate = round((total_replied / contacted_count * 100), 1) if contacted_count > 0 else (round((total_replied / total_sent * 100), 1) if total_sent > 0 else 0.0)
+    positive_rate = round((total_interested / contacted_count * 100), 1) if contacted_count > 0 else (round((total_interested / total_sent * 100), 1) if total_sent > 0 else 0.0)
     click_rate = round((total_clicked / total_sent * 100), 1) if total_sent > 0 else 0.0
     ctor_rate = round((total_clicked / total_opened * 100), 1) if total_opened > 0 else 0.0
 
@@ -2266,6 +2561,8 @@ def get_outreach_analytics(db_path: str = DB_FILE) -> Dict[str, Any]:
         "total_bounced": total_bounced,
         "bounce_rate": bounce_rate,
         "total_replied": total_replied,
+        "total_interested": total_interested,
+        "positive_rate": positive_rate,
         "reply_rate": reply_rate,
         "total_clicked": total_clicked,
         "click_rate": click_rate,

@@ -10,7 +10,7 @@ import json
 import random
 import logging
 import html
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 
 try:
     import nh3
@@ -87,11 +87,32 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
     for k, v in custom_vars.items():
         var_map[k.lower()] = str(v)
 
+    # Aliases for structured research fields
+    if "brandobservation" in var_map and "amazonobservation" not in var_map:
+        var_map["amazonobservation"] = var_map["brandobservation"]
+    elif "amazonobservation" in var_map and "brandobservation" not in var_map:
+        var_map["brandobservation"] = var_map["amazonobservation"]
+    if "listingissue" in var_map and "listingissues" not in var_map:
+        var_map["listingissues"] = var_map["listingissue"]
+    elif "listingissues" in var_map and "listingissue" not in var_map:
+        var_map["listingissue"] = var_map["listingissues"]
+    if "amazonissues" in var_map and "amazonissue" not in var_map:
+        var_map["amazonissue"] = var_map["amazonissues"]
+    elif "amazonissue" in var_map and "amazonissues" not in var_map:
+        var_map["amazonissues"] = var_map["amazonissue"]
+    if "verifiedlocation" in var_map and "location" not in var_map:
+        var_map["location"] = var_map["verifiedlocation"]
+
     # Regex to match [variable_name]
     def replacer(match):
-        token = match.group(1).strip().lower()
+        token = match.group(1).strip().lower().replace(" ", "").replace("_", "")
+        # Check standard token lookup
         if token in var_map:
             return var_map[token]
+        # Also check with original formatting
+        raw_tok = match.group(1).strip().lower()
+        if raw_tok in var_map:
+            return var_map[raw_tok]
         # Return original token if no matching variable found
         return match.group(0)
 
@@ -406,3 +427,160 @@ def resolve_template(template_body: str, contact: Dict[str, Any]) -> str:
     """
     injected = inject_variables(template_body, contact)
     return parse_spintax(injected)
+
+
+# ------------------------------------------------------------------------------
+# FREE / NO-API OUTREACH SYSTEM EXTENSIONS (Rule-Based Classification & Angles)
+# ------------------------------------------------------------------------------
+
+def classify_incoming_reply(
+    reply_text: str,
+    interested_keywords: Optional[List[str]] = None,
+    not_interested_keywords: Optional[List[str]] = None,
+    dnc_keywords: Optional[List[str]] = None,
+    ooo_keywords: Optional[List[str]] = None,
+) -> str:
+    """
+    Deterministic rule-based reply classifier (replaces AI/LLM classifier).
+    Returns one of: 'ooo', 'dnc', 'not_interested', 'interested', 'replied'.
+    Priority:
+      1. Out of Office (OOO)
+      2. Do Not Contact (DNC)
+      3. Not Interested
+      4. Interested
+      5. Replied (default)
+    """
+    if not reply_text:
+        return "replied"
+
+    text_lower = reply_text.lower()
+
+    # Default keyword sets
+    ooo_list = ooo_keywords or [
+        "out of the office", "out of office", "on leave", "auto-reply", "autoreply",
+        "away from", "vacation", "holiday", "back on", "returning on",
+        "maternity leave", "paternity leave", "automated response", "be back",
+        "limited access to email", "i am away"
+    ]
+    dnc_list = dnc_keywords or [
+        "never contact", "take me off", "spam", "harassment", "report",
+        "do not email", "legal action", "cease and desist", "remove immediately"
+    ]
+    not_interested_list = not_interested_keywords or [
+        "not interested", "unsubscribe", "remove", "stop", "no thanks",
+        "not at this time", "pass", "please remove", "no thank you",
+        "wrong person", "not looking", "not currently"
+    ]
+    interested_list = interested_keywords or [
+        "yes", "interested", "sure", "call", "calendar", "time", "chat",
+        "discuss", "send more", "sounds good", "let's talk", "book a call",
+        "speak", "reach out", "calendly", "zoom", "meet", "schedule",
+        "pricing", "portfolio", "tell me more"
+    ]
+
+    # 1. Check Out of Office (OOO)
+    for kw in ooo_list:
+        if kw.lower().strip() in text_lower:
+            return "ooo"
+
+    # 2. Check Do Not Contact (DNC)
+    for kw in dnc_list:
+        if kw.lower().strip() in text_lower:
+            return "dnc"
+
+    # 3. Check Not Interested
+    for kw in not_interested_list:
+        if kw.lower().strip() in text_lower:
+            return "not_interested"
+
+    # 4. Check Interested
+    for kw in interested_list:
+        kw_clean = kw.lower().strip()
+        if not kw_clean:
+            continue
+        if len(kw_clean) <= 4:
+            pattern = rf"(?i)\b{re.escape(kw_clean)}\b"
+            if re.search(pattern, text_lower):
+                return "interested"
+        else:
+            if kw_clean in text_lower:
+                return "interested"
+
+    # 5. Default
+    return "replied"
+
+
+def suggest_outreach_angle(contact_data: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Deterministic rule-based outreach angle suggestion (Phase 4).
+    Inspects structured research fields without any external AI/API:
+      - RelevantService
+      - ListingIssue / ListingIssues
+      - AmazonIssues / AmazonIssue
+      - BrandObservation / AmazonObservation
+    Returns (angle_name, rationale):
+      - 'Creative / A+'
+      - 'Listing Optimization'
+      - 'PPC / Ads'
+      - 'Full Management'
+    """
+    cv = dict(contact_data.get("custom_variables_dict") or {})
+    if not cv and isinstance(contact_data.get("custom_variables"), dict):
+        cv = dict(contact_data["custom_variables"])
+    elif not cv and isinstance(contact_data.get("custom_variables"), str):
+        try:
+            cv = json.loads(contact_data["custom_variables"] or "{}")
+        except Exception:
+            cv = {}
+
+    merged_data = {**contact_data, **cv}
+    # Case-insensitive normalized map
+    norm_map = {str(k).lower().replace(" ", "").replace("_", ""): str(v).lower() for k, v in merged_data.items() if v is not None}
+
+    # Check direct RelevantService field first
+    rel_svc = norm_map.get("relevantservice", "")
+    if "creative" in rel_svc or "a+" in rel_svc or "storefront" in rel_svc:
+        return "Creative / A+", "Directly specified in Relevant Service research field."
+    if "ppc" in rel_svc or "ad" in rel_svc or "sponsored" in rel_svc:
+        return "PPC / Ads", "Directly specified in Relevant Service research field."
+    if "full" in rel_svc or "account" in rel_svc or "management" in rel_svc:
+        return "Full Management", "Directly specified in Relevant Service research field."
+    if "listing" in rel_svc or "copy" in rel_svc or "seo" in rel_svc:
+        return "Listing Optimization", "Directly specified in Relevant Service research field."
+
+    # Inspect Listing Issues
+    listing_issues = norm_map.get("listingissues", "") or norm_map.get("listingissue", "")
+    if any(term in listing_issues for term in ["image", "infographic", "carousel", "a+", "visual", "creative", "storefront", "photo"]):
+        return "Creative / A+", "Identified visual / A+ creative gaps in listing audit notes."
+    if any(term in listing_issues for term in ["copy", "bullet", "title", "keyword", "indexing", "search term", "seo", "rank"]):
+        return "Listing Optimization", "Identified copy, bullet clarity, or keyword indexing issues."
+
+    # Inspect Amazon Issues
+    amazon_issues = norm_map.get("amazonissues", "") or norm_map.get("amazonissue", "")
+    if any(term in amazon_issues for term in ["acos", "tacos", "spend", "ad", "ppc", "bidding", "budget", "cpc"]):
+        return "PPC / Ads", "Identified ad efficiency / high ACoS issues in Amazon research."
+
+    # Inspect Brand Observation
+    brand_obs = norm_map.get("brandobservation", "") or norm_map.get("amazonobservation", "")
+    if (("ppc" in brand_obs or "acos" in brand_obs or "ad" in brand_obs) and
+        ("listing" in brand_obs or "creative" in brand_obs or "image" in brand_obs or "copy" in brand_obs)):
+        return "Full Management", "Multi-disciplinary opportunities (PPC + Creative/Listing) identified."
+
+    if any(term in brand_obs for term in ["creative", "infographic", "carousel", "storefront", "packaging", "a+"]):
+        return "Creative / A+", "Identified creative branding & storefront opportunities in brand observation."
+    if any(term in brand_obs for term in ["acos", "spend", "ad", "ppc", "sponsored"]):
+        return "PPC / Ads", "Identified advertising opportunities in brand observation."
+
+    # Fallback
+    return "Listing Optimization", "Standard Amazon catalog and conversion optimization."
+
+
+_TOKEN_RE = re.compile(r'\[([a-zA-Z0-9_\s\-]+)\]')
+
+
+def _missing_tokens(text: str) -> List[str]:
+    """Return list of unfilled [Token] placeholders remaining in text."""
+    if not text:
+        return []
+    return list({f"[{m.group(1).strip()}]" for m in _TOKEN_RE.finditer(text)})
+

@@ -29,7 +29,7 @@ from database import (
     create_notification
 )
 from mx_checker import verify_email_domain_mx, get_cached_domain_mx
-from template_engine import audit_email_deliverability, scan_all_negative_keywords
+from template_engine import audit_email_deliverability, scan_all_negative_keywords, _missing_tokens
 from timezone_helper import get_zoneinfo
 from ui.components import render_html_preview, trigger_toast
 
@@ -96,7 +96,7 @@ def render_review_outbox_tab():
         clean_drafts = [e for e in all_emails if is_clean_draft(e)]
         flagged_drafts = [
             e for e in all_emails
-            if e.get("status") in ["Flagged", "Account Mismatch", "Error"]
+            if e.get("status") in ["Flagged", "Account Mismatch", "Error", "Needs Review"]
             or (e.get("status") == "Pending" and not is_clean_draft(e))
         ]
         approved_drafts = [e for e in all_emails if e.get("status") == "Approved"]
@@ -299,7 +299,14 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
 
         def format_draft_entry(did):
             dr = draft_id_map[did]
-            status_icon = "🚨" if dr["status"] in ["Flagged", "Account Mismatch", "Error"] else ("🟢" if dr["status"] == "Approved" else "📄")
+            if dr["status"] in ["Flagged", "Account Mismatch", "Error"]:
+                status_icon = "🚨"
+            elif dr["status"] == "Approved":
+                status_icon = "🟢"
+            elif dr["status"] == "Needs Review":
+                status_icon = "🔍"
+            else:
+                status_icon = "📄"
             step_tag = f" [T{dr.get('sequence_step')}]" if dr.get("sequence_step", 1) > 1 else ""
             recip = dr.get("recipient") or "No Recipient"
             subj = dr.get("subject") or "No Subject"
@@ -321,7 +328,7 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
     with col_detail:
         active_draft = draft_id_map[chosen_active_id]
         draft_id = active_draft["id"]
-        is_flagged = (active_draft["status"] in ["Flagged", "Account Mismatch", "Error"])
+        is_flagged = (active_draft["status"] in ["Flagged", "Account Mismatch", "Error", "Needs Review"])
 
         subject_key = f"subj_{tab_key_prefix}_{draft_id}"
         recipient_key = f"recip_{tab_key_prefix}_{draft_id}"
@@ -350,6 +357,7 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
         is_internal_recipient = (active_draft.get("recipient") or "").strip().lower() in system_excluded_emails
 
         # Prominent Alert Banner for Internal/BCC, Negative Keywords or Errors
+        # Prominent Alert Banner for Internal/BCC, Negative Keywords, Needs Review or Errors
         if is_internal_recipient:
             st.markdown(f"""
             <div style="background:#FEF2F2; border:1.5px solid #EF4444; border-radius:8px; padding:12px 16px; margin-bottom:12px;">
@@ -365,6 +373,14 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
             <div style="background:#FFFBEB; border:1.5px solid #F59E0B; border-radius:8px; padding:12px 16px; margin-bottom:12px;">
                 <div style="font-weight:700; color:#B45309; font-size:0.92rem;">⚠️ Negative Keyword Shield: Contains restricted word(s): {trig_badges}</div>
                 <div style="font-size:0.8rem; color:#92400E; margin-top:3px;">Edit the draft copy below to remove restricted words before approving.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        elif active_draft.get("status") == "Needs Review":
+            alert_msg = active_draft.get('revision_notes') or "Send Guard quarantined this draft because research tokens were missing. Verify or edit copy below."
+            st.markdown(f"""
+            <div style="background:#FFFBEB; border:1.5px solid #F59E0B; border-radius:8px; padding:12px 16px; margin-bottom:12px;">
+                <div style="font-weight:700; color:#B45309; font-size:0.92rem;">🔍 Needs Review: Unfilled Research Token(s)</div>
+                <div style="font-size:0.8rem; color:#92400E; margin-top:2px;">{alert_msg}</div>
             </div>
             """, unsafe_allow_html=True)
         elif is_flagged:
@@ -444,6 +460,28 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
             preview_html = f"{body_formatted}<br><br>{saved_sig}" if saved_sig else body_formatted
             render_html_preview(preview_html, height=200)
 
+        # Unfilled token detection (Send Guard)
+        unfilled_tokens = _missing_tokens(f"{current_subject} {current_body}")
+        if unfilled_tokens:
+            st.markdown(f"""
+            <div style="background:#FFFBEB; border:1px solid #F59E0B; border-radius:6px; padding:8px 12px; margin-top:8px; margin-bottom:8px;">
+                <span style="font-size:0.82rem; color:#B45309; font-weight:700;">⚠️ Send Guard Notice:</span>
+                <span style="font-size:0.8rem; color:#92400E;"> Draft copy contains unfilled token placeholder(s): <b>{', '.join(unfilled_tokens)}</b>. Replace or edit them out before approving to prevent accidental bracketed sends.</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Pre-Flight Verification Checklist
+        with st.expander("📋 Pre-Flight Verification Checklist", expanded=(active_draft.get("status") == "Needs Review")):
+            st.caption("Human verification guardrail — verify prospect data and pitch relevance before dispatch:")
+            c_chk1, c_chk2 = st.columns(2)
+            with c_chk1:
+                st.checkbox("Prospect name & company verified", key=f"chk_v_name_{tab_key_prefix}_{draft_id}")
+                st.checkbox("Amazon observation verified against actual listing", key=f"chk_v_obs_{tab_key_prefix}_{draft_id}")
+                st.checkbox("Location verified (not guessed)", key=f"chk_v_loc_{tab_key_prefix}_{draft_id}")
+            with c_chk2:
+                st.checkbox("Proof story matches prospect's angle", key=f"chk_v_proof_{tab_key_prefix}_{draft_id}")
+                st.checkbox("Deliverability check passed (no spam triggers)", value=(len(current_live_triggers) == 0 and len(unfilled_tokens) == 0), key=f"chk_v_deliv_{tab_key_prefix}_{draft_id}")
+
         # Local Dispatch Date & Time
         local_now = datetime.now().astimezone()
         default_date = local_now.date()
@@ -470,13 +508,19 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
         col_act1, col_act2, col_act3 = st.columns([1.6, 1.3, 1.3])
 
         with col_act1:
+            can_approve = not bool(current_live_triggers or is_internal_recipient or unfilled_tokens)
+            app_tooltip = "Resolve unfilled research placeholder tokens before approval." if unfilled_tokens else (
+                "Cannot dispatch outreach to internal BCC or sender account." if is_internal_recipient else (
+                    "Remove restricted trigger keywords before approval." if current_live_triggers else "Schedule for automated dispatch."
+                )
+            )
             approve_btn = st.button(
                 "🚀 Approve & Schedule",
                 key=f"approve_{tab_key_prefix}_{draft_id}",
                 type="primary",
-                disabled=bool(current_live_triggers or is_internal_recipient),
+                disabled=not can_approve,
                 use_container_width=True,
-                help="Cannot dispatch outreach to internal BCC or sender account." if is_internal_recipient else ("Remove restricted trigger keywords before approval." if current_live_triggers else "Schedule for automated dispatch.")
+                help=app_tooltip
             )
             if approve_btn:
                 rec_clean = updated_recipient.strip()
@@ -507,14 +551,17 @@ def _render_draft_inspector(drafts_to_show, tab_key_prefix, is_flagged_view=Fals
                 help="Save draft edits without approving yet."
             )
             if save_btn:
-                new_status = "Pending" if (active_draft["status"] == "Flagged" and not current_live_triggers) else active_draft["status"]
+                new_status = active_draft["status"]
+                if active_draft["status"] in ["Flagged", "Needs Review"] and not current_live_triggers and not unfilled_tokens:
+                    new_status = "Pending"
                 update_email(
                     email_id=draft_id,
                     status=new_status,
                     subject=updated_subject.strip(),
                     recipient=updated_recipient.strip(),
                     email_html=current_body,
-                    scheduled_time=scheduled_datetime_str
+                    scheduled_time=scheduled_datetime_str,
+                    revision_notes="" if new_status == "Pending" else active_draft.get("revision_notes")
                 )
                 trigger_toast(f"Edits saved for Draft #{draft_id}.", icon="✏️")
                 st.rerun()
