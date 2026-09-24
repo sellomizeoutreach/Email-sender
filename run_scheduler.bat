@@ -1,8 +1,8 @@
 @echo off
-title Sellomize Reach - Outlook Scheduler
+title Sellomize Reach - Hostinger Dispatch Scheduler
 cd /d "%~dp0"
 echo ========================================================
-echo Starting Sellomize Reach Outlook Dispatch Scheduler...
+echo Starting Sellomize Reach Hostinger Dispatch Scheduler...
 echo ========================================================
 python scheduler.py
 pause

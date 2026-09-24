@@ -133,14 +133,86 @@ def get_market_info(market_key: str) -> Dict[str, Any]:
     return TARGET_MARKETS.get(market_key, TARGET_MARKETS["LOCAL"])
 
 
+TIMEZONE_ALIASES: Dict[str, str] = {
+    "london": "Europe/London",
+    "uk": "Europe/London",
+    "united kingdom": "Europe/London",
+    "great britain": "Europe/London",
+    "england": "Europe/London",
+    "new york": "America/New_York",
+    "ny": "America/New_York",
+    "nyc": "America/New_York",
+    "us": "America/New_York",
+    "usa": "America/New_York",
+    "united states": "America/New_York",
+    "us eastern": "America/New_York",
+    "us/eastern": "America/New_York",
+    "eastern": "America/New_York",
+    "chicago": "America/Chicago",
+    "us central": "America/Chicago",
+    "us/central": "America/Chicago",
+    "central": "America/Chicago",
+    "los angeles": "America/Los_Angeles",
+    "san francisco": "America/Los_Angeles",
+    "us pacific": "America/Los_Angeles",
+    "us/pacific": "America/Los_Angeles",
+    "pacific": "America/Los_Angeles",
+    "california": "America/Los_Angeles",
+    "toronto": "America/Toronto",
+    "canada": "America/Toronto",
+    "vancouver": "America/Vancouver",
+    "sydney": "Australia/Sydney",
+    "melbourne": "Australia/Sydney",
+    "australia": "Australia/Sydney",
+    "perth": "Australia/Perth",
+    "berlin": "Europe/Berlin",
+    "germany": "Europe/Berlin",
+    "paris": "Europe/Berlin",
+    "france": "Europe/Berlin",
+    "amsterdam": "Europe/Berlin",
+    "madrid": "Europe/Berlin",
+    "spain": "Europe/Berlin",
+    "europe": "Europe/Berlin",
+    "dubai": "Asia/Dubai",
+    "uae": "Asia/Dubai",
+    "singapore": "Asia/Singapore",
+    "tokyo": "Asia/Tokyo",
+    "japan": "Asia/Tokyo",
+    "india": "Asia/Kolkata",
+    "mumbai": "Asia/Kolkata",
+    "delhi": "Asia/Kolkata",
+    "kolkata": "Asia/Kolkata",
+    "utc": "UTC",
+    "gmt": "UTC",
+}
+
+def resolve_timezone(input_str: Optional[str]) -> str:
+    """Resolve a country name, city name, or timezone identifier into a valid IANA timezone name."""
+    if not input_str:
+        return "LOCAL"
+    s = str(input_str).strip()
+    if s.upper() in ["LOCAL", ""]:
+        return "LOCAL"
+    try:
+        ZoneInfo(s)
+        return s
+    except Exception:
+        pass
+    clean = s.lower().replace("_", " ").replace("-", " ")
+    for k, v in TIMEZONE_ALIASES.items():
+        if k == clean or k in clean:
+            return v
+    return "LOCAL"
+
 def get_zoneinfo(tz_identifier: str) -> Optional[ZoneInfo]:
     """Safely obtain a ZoneInfo object, or None for LOCAL/invalid."""
-    if not tz_identifier or tz_identifier.upper() in ["LOCAL", ""]:
+    resolved = resolve_timezone(tz_identifier)
+    if resolved == "LOCAL":
         return None
     try:
-        return ZoneInfo(tz_identifier)
+        return ZoneInfo(resolved)
     except Exception as e:
-        logger.warning(f"Invalid timezone identifier '{tz_identifier}': {e}. Using local time.")
+        logger.warning(f"Invalid timezone identifier '{tz_identifier}' (resolved '{resolved}'): {e}. Using local time.")
         return None
 
 

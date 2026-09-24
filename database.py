@@ -62,64 +62,32 @@ def validate_identifier(name: str) -> str:
         raise ValueError(f"Invalid SQL column identifier: {name!r}")
     return str(name).strip()
 
-CONTACT_STATUSES = [
+LEAD_STATUSES = [
     "New",
-    "Researched",
-    "Drafted",
-    "Needs Review",
-    "Approved",
-    "Queued",
-    "Sent",
-    "Follow-Up 1",
-    "Follow-Up 2",
-    "Follow-Up 3",
+    "Emailed",
     "Replied",
-    "Interested",
-    "Not Interested",
-    "Meeting Booked",
     "Bounced",
     "Do Not Contact",
-    "Paused",
 ]
+CONTACT_STATUSES = LEAD_STATUSES
 
-DEFAULT_PROOF_STORIES = [
-    {
-        "client_name": "Skinfix Barrier Care",
-        "client_type": "Skincare Brand",
-        "angle": "Creative / A+",
-        "headline": "+42% Conversion Rate via Mobile A+ Module Revamp",
-        "metric_highlight": "+42% Conversion Rate in 45 Days",
-        "full_story_snippet": "Replaced dense wall of text with side-by-side ingredient comparison tiles and mobile-first infographics, lifting unit session percentage from 8.2% to 11.6% in 45 days.",
-        "relevance_tags": "A+, Creative, Infographics, Mobile, Skincare"
-    },
-    {
-        "client_name": "Apex Outdoors",
-        "client_type": "Outdoor DTC Brand",
-        "angle": "Listing Optimization",
-        "headline": "+28% Organic Search Visibility in 30 Days",
-        "metric_highlight": "+28% Organic Visibility & Top 5 Rank",
-        "full_story_snippet": "Restructured titles and rewritten bullet points with high-intent backend search terms, resulting in top 5 ranking for 14 high-volume category keywords.",
-        "relevance_tags": "Listing, Copy, Keywords, SEO, Rank"
-    },
-    {
-        "client_name": "Minori Clean Beauty",
-        "client_type": "Cosmetics Brand",
-        "angle": "PPC / Ads",
-        "headline": "ACoS Reduced from 52% to 26% While Scaling 2.1x",
-        "metric_highlight": "ACoS cut in half (-50%) & $4,200/mo saved",
-        "full_story_snippet": "Restructured ad campaigns into single-keyword ad groups (SKAGs) and negative matched non-converting discovery queries, cutting wasted ad spend by $4,200/mo.",
-        "relevance_tags": "PPC, ACoS, Ads, Spend, Sponsored"
-    },
-    {
-        "client_name": "PureGlow Wellness",
-        "client_type": "Health & Wellness Brand",
-        "angle": "Full Management",
-        "headline": "+84% Overall Catalog Revenue in 90 Days",
-        "metric_highlight": "+84% Catalog Sales Growth",
-        "full_story_snippet": "Audited entire 32-SKU catalog, fixed suppressed parent-child variations, resolved stranded inventory, and harmonized brand storefront design.",
-        "relevance_tags": "Full Management, Variations, Catalog, Storefront"
-    },
-]
+def normalize_lead_status(status: str) -> str:
+    """Normalize legacy 17 statuses into the 5 final statuses."""
+    s = (status or "New").strip()
+    if s in LEAD_STATUSES:
+        return s
+    s_lower = s.lower()
+    if s_lower in ["new", "researched", "drafted", "needs review", "not contacted"]:
+        return "New"
+    if s_lower in ["sent", "approved", "queued", "follow-up 1", "follow-up 2", "follow-up 3", "emailed", "contacted", "follow-up sent"]:
+        return "Emailed"
+    if s_lower in ["replied", "interested", "meeting booked"]:
+        return "Replied"
+    if s_lower in ["bounced"]:
+        return "Bounced"
+    if s_lower in ["do not contact", "not interested", "paused"]:
+        return "Do Not Contact"
+    return "New"
 
 KEYRING_SERVICE_NAME = "SellomizeReach"
 KEYRING_USERNAME = "smtp_fernet_key"
@@ -133,89 +101,17 @@ def _get_dpapi_key_file_path() -> str:
         data_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(data_dir, ".smtp_dpapi.key")
 
-def get_or_create_encryption_key() -> bytes:
-    """
-    Retrieve or generate a 256-bit Fernet key stored securely in the OS keychain via keyring.
-    Falls back gracefully to Windows DPAPI if keyring is unavailable or restricted.
-    """
-    if KEYRING_AVAILABLE and keyring:
-        try:
-            stored_key = keyring.get_password(KEYRING_SERVICE_NAME, KEYRING_USERNAME)
-            if stored_key:
-                return stored_key.encode("utf-8")
-            if Fernet:
-                new_key = Fernet.generate_key().decode("utf-8")
-                keyring.set_password(KEYRING_SERVICE_NAME, KEYRING_USERNAME, new_key)
-                return new_key.encode("utf-8")
-        except Exception as e:
-            logger.warning(f"Keyring access error: {e}. Falling back to DPAPI.")
-
-    if DPAPI_AVAILABLE and win32crypt and Fernet:
-        key_file = _get_dpapi_key_file_path()
-        try:
-            if os.path.exists(key_file):
-                with open(key_file, "rb") as f:
-                    encrypted_data = f.read()
-                decrypted = win32crypt.CryptUnprotectData(encrypted_data, None, None, None, 0)[1]
-                return decrypted
-            else:
-                new_key = Fernet.generate_key()
-                protected_data = win32crypt.CryptProtectData(new_key, "SellomizeKey", None, None, None, 0)
-                with open(key_file, "wb") as f:
-                    f.write(protected_data)
-                return new_key
-        except Exception as e:
-            logger.warning(f"DPAPI key management error: {e}")
-
-    logger.warning("Neither Keyring nor DPAPI available. Using local ephemeral fallback key.")
-    if Fernet:
-        return b"4XW7c1o3K9nL0pQ_vRtY2uI5eA8sD6fG1hJ4kL7zX9c="
-    return b"fallback_insecure_key_32_bytes_!"
-
-def encrypt_smtp_password(plain_password: str) -> str:
-    """
-    Encrypt plaintext password using Fernet symmetric encryption.
-    Returns ciphertext string starting with 'gAAAAA'.
-    """
-    if not plain_password:
-        return ""
-    if not CRYPTOGRAPHY_AVAILABLE or not Fernet:
-        logger.warning("Cryptography library not available; returning plaintext.")
-        return plain_password
-    try:
-        key = get_or_create_encryption_key()
-        f = Fernet(key)
-        encrypted = f.encrypt(plain_password.strip().encode("utf-8"))
-        return encrypted.decode("utf-8")
-    except Exception as e:
-        logger.error(f"Error encrypting password: {e}")
-        return plain_password
-
-def decrypt_smtp_password(raw_value: str) -> Tuple[str, bool]:
-    """
-    Decrypt an SMTP password stored in SQLite.
-    Returns (decrypted_password, is_undecryptable).
-    - If raw_value is empty: returns ('', False)
-    - If raw_value is legacy plaintext (not starting with 'gAAAAA'): returns (raw_value, False)
-    - If decryption fails (corrupted token or DB moved across machines): returns ('', True)
-    """
-    if not raw_value or not raw_value.strip():
-        return "", False
-    val = raw_value.strip()
-    if not val.startswith("gAAAAA"):
-        # Legacy unencrypted plaintext password
-        return val, False
-    if not CRYPTOGRAPHY_AVAILABLE or not Fernet:
-        logger.warning("Cryptography library not available to decrypt password.")
-        return "", True
-    try:
-        key = get_or_create_encryption_key()
-        f = Fernet(key)
-        decrypted = f.decrypt(val.encode("utf-8")).decode("utf-8")
-        return decrypted, False
-    except (InvalidToken, Exception) as e:
-        logger.warning(f"Failed to decrypt SMTP password with current OS keychain key: {e}")
-        return "", True
+from security import (
+    get_or_create_encryption_key,
+    encrypt_smtp_password,
+    decrypt_smtp_password,
+    sanitize_header,
+    sanitize_preview_html,
+)
+from warmup import (
+    get_warmup_info,
+    get_effective_daily_limit,
+)
 
 def _hydrate_smtp_account(acc: Dict[str, Any]) -> Dict[str, Any]:
     """Decrypt the stored password on an account record, setting safety flags if undecryptable."""
@@ -285,7 +181,7 @@ def init_db(db_path: str = DB_FILE):
         ("priority", "TEXT DEFAULT 'Medium'"),
         ("contacted", "TEXT DEFAULT 'No'"),
         ("date_first_emailed", "TEXT DEFAULT ''"),
-        ("status", "TEXT DEFAULT 'Not Contacted'"),
+        ("status", "TEXT DEFAULT 'New'"),
         ("follow_ups_sent", "INTEGER DEFAULT 0"),
         ("last_contact_date", "TEXT DEFAULT ''"),
         ("next_follow_up", "TEXT DEFAULT ''"),
@@ -293,6 +189,7 @@ def init_db(db_path: str = DB_FILE):
         ("notes", "TEXT DEFAULT ''"),
         ("last_reply_at", "TEXT DEFAULT ''"),
         ("reply_subject", "TEXT DEFAULT ''"),
+        ("country_or_timezone", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in contact_migrations:
         try:
@@ -301,6 +198,31 @@ def init_db(db_path: str = DB_FILE):
         except sqlite3.OperationalError as e:
             if "duplicate column name" not in str(e).lower():
                 logger.warning(f"OperationalError during contacts migration for {col_name}: {e}")
+
+    # Normalize all contacts to the 5 simplified statuses
+    cursor.execute("""
+        UPDATE contacts SET status = 'New'
+        WHERE status IN ('Researched', 'Drafted', 'Needs Review', 'Not Contacted', 'new', 'New')
+    """)
+    cursor.execute("""
+        UPDATE contacts SET status = 'Emailed'
+        WHERE status IN ('Approved', 'Queued', 'Sent', 'Follow-Up 1', 'Follow-Up 2', 'Follow-Up 3', 'emailed', 'Emailed')
+    """)
+    cursor.execute("""
+        UPDATE contacts SET status = 'Replied'
+        WHERE status IN ('Interested', 'Meeting Booked', 'replied', 'Replied')
+    """)
+    cursor.execute("""
+        UPDATE contacts SET status = 'Do Not Contact'
+        WHERE status IN ('Not Interested', 'Paused', 'do not contact', 'Do Not Contact')
+    """)
+
+    # Create leads view for simplified lead access
+    cursor.execute("""
+        CREATE VIEW IF NOT EXISTS leads AS
+        SELECT id, name, email, company, country_or_timezone, status, notes, created_at
+        FROM contacts
+    """)
 
     # 3. Templates table (Reusable Spintax & Variable templates)
     cursor.execute("""
@@ -311,6 +233,23 @@ def init_db(db_path: str = DB_FILE):
             created_at TEXT NOT NULL
         )
     """)
+
+    template_migrations = [
+        ("name", "TEXT DEFAULT ''"),
+        ("subject", "TEXT DEFAULT ''"),
+        ("body_html", "TEXT DEFAULT ''"),
+        ("updated_at", "TEXT DEFAULT ''")
+    ]
+    for col_name, col_def in template_migrations:
+        try:
+            valid_col = validate_identifier(col_name)
+            cursor.execute(f"ALTER TABLE templates ADD COLUMN {valid_col} {col_def}")
+        except sqlite3.OperationalError:
+            pass
+
+    # Ensure name and body_html are synced with template_name and body_content
+    cursor.execute("UPDATE templates SET name = template_name WHERE name = '' OR name IS NULL")
+    cursor.execute("UPDATE templates SET body_html = body_content WHERE body_html = '' OR body_html IS NULL")
 
     # 4. Emails queue table for drafts, review, and dispatch status
     cursor.execute("""
@@ -353,7 +292,14 @@ def init_db(db_path: str = DB_FILE):
         ("market_key", "TEXT DEFAULT ''"),
         ("message_id", "TEXT DEFAULT ''"),
         ("in_reply_to", "TEXT DEFAULT ''"),
-        ("thread_id", "TEXT DEFAULT ''")
+        ("thread_id", "TEXT DEFAULT ''"),
+        ("lead_id", "INTEGER DEFAULT NULL"),
+        ("mailbox_id", "INTEGER DEFAULT NULL"),
+        ("body_html_resolved", "TEXT DEFAULT ''"),
+        ("scheduled_time_utc", "TEXT DEFAULT ''"),
+        ("lead_local_time", "TEXT DEFAULT ''"),
+        ("thread_refs", "TEXT DEFAULT ''"),
+        ("sequence_group", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in email_migrations:
         try:
@@ -485,30 +431,31 @@ def init_db(db_path: str = DB_FILE):
     except Exception:
         pass
 
-    # 9. Proof / Client Story Library table (Phase 2)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS proof_stories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_name TEXT NOT NULL,
-            client_type TEXT DEFAULT 'Brand',
-            angle TEXT NOT NULL,
-            headline TEXT NOT NULL,
-            metric_highlight TEXT NOT NULL,
-            full_story_snippet TEXT NOT NULL,
-            relevance_tags TEXT DEFAULT '',
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_proof_angle ON proof_stories(angle)")
+    # Drop removed proof_stories table (Section 2.2)
+    cursor.execute("DROP TABLE IF EXISTS proof_stories")
 
-    cursor.execute("SELECT COUNT(*) as count FROM proof_stories")
-    if cursor.fetchone()["count"] == 0:
-        now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        for ps in DEFAULT_PROOF_STORIES:
-            cursor.execute("""
-                INSERT INTO proof_stories (client_name, client_type, angle, headline, metric_highlight, full_story_snippet, relevance_tags, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (ps["client_name"], ps["client_type"], ps["angle"], ps["headline"], ps["metric_highlight"], ps["full_story_snippet"], ps["relevance_tags"], now_iso))
+    # Canonical Views matching Target Data Model (Section B3)
+    cursor.execute("""
+        CREATE VIEW IF NOT EXISTS mailboxes AS
+        SELECT id, sender_name AS from_name, email AS username, smtp_host AS host, smtp_port AS port,
+               password AS password_encrypted, daily_limit,
+               warmup_starting_limit AS warmup_start, warmup_daily_increment AS warmup_increment,
+               warmup_target_limit AS warmup_cap, warmup_start_date, is_active AS active,
+               sender_name AS label
+        FROM smtp_accounts
+    """)
+    cursor.execute("""
+        CREATE VIEW IF NOT EXISTS messages AS
+        SELECT id, lead_id, recipient AS to_email, smtp_account_id AS mailbox_id, subject,
+               COALESCE(NULLIF(body_html_resolved, ''), email_html) AS body_html,
+               scheduled_time AS scheduled_time_utc, status, thread_refs, sequence_group,
+               error_message AS error, 0 AS attempts, created_at, updated_at AS sent_at
+        FROM emails
+    """)
+    cursor.execute("""
+        CREATE VIEW IF NOT EXISTS settings AS
+        SELECT key, value FROM system_config
+    """)
 
     # Populate default configuration keys if not already present
     default_configs = {
@@ -518,17 +465,19 @@ def init_db(db_path: str = DB_FILE):
         "sender_email": "",
         "bcc_email": "",
         "schedule_mode": "adaptive_multi_country",
-        "default_market": "CA_EAST",
+        "default_market": "LOCAL",
+        "default_timezone": "LOCAL",
         "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
-        "signature_html": "<p>Best regards,<br><strong>Listing Audit Team</strong><br><a href='https://example.com'>example.com</a></p>",
+        "signature_html": "<p>Best regards,<br><strong>Outreach Team</strong></p>",
         "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
         "sending_start_time": "09:00",
-        "sending_end_time": "18:00",
-        "enforce_sending_window": "true",
-        "reply_interested_keywords": "yes, interested, sure, call, calendar, time, chat, discuss, send more, sounds good, let's talk, book a call, speak, reach out, calendly, zoom",
-        "reply_not_interested_keywords": "not interested, unsubscribe, remove, stop, no thanks, not at this time, pass, please remove, no thank you, wrong person",
-        "reply_dnc_keywords": "never contact, take me off, spam, harassment, report, do not email, legal action, cease and desist",
-        "reply_ooo_keywords": "out of the office, on leave, auto-reply, away from, vacation, holiday, back on, returning on, maternity leave, paternity leave, automated response"
+        "sending_end_time": "17:00",
+        "default_window_start": "09:00",
+        "default_window_end": "17:00",
+        "send_delay_seconds": "60",
+        "worker_heartbeat": "",
+        "send_now_outside_window_policy": "hold",
+        "enforce_sending_window": "true"
     }
 
     for key, val in default_configs.items():
@@ -557,16 +506,16 @@ def init_db(db_path: str = DB_FILE):
     if cursor.fetchone()["count"] == 0:
         now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute("""
-            INSERT INTO contacts (name, email, company, tags, custom_variables, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'New', ?)
         """, ("Sarah Jenkins", "sarah@apexoutdoors.com", "Apex Outdoors", "Listing Audit, Outdoor Brands", json.dumps({"Niche": "Outdoor Gear", "Role": "Founder"}), now_iso))
         cursor.execute("""
-            INSERT INTO contacts (name, email, company, tags, custom_variables, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'New', ?)
         """, ("Elena Rostova", "elena@skinfix.com", "Skinfix", "Beauty Brands, Q4 Leads", json.dumps({"Niche": "Skincare", "Role": "Brand Director"}), now_iso))
         cursor.execute("""
-            INSERT INTO contacts (name, email, company, tags, custom_variables, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'New', ?)
         """, ("Marcus Brody", "marcus@minoribeauty.com", "Minori Beauty", "Beauty Brands, Listing Audit", json.dumps({"Niche": "Cosmetics", "Role": "E-commerce Head"}), now_iso))
 
     conn.commit()
@@ -670,17 +619,19 @@ def create_contact(
     priority: str = "Medium",
     contacted: str = "No",
     date_first_emailed: str = "",
-    status: str = "Not Contacted",
+    status: str = "New",
     follow_ups_sent: int = 0,
     last_contact_date: str = "",
     next_follow_up: str = "",
     owner: str = "",
     notes: str = "",
+    country_or_timezone: str = "",
     db_path: str = DB_FILE
 ) -> int:
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     vars_json = json.dumps(custom_variables or {})
     tags_str = _normalize_tags(tags)
+    norm_status = normalize_lead_status(status)
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -688,21 +639,106 @@ def create_contact(
             name, email, company, tags, custom_variables,
             lead_source, priority, contacted, date_first_emailed,
             status, follow_ups_sent, last_contact_date, next_follow_up,
-            owner, notes, created_at
+            owner, notes, country_or_timezone, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         name.strip(), email.strip(), company.strip(), tags_str, vars_json,
         (lead_source or "Other").strip(), (priority or "Medium").strip(),
         (contacted or "No").strip(), (date_first_emailed or "").strip(),
-        (status or "Not Contacted").strip(), int(follow_ups_sent or 0),
+        norm_status, int(follow_ups_sent or 0),
         (last_contact_date or "").strip(), (next_follow_up or "").strip(),
-        (owner or "").strip(), (notes or "").strip(), now_iso
+        (owner or "").strip(), (notes or "").strip(), (country_or_timezone or "").strip(), now_iso
     ))
     contact_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return contact_id
+
+def get_leads(status: Optional[str] = None, search: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve leads (Name, Email, Company, Country/Timezone, Status, Notes) with optional filtering."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    query = "SELECT id, name, email, company, country_or_timezone, status, notes, created_at FROM contacts"
+    conditions = []
+    params = []
+    if status and status != "-- All --" and status != "All":
+        conditions.append("status = ?")
+        params.append(normalize_lead_status(status))
+    if search and search.strip():
+        s = f"%{search.strip().lower()}%"
+        conditions.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(company) LIKE ?)")
+        params.extend([s, s, s])
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY id DESC"
+    cursor.execute(query, tuple(params))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_lead_by_id(lead_id: int, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    """Retrieve single lead by ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, email, company, country_or_timezone, status, notes, created_at FROM contacts WHERE id = ?", (lead_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_lead_by_email(email: str, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    """Retrieve single lead by email."""
+    if not email:
+        return None
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, email, company, country_or_timezone, status, notes, created_at FROM contacts WHERE LOWER(TRIM(email)) = ? LIMIT 1", (email.strip().lower(),))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def create_lead(
+    name: str,
+    email: str,
+    company: str = "",
+    country_or_timezone: str = "",
+    status: str = "New",
+    notes: str = "",
+    db_path: str = DB_FILE
+) -> int:
+    return create_contact(
+        name=name,
+        email=email,
+        company=company,
+        country_or_timezone=country_or_timezone,
+        status=status,
+        notes=notes,
+        db_path=db_path
+    )
+
+def update_lead(
+    lead_id: int,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    company: Optional[str] = None,
+    country_or_timezone: Optional[str] = None,
+    status: Optional[str] = None,
+    notes: Optional[str] = None,
+    db_path: str = DB_FILE
+):
+    update_contact(
+        contact_id=lead_id,
+        name=name,
+        email=email,
+        company=company,
+        country_or_timezone=country_or_timezone,
+        status=status,
+        notes=notes,
+        db_path=db_path
+    )
+
+def delete_lead(lead_id: int, db_path: str = DB_FILE) -> bool:
+    return delete_contact(lead_id, db_path=db_path)
 
 def _populate_contact_defaults(d: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure all CRM spreadsheet fields have standardized non-null default values."""
@@ -812,6 +848,7 @@ def update_contact(
     next_follow_up: Optional[str] = None,
     owner: Optional[str] = None,
     notes: Optional[str] = None,
+    country_or_timezone: Optional[str] = None,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
@@ -849,7 +886,10 @@ def update_contact(
         values.append(date_first_emailed.strip())
     if status is not None:
         fields.append("status = ?")
-        values.append(status.strip())
+        values.append(normalize_lead_status(status))
+    if country_or_timezone is not None:
+        fields.append("country_or_timezone = ?")
+        values.append(country_or_timezone.strip())
     if follow_ups_sent is not None:
         fields.append("follow_ups_sent = ?")
         values.append(int(follow_ups_sent))
@@ -889,8 +929,9 @@ def upsert_contact_by_email(
     next_follow_up: Optional[str] = None,
     owner: Optional[str] = None,
     notes: Optional[str] = None,
+    country_or_timezone: Optional[str] = None,
     db_path: str = DB_FILE
-) -> (int, bool):
+) -> Tuple[int, bool]:
     """
     If an email address already exists in the database, updates the existing row
     by merging new tags and custom variables and updating non-empty CRM fields.
@@ -929,6 +970,8 @@ def upsert_contact_by_email(
             update_kwargs["date_first_emailed"] = date_first_emailed.strip()
         if status is not None and status.strip():
             update_kwargs["status"] = status.strip()
+        if country_or_timezone is not None and country_or_timezone.strip():
+            update_kwargs["country_or_timezone"] = country_or_timezone.strip()
         if follow_ups_sent is not None:
             update_kwargs["follow_ups_sent"] = int(follow_ups_sent)
         if last_contact_date is not None and last_contact_date.strip():
@@ -953,12 +996,13 @@ def upsert_contact_by_email(
             priority=priority or "Medium",
             contacted=contacted or "No",
             date_first_emailed=date_first_emailed or "",
-            status=status or "Not Contacted",
+            status=status or "New",
             follow_ups_sent=follow_ups_sent if follow_ups_sent is not None else 0,
             last_contact_date=last_contact_date or "",
             next_follow_up=next_follow_up or "",
             owner=owner or "",
             notes=notes or "",
+            country_or_timezone=country_or_timezone or "",
             db_path=db_path
         )
         return new_id, True
@@ -1062,22 +1106,11 @@ def advance_contact_followup(
         curr_sent = int(row["follow_ups_sent"] or 0) + 1
     except Exception:
         curr_sent = 1
-    curr_status = row["status"] or "Not Contacted"
-
-    if curr_status == "Not Contacted":
-        new_status = "Contacted"
-    elif curr_status == "Contacted":
-        new_status = "Follow-Up Sent"
-    elif curr_status in ["New", "Researched", "Drafted", "Needs Review", "Approved", "Queued", "", None]:
-        new_status = "Sent"
-    elif curr_status in ["Sent"]:
-        new_status = "Follow-Up 1"
-    elif curr_status in ["Follow-Up 1", "Follow-Up Sent"]:
-        new_status = "Follow-Up 2"
-    elif curr_status in ["Follow-Up 2"]:
-        new_status = "Follow-Up 3"
-    else:
+    curr_status = row["status"] or "New"
+    if curr_status in ["Replied", "Bounced", "Do Not Contact"]:
         new_status = curr_status
+    else:
+        new_status = "Emailed"
 
     cursor.execute("""
         UPDATE contacts SET
@@ -2021,116 +2054,26 @@ def record_email_reply(
     db_path: str = DB_FILE
 ) -> Dict[str, Any]:
     """
-    Called when an incoming reply from a contact/lead is detected:
-    1. Runs rule-based classification (replaces AI classifier):
-       - 'ooo': Out of Office. CRITICAL: Follow-ups remain queued! Status preserved!
-       - 'interested': status -> 'Interested', cancels sequence follow-ups, alerts user.
-       - 'not_interested': status -> 'Not Interested', cancels sequence follow-ups.
-       - 'dnc': status -> 'Do Not Contact', cancels sequence follow-ups, adds to DNC.
-       - 'replied': status -> 'Replied', cancels sequence follow-ups.
-    2. Updates contact notes, tags, and timestamps.
-    Returns details of affected contacts and cancelled emails.
+    Called when an incoming reply from a lead is detected (Section 1.9 & 2.4):
+    1. Marks that lead 'Replied'.
+    2. Pauses (does not delete) that lead's pending scheduled follow-ups.
+    3. Records an in-app alert for the operator.
     """
     clean_email = sender_email.strip().lower()
     if not clean_email:
-        return {"contact_found": False, "cancelled_drafts_count": 0, "cancelled_email_ids": [], "category": "none"}
+        return {"contact_found": False, "paused_drafts_count": 0, "paused_email_ids": [], "cancelled_drafts_count": 0, "cancelled_email_ids": []}
 
     now_iso = received_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
-
-    # Load keyword configurations from system_config
-    int_kw_raw = get_config("reply_interested_keywords", "yes, interested, sure, call, calendar, time, chat, discuss, send more, sounds good, let's talk, book a call, speak, reach out, calendly, zoom", db_path=db_path)
-    not_int_kw_raw = get_config("reply_not_interested_keywords", "not interested, unsubscribe, remove, stop, no thanks, not at this time, pass, please remove, no thank you, wrong person", db_path=db_path)
-    dnc_kw_raw = get_config("reply_dnc_keywords", "never contact, take me off, spam, harassment, report, do not email, legal action, cease and desist", db_path=db_path)
-    ooo_kw_raw = get_config("reply_ooo_keywords", "out of the office, on leave, auto-reply, away from, vacation, holiday, back on, returning on, maternity leave, paternity leave, automated response", db_path=db_path)
-
-    int_kw = [k.strip() for k in (int_kw_raw or "").split(",") if k.strip()]
-    not_int_kw = [k.strip() for k in (not_int_kw_raw or "").split(",") if k.strip()]
-    dnc_kw = [k.strip() for k in (dnc_kw_raw or "").split(",") if k.strip()]
-    ooo_kw = [k.strip() for k in (ooo_kw_raw or "").split(",") if k.strip()]
-
-    from template_engine import classify_incoming_reply
-    reply_full_text = f"{reply_subject} {reply_body_snippet}".strip()
-    category = classify_incoming_reply(
-        reply_full_text,
-        interested_keywords=int_kw,
-        not_interested_keywords=not_int_kw,
-        dnc_keywords=dnc_kw,
-        ooo_keywords=ooo_kw
-    )
 
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
     # 1. Update contact(s)
-    cursor.execute("SELECT id, name, tags, notes, status FROM contacts WHERE LOWER(TRIM(email)) = ?", (clean_email,))
+    cursor.execute("SELECT id, name, tags, notes FROM contacts WHERE LOWER(TRIM(email)) = ?", (clean_email,))
     contact_rows = cursor.fetchall()
     contact_found = len(contact_rows) > 0
     contact_names = []
-
-    # ── CASE 1: OUT OF OFFICE (OOO) ──────────────────────────────────────────
-    # CRITICAL: OOO does NOT stop the sequence. Follow-ups remain queued!
-    if category == "ooo":
-        for crow in contact_rows:
-            cid = crow["id"]
-            contact_names.append(crow["name"])
-            curr_notes = crow["notes"] or ""
-            snippet_part = f" - '{reply_subject[:35]}'" if reply_subject else ""
-            ooo_note = f"[OOO: {today_str}{snippet_part} - sequence continues]"
-            if ooo_note not in curr_notes:
-                updated_notes = f"{curr_notes} {ooo_note}".strip() if curr_notes else ooo_note
-            else:
-                updated_notes = curr_notes
-
-            cursor.execute("""
-                UPDATE contacts SET
-                    last_contact_date = ?,
-                    last_reply_at = ?,
-                    reply_subject = ?,
-                    notes = ?
-                WHERE id = ?
-            """, (today_str, now_iso, (reply_subject or "")[:120], updated_notes, cid))
-
-        disp_name = contact_names[0] if contact_names else clean_email
-        notif_title = f"✈️ Out of Office from {disp_name}"
-        notif_body = f"Auto-reply received from {clean_email}. Outreach sequence continues uninterrupted."
-        cursor.execute("""
-            INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
-            VALUES (?, ?, ?, ?, 0, ?)
-        """, ("ooo", notif_title, notif_body, clean_email, now_iso))
-
-        conn.commit()
-        conn.close()
-        return {
-            "contact_found": contact_found,
-            "contact_names": contact_names,
-            "cancelled_drafts_count": 0,
-            "cancelled_email_ids": [],
-            "sender_email": clean_email,
-            "category": "ooo"
-        }
-
-    # ── CASE 2: REGULAR REPLIES (Interested, Not Interested, DNC, Replied) ─────
-    if category == "interested":
-        new_status = "Interested"
-        category_tag = "Interested"
-        notif_icon = "🔥"
-        notif_desc = "expressed interest in outreach!"
-    elif category == "not_interested":
-        new_status = "Not Interested"
-        category_tag = "Not Interested"
-        notif_icon = "🛑"
-        notif_desc = "indicated they are not interested."
-    elif category == "dnc":
-        new_status = "Do Not Contact"
-        category_tag = "Do Not Contact"
-        notif_icon = "⛔"
-        notif_desc = "requested Do Not Contact / removal."
-    else:
-        new_status = "Replied"
-        category_tag = "Replied"
-        notif_icon = "💬"
-        notif_desc = "responded to outreach."
 
     for crow in contact_rows:
         cid = crow["id"]
@@ -2138,13 +2081,11 @@ def record_email_reply(
         old_tags = [t.strip() for t in (crow["tags"] or "").split(",") if t.strip()]
         if "Replied" not in old_tags:
             old_tags.append("Replied")
-        if category_tag not in old_tags:
-            old_tags.append(category_tag)
         tags_str = ", ".join(sorted(list(set(old_tags))))
 
         curr_notes = crow["notes"] or ""
         snippet_part = f" - '{reply_subject[:40]}'" if reply_subject else ""
-        reply_note = f"[{new_status}: {today_str}{snippet_part}]"
+        reply_note = f"[Replied: {today_str}{snippet_part}]"
         if reply_note not in curr_notes:
             updated_notes = f"{curr_notes} {reply_note}".strip() if curr_notes else reply_note
         else:
@@ -2152,7 +2093,7 @@ def record_email_reply(
 
         cursor.execute("""
             UPDATE contacts SET
-                status = ?,
+                status = 'Replied',
                 contacted = 'Yes',
                 last_contact_date = ?,
                 last_reply_at = ?,
@@ -2160,38 +2101,42 @@ def record_email_reply(
                 tags = ?,
                 notes = ?
             WHERE id = ?
-        """, (new_status, today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
+        """, (today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
 
-    # Auto-cancel queued sequence follow-up touches (sequence_step > 1) for this contact.
+
+    # 2. Pause pending / scheduled follow-up emails for this lead
     cursor.execute("""
         SELECT id FROM emails
         WHERE LOWER(TRIM(recipient)) = ? 
-          AND status IN ('Pending', 'Approved', 'Flagged')
+          AND status IN ('Pending', 'Approved', 'Scheduled', 'Draft', 'Flagged')
           AND sequence_step > 1
     """, (clean_email,))
     pending_emails = cursor.fetchall()
-    cancelled_ids = [r["id"] for r in pending_emails]
+    paused_ids = [r["id"] for r in pending_emails]
 
-    if cancelled_ids:
-        cursor.execute("""
+
+    if paused_ids:
+        placeholders = ",".join("?" * len(paused_ids))
+        cursor.execute(f"""
             UPDATE emails SET
-                status = 'Cancelled',
-                error_message = ?
-            WHERE LOWER(TRIM(recipient)) = ? 
-              AND status IN ('Pending', 'Approved', 'Flagged')
-              AND sequence_step > 1
-        """, (f"Auto-cancelled: Prospect replied ({new_status})", clean_email))
+                status = 'Paused',
+                revision_notes = 'Auto-paused: lead replied to previous outreach',
+                error_message = 'Auto-cancelled: Prospect replied (Replied)'
+            WHERE id IN ({placeholders})
+        """, tuple(paused_ids))
 
+    # Cancel active sequence rules as well
     cursor.execute("""
         UPDATE sequence_rules SET status = 'Cancelled'
         WHERE LOWER(TRIM(contact_email)) = ? AND status IN ('Waiting_Trigger', 'Scheduled')
     """, (clean_email,))
 
+
     disp_name = contact_names[0] if contact_names else clean_email
-    notif_title = f"{notif_icon} {new_status} Reply from {disp_name}"
+    notif_title = f"💬 Reply from {disp_name}"
     subj_part = f" ('{reply_subject[:45]}')" if reply_subject else ""
-    canc_part = f" — {len(cancelled_ids)} scheduled sequence follow-up(s) auto-cancelled." if cancelled_ids else ""
-    notif_body = f"Prospect {clean_email} {notif_desc}{subj_part}{canc_part}"
+    pause_part = f" — {len(paused_ids)} scheduled follow-up(s) paused." if paused_ids else ""
+    notif_body = f"Prospect {clean_email} replied{subj_part}{pause_part}"
 
     cursor.execute("""
         SELECT id FROM notifications
@@ -2203,8 +2148,8 @@ def record_email_reply(
     if not existing_unreads:
         cursor.execute("""
             INSERT INTO notifications (type, title, message, contact_email, is_read, created_at)
-            VALUES (?, ?, ?, ?, 0, ?)
-        """, ("reply", notif_title, notif_body, clean_email, now_iso))
+            VALUES ('reply', ?, ?, ?, 0, ?)
+        """, (notif_title, notif_body, clean_email, now_iso))
 
     conn.commit()
     conn.close()
@@ -2212,11 +2157,15 @@ def record_email_reply(
     return {
         "contact_found": contact_found,
         "contact_names": contact_names,
-        "cancelled_drafts_count": len(cancelled_ids),
-        "cancelled_email_ids": cancelled_ids,
+        "paused_drafts_count": len(paused_ids),
+        "paused_email_ids": paused_ids,
+        "cancelled_drafts_count": len(paused_ids),
+        "cancelled_email_ids": paused_ids,
         "sender_email": clean_email,
-        "category": category
+        "status": "Replied",
+        "category": "replied"
     }
+
 
 # ------------------------------------------------------------------------------
 # IN-APP NOTIFICATIONS HELPERS
@@ -2610,76 +2559,14 @@ def get_bounced_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
 # SMTP ACCOUNTS HELPERS (HOSTINGER / MULTI-ACCOUNT ROTATION)
 # ------------------------------------------------------------------------------
 
-def get_warmup_info(account: Dict[str, Any], today_str: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Single source of truth for warmup progress and effective daily sending limits.
-    Returns:
-        {
-            "is_warmup": bool,
-            "day_num": int,
-            "effective_limit": int,
-            "target_limit": int,
-            "days_elapsed": int
-        }
-    """
-    is_warmup = bool(account.get("warmup_enabled"))
-    target_limit = int(account.get("warmup_target_limit") or account.get("daily_limit") or 50)
-    start_lim = int(account.get("warmup_starting_limit") if account.get("warmup_starting_limit") is not None else 10)
-    inc = int(account.get("warmup_daily_increment") if account.get("warmup_daily_increment") is not None else 5)
+# (get_warmup_info and get_effective_daily_limit imported from warmup.py)
 
-    if not is_warmup:
-        eff = int(account.get("daily_limit", 50))
-        return {
-            "is_warmup": False,
-            "day_num": 1,
-            "effective_limit": eff,
-            "target_limit": target_limit,
-            "days_elapsed": 0
-        }
-
-    start_date_str = (account.get("warmup_start_date") or "").strip()
-    if not start_date_str:
-        eff = int(account.get("daily_limit", 50))
-        return {
-            "is_warmup": True,
-            "day_num": 1,
-            "effective_limit": eff,
-            "target_limit": target_limit,
-            "days_elapsed": 0
-        }
-
-    try:
-        start_date = datetime.strptime(start_date_str.split()[0], "%Y-%m-%d").date()
-        today = datetime.strptime(today_str, "%Y-%m-%d").date() if today_str else datetime.now().astimezone().date()
-        days_elapsed = max(0, (today - start_date).days)
-        day_num = days_elapsed + 1
-        effective_limit = min(target_limit, start_lim + (days_elapsed * inc))
-        return {
-            "is_warmup": True,
-            "day_num": day_num,
-            "effective_limit": effective_limit,
-            "target_limit": target_limit,
-            "days_elapsed": days_elapsed
-        }
-    except (ValueError, TypeError, AttributeError) as d_err:
-        logger.warning(f"Error calculating warmup info: {d_err}. Falling back to default daily limit.")
-        return {
-            "is_warmup": True,
-            "day_num": 1,
-            "effective_limit": int(account.get("daily_limit", 50)),
-            "target_limit": target_limit,
-            "days_elapsed": 0
-        }
-
-def get_effective_daily_limit(account: Dict[str, Any], today_str: Optional[str] = None) -> int:
-    """Calculate the active daily sending cap for an SMTP account using get_warmup_info."""
-    return get_warmup_info(account, today_str=today_str)["effective_limit"]
 
 
 def add_smtp_account(
-    sender_name: str,
-    email: str,
-    password: str,
+    sender_name: str = "",
+    email: str = "",
+    password: str = "",
     smtp_host: str = "smtp.hostinger.com",
     smtp_port: int = 465,
     daily_limit: int = 80,
@@ -2689,14 +2576,27 @@ def add_smtp_account(
     warmup_starting_limit: int = 10,
     warmup_daily_increment: int = 5,
     warmup_target_limit: int = 50,
+    name: Optional[str] = None,
+    smtp_password: Optional[str] = None,
+    smtp_user: Optional[str] = None,
+    warmup_start: Optional[int] = None,
+    warmup_increment: Optional[int] = None,
+    warmup_cap: Optional[int] = None,
     db_path: str = DB_FILE
 ) -> int:
     """Add a new SMTP account for Hostinger or custom mail server with optional automated warmup schedule."""
+    final_name = (name or sender_name or "").strip()
+    final_pw = (smtp_password or password or "").strip()
+    final_email = email.strip()
+    starting_limit = warmup_start if warmup_start is not None else warmup_starting_limit
+    increment_limit = warmup_increment if warmup_increment is not None else warmup_daily_increment
+    cap_limit = warmup_cap if warmup_cap is not None else warmup_target_limit
+
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    encrypted_pw = encrypt_smtp_password(password.strip())
+    encrypted_pw = encrypt_smtp_password(final_pw)
     cursor.execute("""
         INSERT INTO smtp_accounts (
             sender_name, email, smtp_host, smtp_port, password,
@@ -2705,25 +2605,28 @@ def add_smtp_account(
             warmup_daily_increment, warmup_target_limit, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        sender_name.strip(),
-        email.strip().lower(),
+        final_name,
+        final_email.lower(),
         smtp_host.strip(),
         int(smtp_port),
         encrypted_pw,
+
         int(daily_limit),
         today_str,
         1 if is_active else 0,
         1 if warmup_enabled else 0,
         (warmup_start_date or today_str).strip(),
-        int(warmup_starting_limit),
-        int(warmup_daily_increment),
-        int(warmup_target_limit),
+        int(starting_limit),
+        int(increment_limit),
+        int(cap_limit),
         now_iso
     ))
     account_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return account_id
+
+create_smtp_account = add_smtp_account
 
 def get_smtp_accounts(active_only: bool = False, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     """Retrieve all or active SMTP sender accounts, hydrating decrypted passwords."""

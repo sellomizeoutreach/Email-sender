@@ -255,8 +255,8 @@ class TestBehavioralSmokeSuite(unittest.TestCase):
         self.assertEqual(e_soft_after["is_bounced"], 0)
 
         # Amendment 4 explicit negative assertions:
-        # 1. Status is UNCHANGED from what it was immediately before bounce ("Contacted")
-        self.assertEqual(c_soft_after["status"], "Contacted")
+        # 1. Status is UNCHANGED from what it was immediately before bounce ("Emailed")
+        self.assertEqual(c_soft_after["status"], "Emailed")
         # 2. Status is NOT "Do Not Contact"
         self.assertNotEqual(c_soft_after["status"], "Do Not Contact")
         # 3. Status is NOT "Bounced"
@@ -911,11 +911,11 @@ class TestComposeAndSendFlow(unittest.TestCase):
         """
         from database import create_contact, get_contacts
 
-        c1 = create_contact(name="Tag Lead 1", email="tag1@test.com", tags="Wholesale, VIP", status="Not Contacted", db_path=self.SMOKE_DB)
-        c2 = create_contact(name="Tag Lead 2", email="tag2@test.com", tags="Retail", status="Contacted", db_path=self.SMOKE_DB)
+        c1 = create_contact(name="Tag Lead 1", email="tag1@test.com", tags="Wholesale, VIP", status="New", db_path=self.SMOKE_DB)
+        c2 = create_contact(name="Tag Lead 2", email="tag2@test.com", tags="Retail", status="Emailed", db_path=self.SMOKE_DB)
 
         all_candidates = get_contacts(db_path=self.SMOKE_DB)
-        not_contacted = [c["id"] for c in all_candidates if (c.get("status") or "Not Contacted") == "Not Contacted"]
+        not_contacted = [c["id"] for c in all_candidates if (c.get("status") or "New") == "New"]
         self.assertIn(c1, not_contacted)
         self.assertNotIn(c2, not_contacted)
 

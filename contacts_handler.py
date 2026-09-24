@@ -4,6 +4,7 @@ Handles column normalization, automatic absorption of extra columns into custom 
 deduplication upserts, and tag serialization.
 """
 
+import os
 import io
 import csv
 import json
@@ -14,80 +15,21 @@ from mx_checker import verify_email_domain_mx
 
 def generate_csv_template() -> str:
     """
-    Generate standard CSV template text showing clean, human-readable columns.
-    Uses standard outreach fields (Name, Email, Company, Tags, Role, Website, ASIN)
-    instead of intimidating raw JSON strings.
+    Generate standard CSV template text for Leads:
+    Name, Email, Company, Country/Timezone, Status, Notes
     """
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
-        "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
-        "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags",
-        "Role", "Website", "Amazon Store URL", "Product Category", "Relevant Service",
-        "Listing Issues", "Amazon Issues", "Brand Observation", "Verified Location",
-        "Research Date", "Research Source", "ASIN"
-    ])
-    writer.writerow([
-        "L-0001",
-        "Skinfix",
-        "Elena Rostova",
-        "elena@skinfix.com",
-        "Website",
-        "High",
-        "No",
-        "",
-        "Not Contacted",
-        0,
-        "",
-        "2026-09-22",
-        "Alex M",
-        "Interested in A+ Content teardown",
-        "Amazon Brand, High Priority",
-        "Brand Director",
-        "https://skinfix.com",
-        "https://amazon.com/stores/skinfix",
-        "Skincare & Barrier Creams",
-        "Listing + A+",
-        "Missing comparison chart in A+ module",
-        "High ACoS on branded terms",
-        "Top seller on Sephora but listing conversion lagging on Amazon",
-        "New York, NY",
-        "2026-09-23",
-        "Amazon Storefront & Brand Site",
-        "B07XYZ1234"
-    ])
-    writer.writerow([
-        "L-0002",
-        "Minori Beauty",
-        "Marcus Brody",
-        "marcus@minoribeauty.com",
-        "Cold Outreach",
-        "Medium",
-        "Yes",
-        "2026-09-15",
-        "Follow-Up Sent",
-        1,
-        "2026-09-15",
-        "2026-09-20",
-        "Jack C",
-        "Check back after product launch",
-        "Shopify DTC, Audit Ready",
-        "E-commerce Head",
-        "https://minoribeauty.com",
-        "B08ABC5678"
-    ])
+    writer.writerow(["Name", "Email", "Company", "Country/Timezone", "Status", "Notes"])
+    writer.writerow(["Elena Rostova", "elena@skinfix.com", "Skinfix", "US/Eastern", "New", "Interested in product teardown"])
+    writer.writerow(["Marcus Brody", "marcus@minoribeauty.com", "Minori Beauty", "Europe/London", "New", "Met at summit"])
     return output.getvalue()
 
 def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
     """
-    Convert a list of contact dictionaries into a CSV string ready for download.
-    Matches the Excel spreadsheet layout with dedicated columns for Lead ID, Company,
-    Contact Name, Email Address, Lead Source, Priority, Contacted?, Date First Emailed,
-    Status, Follow-Ups Sent, Last Contact Date, Next Follow-Up, Owner, Notes, Tags,
-    plus dynamically expanded custom variables (Role, Website, ASIN, etc.).
+    Convert a list of lead/contact dictionaries into a CSV string ready for download.
+    Contains Name, Email, Company, Country/Timezone, Status, Notes, plus dynamic custom variables.
     """
-    # 1. Discover all unique custom variable keys across the contacts
     all_var_keys = set()
     for c in contacts:
         cv_dict = c.get("custom_variables_dict")
@@ -104,20 +46,12 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
                     all_var_keys.add(str(k).strip())
 
     sorted_var_keys = sorted(list(all_var_keys))
-
-    # 2. Build header: Standard CRM fields matching the Excel layout + dynamic custom variable columns + Created_At
-    header = [
-        "Lead ID", "Company", "Contact Name", "Email Address", "Lead Source",
-        "Priority", "Contacted?", "Date First Emailed", "Status", "Follow-Ups Sent",
-        "Last Contact Date", "Next Follow-Up", "Owner", "Notes", "Tags"
-    ] + sorted_var_keys + ["Created_At"]
-
+    header = ["Name", "Email", "Company", "Country/Timezone", "Status", "Notes"] + sorted_var_keys
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(header)
 
     for c in contacts:
-        # Resolve variables dict
         cv_dict = c.get("custom_variables_dict")
         if not cv_dict and isinstance(c.get("custom_variables"), dict):
             cv_dict = c.get("custom_variables")
@@ -129,35 +63,21 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
         if not isinstance(cv_dict, dict):
             cv_dict = {}
 
-        lead_id = f"L-{c['id']:04d}" if c.get("id") else ""
-        tags_str = c.get("tags") or ", ".join(c.get("tags_list", []))
-
         row = [
-            lead_id,
-            c.get("company") or "",
             c.get("name") or "",
             c.get("email") or "",
-            c.get("lead_source") or "Other",
-            c.get("priority") or "Medium",
-            c.get("contacted") or "No",
-            c.get("date_first_emailed") or "",
-            c.get("status") or "Not Contacted",
-            c.get("follow_ups_sent") if c.get("follow_ups_sent") is not None else 0,
-            c.get("last_contact_date") or "",
-            c.get("next_follow_up") or "",
-            c.get("owner") or "",
-            c.get("notes") or "",
-            tags_str
+            c.get("company") or "",
+            c.get("country_or_timezone") or "",
+            c.get("status") or "New",
+            c.get("notes") or ""
         ]
-
-        # Append values for each dynamic variable column
         for vk in sorted_var_keys:
             row.append(str(cv_dict.get(vk, "")))
-
-        row.append(c.get("created_at") or "")
         writer.writerow(row)
 
     return output.getvalue()
+
+
 
 def normalize_variable_header(col_name: str) -> str:
     """
@@ -227,10 +147,19 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
     
     Returns stats dict: {"total": int, "inserted": int, "updated": int, "invalid_mx": int, "errors": list}
     """
-    if isinstance(file_content, bytes):
+    if hasattr(file_content, "read"):
+        data = file_content.read()
+        if isinstance(data, bytes):
+            content_str = data.decode("utf-8", errors="replace")
+        else:
+            content_str = str(data)
+    elif isinstance(file_content, str) and os.path.exists(file_content):
+        with open(file_content, "r", encoding="utf-8", errors="replace") as f:
+            content_str = f.read()
+    elif isinstance(file_content, bytes):
         content_str = file_content.decode("utf-8", errors="replace")
     else:
-        content_str = file_content
+        content_str = str(file_content)
 
     # Handle BOM (Byte Order Mark) if present from Excel exports
     if content_str.startswith("\ufeff"):
@@ -275,6 +204,7 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
     next_follow_up_col = find_col(["next follow-up", "next_follow_up", "next follow up", "follow-up date"])
     owner_col = find_col(["owner", "assigned to", "lead owner", "sales rep"])
     notes_col = find_col(["notes", "note", "comments", "remark"])
+    tz_col = find_col(["country/timezone", "country_or_timezone", "country or timezone", "timezone", "tz", "country", "location"])
     vars_col = find_col(["custom_variables", "custom variables", "variables", "attributes", "metadata", "custom_variables_json"])
 
     if not email_col:
@@ -286,7 +216,7 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
         name_col, first_name_col, last_name_col, email_col, company_col, tags_col,
         lead_id_col, lead_source_col, priority_col, contacted_col, date_first_emailed_col,
         status_col, follow_ups_sent_col, last_contact_date_col, next_follow_up_col,
-        owner_col, notes_col, vars_col
+        owner_col, notes_col, tz_col, vars_col
     }
     extra_cols = [c for c in (reader.fieldnames or []) if c and c not in standard_cols and c.strip()]
 
@@ -315,7 +245,8 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
         raw_priority = (row.get(priority_col) or "").strip() if priority_col else None
         raw_contacted = (row.get(contacted_col) or "").strip() if contacted_col else None
         raw_first_date = (row.get(date_first_emailed_col) or "").strip() if date_first_emailed_col else None
-        raw_status = (row.get(status_col) or "").strip() if status_col else None
+        raw_status = (row.get(status_col) or "").strip() if status_col else "New"
+        raw_tz = (row.get(tz_col) or "").strip() if tz_col else ""
         raw_sent_val = None
         if follow_ups_sent_col and row.get(follow_ups_sent_col):
             try:
@@ -376,6 +307,7 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
                 next_follow_up=raw_next_date,
                 owner=raw_owner,
                 notes=raw_notes,
+                country_or_timezone=raw_tz,
                 db_path=db_path
             )
             stats["total"] += 1

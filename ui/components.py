@@ -168,7 +168,8 @@ def render_html_preview(html_content: str, height: int = None):
 
 
 def render_header():
-    """Render branded top header bar with live reply notifications."""
+    """Render branded top header bar with live local PC time and reply notifications."""
+    from datetime import datetime
     logo_b64 = get_logo_base64()
     if logo_b64:
         logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" class="sellomize-logo-img" alt="Sellomize Reach Logo" />'
@@ -178,9 +179,11 @@ def render_header():
     unread_notifs = get_unread_notifications_count()
     if unread_notifs > 0:
         badge_lbl = f"{unread_notifs} NEW REPLY" if unread_notifs == 1 else f"{unread_notifs} NEW REPLIES"
-        notif_badge_html = f'<div style="background:#FD4D1B; color:#FFFFFF; border:1.5px solid #FF8059; padding:5px 13px; border-radius:20px; font-size:0.75rem; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; box-shadow:0 0 12px rgba(253,77,27,0.5); display:inline-flex; align-items:center; gap:6px;"><span>🔔</span><span>{badge_lbl}</span></div>'
+        notif_badge_html = f'<div style="background:#FD4D1B; color:#FFFFFF; border:1.5px solid #FF8059; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; box-shadow:0 0 10px rgba(253,77,27,0.4); display:inline-flex; align-items:center; gap:6px;"><span>🔔</span><span>{badge_lbl}</span></div>'
     else:
         notif_badge_html = ""
+
+    local_time_str = datetime.now().strftime("%I:%M %p")
 
     header_html = (
         f'<div class="sellomize-header-container">'
@@ -188,17 +191,13 @@ def render_header():
         f'{logo_html}'
         f'<div>'
         f'<div class="sellomize-brand-title">SELLOMIZE <span class="sellomize-highlight">REACH</span></div>'
-        f'<div class="sellomize-brand-subtitle">Desktop Outbound Engine & Multi-Account Outreach Suite</div>'
+        f'<div class="sellomize-brand-subtitle">Hostinger Email Outreach Engine</div>'
         f'</div>'
         f'</div>'
         f'<div class="sellomize-header-right">'
         f'{notif_badge_html}'
-        f'<div class="system-status-pill">'
-        f'<span class="status-indicator-dot"></span>'
-        f'<span>ENGINE ONLINE</span>'
-        f'</div>'
-        f'<div class="sellomize-header-badge">'
-        f'<span>Agency Edition</span>'
+        f'<div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:4px 12px; font-size:0.8rem; font-weight:700; color:#083731;" title="Current local time on this computer">'
+        f'<span>💻</span><span>{local_time_str} Local</span>'
         f'</div>'
         f'</div>'
         f'</div>'

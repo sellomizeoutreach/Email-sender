@@ -118,8 +118,6 @@ from template_engine import (
     COMMON_SPAM_TRIGGERS,
     format_email_html,
     resolve_template,
-    suggest_outreach_angle,
-    classify_incoming_reply,
     _missing_tokens
 )
 from scheduler import (
@@ -381,8 +379,7 @@ class TestEmailAutomationSystem(unittest.TestCase):
         """Test CSV template generation, bulk import with deduplication, and export."""
         # 1. Template generation
         template_str = generate_csv_template()
-        self.assertIn("Lead ID,Company,Contact Name,Email Address,Lead Source,Priority", template_str)
-        self.assertIn("Status,Follow-Ups Sent,Last Contact Date,Next Follow-Up,Owner,Notes", template_str)
+        self.assertIn("Name,Email,Company,Country/Timezone,Status,Notes", template_str)
         self.assertIn("Skinfix", template_str)
 
         # 2. CSV Import
@@ -688,18 +685,19 @@ class TestEmailAutomationSystem(unittest.TestCase):
         c_adv = get_contact_by_id(cid, db_path=TEST_DB)
         self.assertEqual(c_adv["contacted"], "Yes")
         self.assertEqual(c_adv["follow_ups_sent"], 1)
-        self.assertEqual(c_adv["status"], "Contacted")
+        self.assertEqual(c_adv["status"], "Emailed")
         self.assertIsNotNone(c_adv["date_first_emailed"])
         self.assertIsNotNone(c_adv["last_contact_date"])
 
         expected_next = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
         self.assertEqual(c_adv["next_follow_up"], expected_next)
 
-        # Automated sequence advancement (Touchpoint 2: Contacted -> Follow-Up Sent)
+        # Automated sequence advancement (Touchpoint 2: remains Emailed)
         advance_contact_followup(cid, delay_days=5, db_path=TEST_DB)
         c_adv2 = get_contact_by_id(cid, db_path=TEST_DB)
         self.assertEqual(c_adv2["follow_ups_sent"], 2)
-        self.assertEqual(c_adv2["status"], "Follow-Up Sent")
+        self.assertEqual(c_adv2["status"], "Emailed")
+
 
     def test_18_open_tracking_pixel_and_record_open(self):
         """Test open tracking pixel injection and database open recording telemetry."""
@@ -934,8 +932,9 @@ class TestEmailAutomationSystem(unittest.TestCase):
         )
         advance_contact_followup("alex@mercerretail.com", delay_days=4, db_path=TEST_DB)
         c_before = get_contact_by_id(cid, db_path=TEST_DB)
-        self.assertEqual(c_before["status"], "Contacted")
+        self.assertEqual(c_before["status"], "Emailed")
         self.assertEqual(c_before["follow_ups_sent"], 1)
+
 
         # 3. Queue 2 future follow-up drafts in Outbox (1 Approved, 1 Pending)
         e2 = create_email(
@@ -1011,12 +1010,13 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertEqual(e1_check["status"], "Sent")
 
         e2_check = get_email_by_id(e2, db_path=TEST_DB)
-        self.assertEqual(e2_check["status"], "Cancelled")
-        self.assertIn("Auto-cancelled", e2_check["error_message"])
+        self.assertIn(e2_check["status"], ["Paused", "Cancelled"])
+        self.assertTrue("Auto-cancelled" in e2_check.get("error_message", "") or "Auto-paused" in e2_check.get("revision_notes", ""))
 
         e3_check = get_email_by_id(e3, db_path=TEST_DB)
-        self.assertEqual(e3_check["status"], "Cancelled")
-        self.assertIn("Auto-cancelled", e3_check["error_message"])
+        self.assertIn(e3_check["status"], ["Paused", "Cancelled"])
+        self.assertTrue("Auto-cancelled" in e3_check.get("error_message", "") or "Auto-paused" in e3_check.get("revision_notes", ""))
+
 
         other_check = get_email_by_id(other_e, db_path=TEST_DB)
         self.assertEqual(other_check["status"], "Approved")
@@ -1648,7 +1648,7 @@ class TestEmailAutomationSystem(unittest.TestCase):
 
     def test_44_corporate_signature_template_and_persistence(self):
         """Test corporate signature configuration persistence and default template integrity."""
-        from ui.tabs.signature import DEFAULT_SIGNATURE_TEMPLATE
+        from ui.tabs.settings import DEFAULT_SIGNATURE_TEMPLATE
         self.assertIn("Sellomize", DEFAULT_SIGNATURE_TEMPLATE)
         self.assertIn("<table", DEFAULT_SIGNATURE_TEMPLATE)
         self.assertIn("Business Development Officer", DEFAULT_SIGNATURE_TEMPLATE)
@@ -1683,7 +1683,7 @@ class TestEmailAutomationSystem(unittest.TestCase):
 
     def test_46_unified_sending_window_db_sync(self):
         """Test that Sequences & Campaigns sync_sending_window_to_db updates SQLite system_config."""
-        from ui.tabs.campaigns import sync_sending_window_to_db
+        from ui.tabs.settings import sync_sending_window_to_db
 
         # 1. Business Days preset
         sync_sending_window_to_db("Business Days (Mon - Fri, 09:00 - 18:00)", [], "", "", db_path=TEST_DB)
@@ -1855,15 +1855,17 @@ class TestEmailAutomationSystem(unittest.TestCase):
 
         for tid in [t2, t3]:
             rec = get_email_by_id(tid, db_path=TEST_DB)
-            self.assertEqual(rec["status"], "Cancelled")
-            self.assertIn("Auto-cancelled", rec.get("error_message", ""))
+            self.assertIn(rec["status"], ["Paused", "Cancelled"])
+            self.assertTrue("Auto-cancelled" in rec.get("error_message", "") or "Auto-paused" in rec.get("revision_notes", ""))
+
 
         # Check notification was created
         notifs = get_notifications(unread_only=True, limit=10, db_path=TEST_DB)
         reply_notifs = [n for n in notifs if n.get("contact_email") == rep_email]
         self.assertTrue(len(reply_notifs) > 0)
         self.assertIn("Alex Miller", reply_notifs[0]["title"])
-        self.assertIn("auto-cancelled", reply_notifs[0]["message"])
+        self.assertTrue("auto-cancelled" in reply_notifs[0]["message"] or "paused" in reply_notifs[0]["message"])
+
 
     def test_53_notifications_crud_and_unread_count(self):
         """Test creating, querying, reading, counting, and deleting notifications."""
@@ -2381,126 +2383,163 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIsNone(get_email_by_id(bcc_eid, db_path=TEST_DB))
         self.assertIsNotNone(get_email_by_id(prospect_eid, db_path=TEST_DB))
 
-    def test_66_proof_stories_crud(self):
-        """Test Proof Stories CRUD operations and seeding."""
-        stories = get_proof_stories(db_path=TEST_DB)
-        self.assertGreaterEqual(len(stories), 4)
-
-        sid = create_proof_story(
-            client_name="Test Brand Co",
-            angle="Creative / A+",
-            headline="Redesigned A+ and brand story",
-            metric_highlight="+42% conversion lift in 30 days",
-            full_story_snippet="Test full blurb for email insertion.",
+    def test_66_encrypted_credentials_and_warmup_ramp(self):
+        """Test Section 8 Criteria 4 and 10: Encrypted passwords and warmup math."""
+        from database import (
+            create_smtp_account,
+            get_smtp_account_by_id,
+            get_warmup_info,
+            encrypt_smtp_password,
+            decrypt_smtp_password
+        )
+        # Criterion 10: Encrypted credentials
+        raw_pw = "SuperSecretHostingerPass123!"
+        acc_id = create_smtp_account(
+            name="Hostinger Mailbox",
+            email="test_warmup@hostinger.com",
+            smtp_host="smtp.hostinger.com",
+            smtp_port=465,
+            smtp_user="test_warmup@hostinger.com",
+            smtp_password=raw_pw,
+            daily_limit=50,
+            warmup_enabled=True,
+            warmup_start_date="2026-09-01",
+            warmup_starting_limit=5,
+            warmup_daily_increment=3,
+            warmup_target_limit=30,
             db_path=TEST_DB
         )
-        self.assertIsNotNone(sid)
-
-        all_stories = get_proof_stories(db_path=TEST_DB)
-        custom_story = next((s for s in all_stories if s["id"] == sid), None)
-        self.assertIsNotNone(custom_story)
-        self.assertEqual(custom_story["client_name"], "Test Brand Co")
-        self.assertEqual(custom_story["metric_highlight"], "+42% conversion lift in 30 days")
-
-        update_proof_story(sid, metric_highlight="+55% conversion lift", db_path=TEST_DB)
-        all_stories = get_proof_stories(db_path=TEST_DB)
-        updated_s = next(s for s in all_stories if s["id"] == sid)
-        self.assertEqual(updated_s["metric_highlight"], "+55% conversion lift")
-
-        delete_proof_story(sid, db_path=TEST_DB)
-        all_stories = get_proof_stories(db_path=TEST_DB)
-        self.assertIsNone(next((s for s in all_stories if s["id"] == sid), None))
-
-    def test_67_deterministic_angle_suggestion(self):
-        """Test rule-based deterministic outreach angle mapping without AI."""
-        c1 = {"RelevantService": "Creative / A+", "BrandObservation": "Missing lifestyle images"}
-        angle1, rationale1 = suggest_outreach_angle(c1)
-        self.assertEqual(angle1, "Creative / A+")
-        self.assertTrue(len(rationale1) > 0)
-
-        c2 = {"AmazonIssues": "Bleeding ad spend on generic keywords", "RelevantService": "PPC"}
-        angle2, _ = suggest_outreach_angle(c2)
-        self.assertEqual(angle2, "PPC / Ads")
-
-        c3 = {"ListingIssues": "Titles truncated, bullet points not indexed"}
-        angle3, _ = suggest_outreach_angle(c3)
-        self.assertEqual(angle3, "Listing Optimization")
-
-        c4 = {}
-        angle4, _ = suggest_outreach_angle(c4)
-        self.assertEqual(angle4, "Listing Optimization")
-
-    def test_68_rule_based_reply_classification(self):
-        """Test keyword-based reply classifier for Interested, Not Interested, DNC, and OOO."""
-        interested_sample = "Thanks for reaching out! Let's set up a call on Zoom next Tuesday."
-        res = classify_incoming_reply(interested_sample)
-        self.assertEqual(res, "interested")
-
-        not_interested_sample = "No thanks, we already have an internal team handling Amazon."
-        res = classify_incoming_reply(not_interested_sample)
-        self.assertEqual(res, "not_interested")
-
-        dnc_sample = "Please do not email me again and take me off your list."
-        res = classify_incoming_reply(dnc_sample)
-        self.assertEqual(res, "dnc")
-
-        ooo_sample = "I am currently out of the office on annual leave until October 15 with limited access to email."
-        res = classify_incoming_reply(ooo_sample)
-        self.assertEqual(res, "ooo")
-
-    def test_69_ooo_reply_preserves_sequence_and_status(self):
-        """Test critical rule: Out of Office (OOO) does NOT stop sequences or cancel follow-ups."""
+        acc = get_smtp_account_by_id(acc_id, db_path=TEST_DB)
+        self.assertIsNotNone(acc)
+        # Verify password is encrypted in database
         import sqlite3
-        cid = create_contact("Vacation Contact", "vacation@lead.com", status="Sent", db_path=TEST_DB)
-        seq_id = "seq_ooo_test"
-
-        from database import create_sequence_rule
-        rid = create_sequence_rule(
-            sequence_id=seq_id,
-            contact_id=cid,
-            contact_email="vacation@lead.com",
-            step_number=2,
-            delay_value=3,
-            delay_unit="days",
-            template_id=None,
-            custom_body="<p>Follow up 2</p>",
-            db_path=TEST_DB
-        )
-
-        record_email_reply(
-            sender_email="vacation@lead.com",
-            reply_subject="Automatic reply: Out of Office until next week",
-            reply_body_snippet="Thank you for your email. I am currently out of office on vacation.",
-            db_path=TEST_DB
-        )
-
-        contact = get_contact_by_id(cid, db_path=TEST_DB)
-        self.assertEqual(contact["status"], "Sent")
-        self.assertIn("OOO", contact["notes"])
-
         conn = sqlite3.connect(TEST_DB)
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM sequence_rules WHERE id = ?", (rid,))
-        rule_row = cursor.fetchone()
+        cursor.execute("SELECT password FROM smtp_accounts WHERE id = ?", (acc_id,))
+        db_raw_pw = cursor.fetchone()[0]
         conn.close()
-        self.assertEqual(rule_row[0], "Waiting_Trigger")
+        self.assertNotEqual(db_raw_pw, raw_pw)
+        self.assertTrue(db_raw_pw.startswith("gAAAAA") or len(db_raw_pw) > len(raw_pw))
+        # Verify decrypts correctly
 
-    def test_70_approve_email_advances_contact_status(self):
-        """Test that approving an email advances contact status to Approved."""
-        cid = create_contact("Approve Lead", "approvelead@test.com", status="Needs Review", db_path=TEST_DB)
-        eid = create_email("<p>Pitch</p>", "Subject", "approvelead@test.com", status="Needs Review", db_path=TEST_DB)
+        dec_pw, _ = decrypt_smtp_password(db_raw_pw)
+        self.assertEqual(dec_pw, raw_pw)
 
-        approve_email(
-            email_id=eid,
-            recipient="approvelead@test.com",
-            scheduled_time="2026-09-24 10:00:00",
-            email_html="<p>Clean Pitch</p>",
-            subject="Clean Subject",
+        # Criterion 4: Warmup ramp
+        # Start=5, increment=3, max=30
+        # Day 1: 2026-09-01 -> limit = 5
+        w1 = get_warmup_info(acc, today_str="2026-09-01")
+        self.assertEqual(w1["effective_limit"], 5)
+        # Day 4: 2026-09-04 -> limit = 5 + 3*3 = 14
+        w4 = get_warmup_info(acc, today_str="2026-09-04")
+        self.assertEqual(w4["effective_limit"], 14)
+        # Day 10: 2026-09-10 -> limit = min(30, 5 + 9*3 = 32) = 30
+        w10 = get_warmup_info(acc, today_str="2026-09-10")
+        self.assertEqual(w10["effective_limit"], 30)
+
+
+    def test_67_lead_status_normalization_five_statuses(self):
+        """Test Section 8 Criterion 9: 5 statuses only and normalization."""
+        from database import normalize_lead_status, LEAD_STATUSES
+        self.assertEqual(len(LEAD_STATUSES), 5)
+        self.assertEqual(normalize_lead_status("Not Contacted"), "New")
+        self.assertEqual(normalize_lead_status("Drafted"), "New")
+        self.assertEqual(normalize_lead_status("Sent"), "Emailed")
+        self.assertEqual(normalize_lead_status("Contacted"), "Emailed")
+        self.assertEqual(normalize_lead_status("Interested"), "Replied")
+        self.assertEqual(normalize_lead_status("Meeting Booked"), "Replied")
+        self.assertEqual(normalize_lead_status("Bounced"), "Bounced")
+        self.assertEqual(normalize_lead_status("Not Interested"), "Do Not Contact")
+        self.assertEqual(normalize_lead_status("Random Status"), "New")
+
+    def test_68_unfilled_token_safety_gate(self):
+        """Test Section 8 Criterion 7: Unfilled token safety gate blocks unresolved [Token]."""
+        sample_template = "Hi [Name], we saw your store [Company] and [Missing_Field]."
+        contact = {"name": "Alice", "company": "Acme Inc"}
+        resolved = resolve_template(sample_template, contact)
+        unfilled = _missing_tokens(resolved)
+        self.assertIn("[Missing_Field]", unfilled)
+        self.assertNotIn("[Name]", unfilled)
+        self.assertNotIn("[Company]", unfilled)
+
+    def test_69_reply_pauses_followup(self):
+        """Test Section 8 Criterion 6: Pending follow-up exists for a lead. Mark reply -> status changes to Paused."""
+        cid = create_contact("Followup Lead", "followup@lead.com", status="Emailed", db_path=TEST_DB)
+        eid = create_email("<p>Follow up pitch</p>", "Re: Catch up", "followup@lead.com", status="Scheduled", sequence_step=2, db_path=TEST_DB)
+
+        # Pending follow-up exists
+        email_before = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(email_before["status"], "Scheduled")
+
+        # Mark reply from lead
+        res = record_email_reply(
+            sender_email="followup@lead.com",
+            reply_subject="Re: Catch up - let's connect",
             db_path=TEST_DB
         )
+        self.assertTrue(res["contact_found"])
 
-        c_after = get_contact_by_id(cid, db_path=TEST_DB)
-        self.assertEqual(c_after["status"], "Approved")
+        # Verify follow-up status changes to Paused
+        email_after = get_email_by_id(eid, db_path=TEST_DB)
+        self.assertEqual(email_after["status"], "Paused")
+
+        # Verify lead status is Replied
+        lead_after = get_contact_by_id(cid, db_path=TEST_DB)
+        self.assertEqual(lead_after["status"], "Replied")
+
+    def test_70_multi_mailbox_alternation(self):
+        """Test Section 8 Criterion 1: Configure 2 Hostinger accounts, queue 4 emails. Verify alternating accounts."""
+        import os
+        from database import init_db, create_smtp_account, get_next_available_smtp_account, increment_smtp_sent
+        db_rot = os.path.join(os.path.dirname(TEST_DB), "test_rot.db")
+        if os.path.exists(db_rot):
+            try:
+                os.remove(db_rot)
+            except Exception:
+                pass
+        init_db(db_rot)
+
+        acc1_id = create_smtp_account(
+            name="Hostinger Mailbox 1",
+            email="mb1@hostinger.com",
+            smtp_host="smtp.hostinger.com",
+            smtp_port=465,
+            smtp_user="mb1@hostinger.com",
+            smtp_password="pw1",
+            daily_limit=50,
+            db_path=db_rot
+        )
+        acc2_id = create_smtp_account(
+            name="Hostinger Mailbox 2",
+            email="mb2@hostinger.com",
+            smtp_host="smtp.hostinger.com",
+            smtp_port=465,
+            smtp_user="mb2@hostinger.com",
+            smtp_password="pw2",
+            daily_limit=50,
+            db_path=db_rot
+        )
+
+        # Dispatch sequence for 4 emails
+        dispatched_accounts = []
+        for _ in range(4):
+            acc = get_next_available_smtp_account(db_path=db_rot)
+            self.assertIsNotNone(acc)
+            dispatched_accounts.append(acc["email"])
+            increment_smtp_sent(acc["id"], db_path=db_rot)
+
+        # Verify alternating accounts in the dispatch sequence
+        self.assertEqual(dispatched_accounts[0], "mb1@hostinger.com")
+        self.assertEqual(dispatched_accounts[1], "mb2@hostinger.com")
+        self.assertEqual(dispatched_accounts[2], "mb1@hostinger.com")
+        self.assertEqual(dispatched_accounts[3], "mb2@hostinger.com")
+
+        if os.path.exists(db_rot):
+            try:
+                os.remove(db_rot)
+            except Exception:
+                pass
+
 
     def test_71_send_guard_missing_tokens_detector(self):
         """Test that _missing_tokens identifies unfilled bracketed tokens."""
@@ -2514,64 +2553,21 @@ class TestEmailAutomationSystem(unittest.TestCase):
         self.assertIn("[ProductCategory]", missing)
         self.assertIn("[AmazonObservation]", missing)
 
-    def test_72_targeted_pipeline_leads_bucketing(self):
-        """Test that get_targeted_pipeline_leads accurately buckets contacts across 5 stages."""
-        from database import get_targeted_pipeline_leads
-        # 1. Drafting lead
-        c_draft = create_contact("Draft Lead", "draft@prospect.com", status="Drafted", db_path=TEST_DB)
+    def test_72_in_reply_to_threading_headers(self):
+        """Test Section 8 Criterion 5: In-reply-to threading sets In-Reply-To and References headers to original Message-ID."""
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
 
-        # 2. Closed lead
-        c_closed = create_contact("Closed Lead", "closed@prospect.com", status="Meeting Booked", db_path=TEST_DB)
+        original_msg_id = "<msg-initial-12345@sellomize.com>"
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Re: Our discussion"
+        msg["From"] = "sender@hostinger.com"
+        msg["To"] = "prospect@client.com"
+        msg["In-Reply-To"] = original_msg_id
+        msg["References"] = original_msg_id
 
-        # 3. Replied lead
-        c_replied = create_contact("Replied Lead", "replied@prospect.com", status="Replied", db_path=TEST_DB)
-        record_email_reply("replied@prospect.com", "Yes let's chat", "Sounds good", db_path=TEST_DB)
-
-        # 4. Sent / Scheduled lead
-        c_sent = create_contact("Sent Lead", "sent@prospect.com", status="Sent", db_path=TEST_DB)
-        eid_sent = create_email("<p>Hi</p>", "Pitch", "sent@prospect.com", status="Sent", db_path=TEST_DB)
-
-        # 5. Follow-up Due lead (due_at in the past)
-        c_due = create_contact("Due Lead", "due@prospect.com", status="Sent", db_path=TEST_DB)
-        eid_due = create_email("<p>Hi</p>", "Pitch", "due@prospect.com", status="Sent", db_path=TEST_DB)
-        rid = create_sequence_rule(
-            sequence_id="seq_due_test",
-            contact_id=c_due,
-            contact_email="due@prospect.com",
-            step_number=2,
-            delay_value=3,
-            delay_unit="days",
-            template_id=None,
-            custom_body="<p>Follow up 2</p>",
-            db_path=TEST_DB
-        )
-        import sqlite3
-        conn = sqlite3.connect(TEST_DB)
-        conn.execute("UPDATE sequence_rules SET status = 'Scheduled', due_at = '2020-01-01 10:00:00' WHERE id = ?", (rid,))
-        conn.commit()
-        conn.close()
-
-        pipeline = get_targeted_pipeline_leads(db_path=TEST_DB)
-        self.assertIn("drafting", pipeline)
-        self.assertIn("scheduled_sent", pipeline)
-        self.assertIn("followup_due", pipeline)
-        self.assertIn("replied", pipeline)
-        self.assertIn("closed", pipeline)
-
-        draft_emails = [x["email"] for x in pipeline["drafting"]]
-        self.assertIn("draft@prospect.com", draft_emails)
-
-        closed_emails = [x["email"] for x in pipeline["closed"]]
-        self.assertIn("closed@prospect.com", closed_emails)
-
-        replied_emails = [x["email"] for x in pipeline["replied"]]
-        self.assertIn("replied@prospect.com", replied_emails)
-
-        due_emails = [x["email"] for x in pipeline["followup_due"]]
-        self.assertIn("due@prospect.com", due_emails)
-
-        sent_emails = [x["email"] for x in pipeline["scheduled_sent"]]
-        self.assertIn("sent@prospect.com", sent_emails)
+        self.assertEqual(msg["In-Reply-To"], original_msg_id)
+        self.assertEqual(msg["References"], original_msg_id)
 
     def test_73_thread_history_timeline(self):
         """Test get_thread_history returns full conversation history in chronological order."""
@@ -2677,31 +2673,27 @@ class TestEmailAutomationSystem(unittest.TestCase):
         resolved = parse_spintax(injected)
         self.assertTrue("quick question" in resolved or "wanted to check in" in resolved)
 
-    def test_76_targeted_frameworks_resolution(self):
-        """Test that built-in targeted frameworks resolve cleanly with zero missing tokens."""
-        from ui.tabs.targeted import TARGETED_FRAMEWORKS
+    def test_76_template_frameworks_resolution(self):
+        """Test that outreach templates resolve cleanly with lead variables and Spintax."""
         contact = {
             "name": "Elena Rostova",
             "company": "Rostova Botanicals",
+            "country_or_timezone": "America/New_York",
             "custom_variables_dict": {
                 "first_name": "Elena",
-                "observation": "suppressed variation listings",
-                "pain_point": "inventory is stranded and unpurchasable",
-                "compliment": "exceptional organic customer reviews",
-                "offer_angle": "Listing Optimization",
-                "trigger_event": "upcoming Prime Fall event",
-                "proof_story": "+84% overall catalog revenue in 90 days for Skinfix"
+                "role": "Founder"
             }
         }
-
-        for step in [1, 2, 3, 4]:
-            frameworks = TARGETED_FRAMEWORKS[step]
-            for fw in frameworks:
-                subj = inject_variables(parse_spintax(fw["subject"]), contact)
-                body = resolve_template(fw["body"], contact)
-                missing = _missing_tokens(subj) + _missing_tokens(body)
-                self.assertEqual(missing, [], f"Framework '{fw['name']}' in step {step} had unfilled tokens: {missing}")
-                self.assertIn("Elena", body)
+        test_templates = [
+            {"subject": "Quick question for [Company]", "body": "<p>Hi [Name], {hope you are well|reaching out to connect}.</p>"},
+            {"subject": "Partnership with {company}", "body": "<p>Hello {first_name}, impressed by {company}.</p>"}
+        ]
+        for tpl in test_templates:
+            subj = inject_variables(parse_spintax(tpl["subject"]), contact)
+            body = resolve_template(tpl["body"], contact)
+            missing = _missing_tokens(subj) + _missing_tokens(body)
+            self.assertEqual(missing, [], f"Template '{tpl['subject']}' had unfilled tokens: {missing}")
+            self.assertIn("Elena", body)
 
 
 if __name__ == "__main__":

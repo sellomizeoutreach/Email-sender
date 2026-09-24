@@ -1,82 +1,49 @@
 """
-app.py - Streamlit Frontend for the Modular Local Email Automation System.
-Features:
-- Contact Manager: Internal CRM to add, edit, and manage leads without external spreadsheets.
-- Template Builder: Reusable templates with Spintax ({a|b}) and variable ([Name], [Company]) guides and live preview.
-- Campaign Generator: Batch generation across selected contacts with Spintax resolution and negative keyword scanning.
-- Review Queue & Flag Handling: Dual-mode editor, red alert banners for Flagged emails, and pre-flight compliance gate.
-- Configuration & Outbox: Sending windows, negative keywords, Hostinger/Outlook dispatch, and corporate signatures.
+app.py - Streamlit Frontend for Sellomize Reach.
+Section B1, B2 & Part C of Complete Restructure Spec.
+
+Exactly 6 tabs/destinations:
+1. Compose
+2. Templates
+3. Leads
+4. Bulk Send
+5. Outbox
+6. Settings
 """
 
 import os
 import sys
 
-# Ensure local project modules are always loaded directly from the current script directory (.py files)
-# rather than any stale frozen bytecode embedded inside PyInstaller's PYZ.
+# Ensure local project root is on sys.path
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 if current_script_dir not in sys.path:
     sys.path.insert(0, current_script_dir)
 
 import streamlit as st
+
 from database import (
     init_db,
-    get_emails,
     get_contacts,
     get_templates,
-    get_notifications
+    get_notifications,
 )
 from tracker import start_tracking_server
-from ui.theme import apply_theme
-from ui.components import render_header, render_notification_bell, trigger_toast
+from ui.shell import render_app_shell
+from ui.compose import render_compose_tab
+from ui.templates import render_templates_tab
+from ui.leads import render_leads_tab
+from ui.bulk import render_bulk_tab
+from ui.outbox import render_outbox_tab
+from ui.settings import render_settings_tab
 
-# Resilient dynamic imports prevent Streamlit Cloud hot-reload ImportErrors
-import importlib
-import ui.tabs.targeted as targeted_tab_mod
-import ui.tabs.crm as crm_tab_mod
-import ui.tabs.studio as studio_tab_mod
-import ui.tabs.compose as compose_tab_mod
-import ui.tabs.review as review_tab_mod
-import ui.tabs.analytics as analytics_tab_mod
-import ui.tabs.settings as settings_tab_mod
-
-for _m in [targeted_tab_mod, crm_tab_mod, studio_tab_mod, compose_tab_mod, review_tab_mod, analytics_tab_mod, settings_tab_mod]:
-    try:
-        if hasattr(_m, "__file__"):
-            importlib.reload(_m)
-    except Exception:
-        pass
-
-render_targeted_tab = getattr(targeted_tab_mod, "render_targeted_tab")
-render_crm_tab = getattr(crm_tab_mod, "render_crm_tab")
-render_studio_tab = getattr(studio_tab_mod, "render_studio_tab")
-render_compose_tab = getattr(compose_tab_mod, "render_compose_tab")
-render_review_outbox_tab = getattr(review_tab_mod, "render_review_outbox_tab", getattr(review_tab_mod, "render_review_tab", None))
-render_analytics_tab = getattr(analytics_tab_mod, "render_analytics_tab")
-render_settings_tab = getattr(settings_tab_mod, "render_settings_tab")
-
-import threading
-from scheduler import start_scheduler_loop
-
-def ensure_scheduler_running():
-    """Ensure the background email dispatch scheduler thread is active (e.g. when hosted on Streamlit Cloud)."""
-    for th in threading.enumerate():
-        if th.name == "SellomizeSchedulerThread" and th.is_alive():
-            return
-    sched_thread = threading.Thread(
-        target=start_scheduler_loop,
-        kwargs={"interval": 60},
-        daemon=True,
-        name="SellomizeSchedulerThread"
-    )
-    sched_thread.start()
-
-# Ensure DB is initialized, tracking server is running, and scheduler daemon is active
+# Ensure database is initialized on startup
 init_db()
+
+# Lightweight local click/open tracking server
 try:
     start_tracking_server(port=8502)
 except Exception:
     pass
-ensure_scheduler_running()
 
 st.set_page_config(
     page_title="Sellomize Reach | Agency Email Automation",
@@ -85,20 +52,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom Styling (Sellomize Reach Modern SaaS Theme)
-apply_theme()
+# Render unified App Shell (Pine Theme tokens, header, worker status badge, notification bell)
+render_app_shell()
 
-# Global Non-Blocking Toast Listener (Smooth Bottom-Right Animations)
+# Global Non-Blocking Toast Listener
 if "pending_toast" in st.session_state and st.session_state["pending_toast"]:
     toast_info = st.session_state.pop("pending_toast")
     st.toast(toast_info["msg"], icon=toast_info.get("icon", "✅"))
-
-# Branded Sellomize Reach Top Header Bar with Top Right Notification Bell Popover
-col_hdr_main, col_hdr_bell = st.columns([4.2, 1.0], vertical_alignment="center")
-with col_hdr_main:
-    render_header()
-with col_hdr_bell:
-    render_notification_bell()
 
 # Real-time Reply Notification Toaster
 if "seen_notification_ids" not in st.session_state:
@@ -114,48 +74,42 @@ try:
 except Exception:
     pass
 
-# Data Collections
-all_emails = get_emails()
+# Retrieve cached or fresh data
 all_contacts = get_contacts()
-contacts_list = all_contacts
 all_templates = get_templates()
 
 # ==============================================================================
-# PRIMARY APP NAVIGATION (Dedicated Targeted 1:1 Thread + Bulk Campaign)
+# PRIMARY APP NAVIGATION (Exactly 6 destinations)
 # ==============================================================================
 TAB_NAMES = [
-    "🎯 Targeted Thread",
-    "👥 Contacts",
-    "✉️ Bulk Campaign",
-    "📥 Review & Outbox",
-    "📊 Analytics",
+    "✍️ Compose",
+    "📄 Templates",
+    "👥 Leads",
+    "🚀 Bulk Send",
+    "📥 Outbox",
     "⚙️ Settings",
-    "✍️ Templates",
 ]
 
-tab_targeted, tab_contacts, tab_compose, tab_review, tab_analytics, tab_settings, tab_templates = st.tabs(
+tab_compose, tab_templates, tab_leads, tab_bulk, tab_outbox, tab_settings = st.tabs(
     TAB_NAMES,
     key="main_app_tabs",
     on_change="rerun"
 )
 
-with tab_targeted:
-    render_targeted_tab()
-
-with tab_contacts:
-    render_crm_tab(all_contacts)
-
 with tab_compose:
-    render_compose_tab(contacts_list, all_templates)
+    render_compose_tab(all_contacts, all_templates)
 
-with tab_review:
-    render_review_outbox_tab()
+with tab_templates:
+    render_templates_tab(all_templates)
 
-with tab_analytics:
-    render_analytics_tab(all_contacts, all_emails)
+with tab_leads:
+    render_leads_tab(all_contacts)
+
+with tab_bulk:
+    render_bulk_tab()
+
+with tab_outbox:
+    render_outbox_tab()
 
 with tab_settings:
     render_settings_tab()
-
-with tab_templates:
-    render_studio_tab(all_templates, contacts_list)
