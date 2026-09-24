@@ -112,6 +112,10 @@ from warmup import (
     get_warmup_info,
     get_effective_daily_limit,
 )
+from timezone_helper import (
+    get_engine_now,
+    get_engine_now_str,
+)
 
 def _hydrate_smtp_account(acc: Dict[str, Any]) -> Dict[str, Any]:
     """Decrypt the stored password on an account record, setting safety flags if undecryptable."""
@@ -466,7 +470,7 @@ def init_db(db_path: str = DB_FILE):
         "bcc_email": "",
         "schedule_mode": "adaptive_multi_country",
         "default_market": "LOCAL",
-        "default_timezone": "LOCAL",
+        "default_timezone": "Asia/Karachi",
         "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
         "signature_html": "<p>Best regards,<br><strong>Outreach Team</strong></p>",
         "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
@@ -1640,6 +1644,8 @@ def update_email(
     message_id: Any = _FIELD_UNSET,
     in_reply_to: Any = _FIELD_UNSET,
     thread_id: Any = _FIELD_UNSET,
+    smtp_account_id: Any = _FIELD_UNSET,
+    target_timezone: Any = _FIELD_UNSET,
     db_path: str = DB_FILE
 ):
     conn = get_connection(db_path)
@@ -1685,6 +1691,12 @@ def update_email(
     if thread_id is not _FIELD_UNSET:
         fields.append("thread_id = ?")
         values.append(thread_id)
+    if smtp_account_id is not _FIELD_UNSET:
+        fields.append("smtp_account_id = ?")
+        values.append(smtp_account_id)
+    if target_timezone is not _FIELD_UNSET:
+        fields.append("target_timezone = ?")
+        values.append(target_timezone)
 
     values.append(email_id)
     query = f"UPDATE emails SET {', '.join(fields)} WHERE id = ?"
@@ -1733,7 +1745,8 @@ def flag_email(email_id: int, trigger_word: Union[str, List[str]], db_path: str 
 
 def get_approved_due_emails(current_time_str: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     if not current_time_str:
-        current_time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        from timezone_helper import get_engine_now_str
+        current_time_str = get_engine_now_str()
 
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -2608,8 +2621,8 @@ def add_smtp_account(
     increment_limit = warmup_increment if warmup_increment is not None else warmup_daily_increment
     cap_limit = warmup_cap if warmup_cap is not None else warmup_target_limit
 
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    now_iso = get_engine_now_str("%Y-%m-%d %H:%M:%S")
+    today_str = get_engine_now_str("%Y-%m-%d")
     conn = get_connection(db_path)
     cursor = conn.cursor()
     encrypted_pw = encrypt_smtp_password(final_pw)
@@ -2644,8 +2657,38 @@ def add_smtp_account(
 
 create_smtp_account = add_smtp_account
 
+def reset_daily_smtp_limits(db_path: str = DB_FILE, as_of_date: Optional[str] = None, force: bool = False) -> int:
+    """
+    Reset sent_today counters to 0 for all SMTP accounts.
+    If force is True, resets sent_today = 0 for ALL accounts immediately.
+    Otherwise, only resets accounts whose last_reset_date is not equal to today
+    (strictly evaluated against the UTC+5 engine timeframe).
+    Returns the number of accounts updated.
+    """
+    today_str = as_of_date or get_engine_now_str("%Y-%m-%d")
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    if force:
+        cursor.execute("""
+            UPDATE smtp_accounts
+            SET sent_today = 0, last_reset_date = ?
+        """, (today_str,))
+    else:
+        cursor.execute("""
+            UPDATE smtp_accounts
+            SET sent_today = 0, last_reset_date = ?
+            WHERE last_reset_date != ? OR last_reset_date IS NULL OR last_reset_date = ''
+        """, (today_str, today_str))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected > 0:
+        logger.info(f"reset_daily_smtp_limits (force={force}): Reset sent_today for {affected} mailbox(es) for date {today_str}.")
+    return affected
+
 def get_smtp_accounts(active_only: bool = False, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
-    """Retrieve all or active SMTP sender accounts, hydrating decrypted passwords."""
+    """Retrieve all or active SMTP sender accounts, hydrating decrypted passwords and refreshing daily limits."""
+    reset_daily_smtp_limits(db_path=db_path)
     conn = get_connection(db_path)
     cursor = conn.cursor()
     if active_only:
@@ -2657,6 +2700,7 @@ def get_smtp_accounts(active_only: bool = False, db_path: str = DB_FILE) -> List
     return [_hydrate_smtp_account(dict(r)) for r in rows]
 
 def get_smtp_account_by_id(account_id: int, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    reset_daily_smtp_limits(db_path=db_path)
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM smtp_accounts WHERE id = ?", (account_id,))
@@ -2743,19 +2787,11 @@ def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str
     Automatically resets sent_today counter when the date rolls over.
     Selects the account with the lowest sent_today to balance load across mailboxes.
     """
-    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    today_str = get_engine_now_str("%Y-%m-%d")
+    reset_daily_smtp_limits(db_path=db_path, as_of_date=today_str)
+
     conn = get_connection(db_path)
     cursor = conn.cursor()
-
-    # 1. Reset counters for accounts from previous days
-    cursor.execute("""
-        UPDATE smtp_accounts
-        SET sent_today = 0, last_reset_date = ?
-        WHERE last_reset_date != ?
-    """, (today_str, today_str))
-    conn.commit()
-
-    # 2. Find active accounts where sent_today < effective daily limit
     cursor.execute("""
         SELECT * FROM smtp_accounts
         WHERE is_active = 1
@@ -2774,15 +2810,16 @@ def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str
     return None
 
 def increment_smtp_sent(account_id: int, db_path: str = DB_FILE):
-    """Increment sent_today counter for an SMTP account."""
+    """Increment sent_today counter for an SMTP account, ensuring proper daily rollover."""
+    today_str = get_engine_now_str("%Y-%m-%d")
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
     cursor.execute("""
         UPDATE smtp_accounts
-        SET sent_today = sent_today + 1, last_reset_date = ?
+        SET sent_today = CASE WHEN last_reset_date = ? THEN sent_today + 1 ELSE 1 END,
+            last_reset_date = ?
         WHERE id = ?
-    """, (today_str, account_id))
+    """, (today_str, today_str, account_id))
     conn.commit()
     conn.close()
 

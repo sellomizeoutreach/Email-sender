@@ -19,6 +19,9 @@ from database import (
     update_template,
     delete_template,
     get_smtp_accounts,
+    reset_daily_smtp_limits,
+    increment_smtp_sent,
+    get_next_available_smtp_account,
     add_smtp_account,
     update_smtp_account,
     delete_smtp_account,
@@ -268,17 +271,33 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
             db_path=db
         )
 
-        # 1. Pause button action
+        # 1. Edit scheduled email action
+        new_sched_time = (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        update_email(
+            email_id=eid,
+            subject="Updated Outbox Subject",
+            recipient="updated@outbox.com",
+            email_html="<p>Updated Body Content</p>",
+            scheduled_time=new_sched_time,
+            db_path=db
+        )
+        updated_e = next(x for x in get_emails(db_path=db) if x["id"] == eid)
+        self.assertEqual(updated_e["subject"], "Updated Outbox Subject")
+        self.assertEqual(updated_e["recipient"], "updated@outbox.com")
+        self.assertEqual(updated_e["email_html"], "<p>Updated Body Content</p>")
+        self.assertEqual(updated_e["scheduled_time"], new_sched_time)
+
+        # 2. Pause button action
         update_email(email_id=eid, status="Paused", db_path=db)
         e = next(x for x in get_emails(db_path=db) if x["id"] == eid)
         self.assertEqual(e["status"], "Paused")
 
-        # 2. Resume button action
+        # 3. Resume button action
         update_email(email_id=eid, status="Approved", db_path=db)
         e = next(x for x in get_emails(db_path=db) if x["id"] == eid)
         self.assertEqual(e["status"], "Approved")
 
-        # 3. Cancel / Delete button action
+        # 4. Cancel / Delete button action
         delete_email(eid, db_path=db)
         remaining = [x for x in get_emails(db_path=db) if x["id"] == eid]
         self.assertEqual(len(remaining), 0)
@@ -341,6 +360,79 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
         delete_smtp_account(mid, db_path=db)
         remaining_mbs = [m for m in get_smtp_accounts(db_path=db) if m["id"] == mid]
         self.assertEqual(len(remaining_mbs), 0)
+
+    # =========================================================================
+    # 8. DAILY LIMIT ROLLOVER & REFRESH VERIFICATION
+    # =========================================================================
+    def test_08_daily_limit_rollover_and_reset(self):
+        """Verify automatic daily sending limit rollover and manual reset in UTC+5 engine timeframe."""
+        import sqlite3
+        from timezone_helper import get_engine_now_str
+        db = self.test_db
+        today_engine = get_engine_now_str("%Y-%m-%d")
+
+        # 1. Connect a test mailbox
+        mid = add_smtp_account(
+            name="Daily Limit Tester",
+            email="daily_test@sellomize.com",
+            password="TestPassword123!",
+            smtp_host="smtp.hostinger.com",
+            smtp_port=465,
+            daily_limit=50,
+            db_path=db
+        )
+        self.assertIsNotNone(mid)
+
+        # 2. Simulate yesterday's sending by directly setting sent_today = 35 and yesterday's date
+        conn = sqlite3.connect(db)
+        c = conn.cursor()
+        yesterday_str = "2026-09-20"
+        c.execute("UPDATE smtp_accounts SET sent_today = 35, last_reset_date = ? WHERE id = ?", (yesterday_str, mid))
+        conn.commit()
+        conn.close()
+
+        # 3. Reading accounts via get_smtp_accounts() must automatically reset sent_today to 0
+        accounts = get_smtp_accounts(db_path=db)
+        test_mb = next(m for m in accounts if m["id"] == mid)
+        self.assertEqual(test_mb["sent_today"], 0, "sent_today must roll over to 0 when date changes")
+        self.assertEqual(test_mb["last_reset_date"], today_engine, "last_reset_date must update to today in UTC+5")
+
+        # 4. Increment sent count for today
+        increment_smtp_sent(mid, db_path=db)
+        test_mb = next(m for m in get_smtp_accounts(db_path=db) if m["id"] == mid)
+        self.assertEqual(test_mb["sent_today"], 1)
+
+        increment_smtp_sent(mid, db_path=db)
+        test_mb = next(m for m in get_smtp_accounts(db_path=db) if m["id"] == mid)
+        self.assertEqual(test_mb["sent_today"], 2)
+
+        # 5. Simulate rollover happening without querying get_smtp_accounts first
+        conn = sqlite3.connect(db)
+        c = conn.cursor()
+        c.execute("UPDATE smtp_accounts SET sent_today = 25, last_reset_date = ? WHERE id = ?", (yesterday_str, mid))
+        conn.commit()
+        conn.close()
+
+        # Dispatcher calls increment_smtp_sent directly: must reset to 1 rather than 26
+        increment_smtp_sent(mid, db_path=db)
+        test_mb = next(m for m in get_smtp_accounts(db_path=db) if m["id"] == mid)
+        self.assertEqual(test_mb["sent_today"], 1, "increment on a new day must reset sent_today to 1")
+
+        # 6. Verify manual Reset Daily Limits button action (force=True)
+        # First increment to 15
+        conn = sqlite3.connect(db)
+        c = conn.cursor()
+        c.execute("UPDATE smtp_accounts SET sent_today = 15 WHERE id = ?", (mid,))
+        conn.commit()
+        conn.close()
+
+        affected = reset_daily_smtp_limits(db_path=db, force=True)
+        self.assertGreaterEqual(affected, 1)
+        test_mb = next(m for m in get_smtp_accounts(db_path=db) if m["id"] == mid)
+        self.assertEqual(test_mb["sent_today"], 0, "Manual reset must force sent_today back to 0")
+
+        # Cleanup
+        delete_smtp_account(mid, db_path=db)
 
 
 if __name__ == "__main__":

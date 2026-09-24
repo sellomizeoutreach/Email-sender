@@ -259,51 +259,72 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         notes = html.escape(c.get("notes") or "—")
         tags = html.escape(c.get("tags") or "—")
 
-        table_rows_html.append(f"""
-        <tr>
-            <td><input type="checkbox" checked></td>
-            <td class="mono">{lead_code}</td>
-            <td><strong>{company}</strong></td>
-            <td>{name}</td>
-            <td class="mono">{email_cell}</td>
-            <td>{src}</td>
-            <td>{prio}</td>
-            <td>{contacted}</td>
-            <td>{status_pill}</td>
-            <td>{follow_ups}</td>
-            <td>{owner}</td>
-            <td>{notes}</td>
-            <td><code>{tags}</code></td>
-        </tr>
-        """)
+        table_rows_html.append(
+            f'<tr>'
+            f'<td style="text-align:center;"><input type="checkbox" checked style="accent-color:#083731; cursor:pointer;"></td>'
+            f'<td class="mono">{lead_code}</td>'
+            f'<td><strong>{company}</strong></td>'
+            f'<td>{name}</td>'
+            f'<td class="mono">{email_cell}</td>'
+            f'<td>{src}</td>'
+            f'<td>{prio}</td>'
+            f'<td>{contacted}</td>'
+            f'<td>{status_pill}</td>'
+            f'<td>{follow_ups}</td>'
+            f'<td>{owner}</td>'
+            f'<td>{notes}</td>'
+            f'<td><code style="background:#F1F5F9; padding:2px 6px; border-radius:4px; font-size:11px; color:#475569;">{tags}</code></td>'
+            f'</tr>'
+        )
 
-    full_table_html = f"""
-    <div class="tablewrap">
-        <table>
-            <thead>
-                <tr>
-                    <th><input type="checkbox" checked></th>
-                    <th>Lead ID</th>
-                    <th>Brand / Company</th>
-                    <th>Contact Name</th>
-                    <th>Email &amp; MX</th>
-                    <th>Lead Source</th>
-                    <th>Priority</th>
-                    <th>Contacted?</th>
-                    <th>Status</th>
-                    <th>Follow-Ups</th>
-                    <th>Owner</th>
-                    <th>Notes</th>
-                    <th>Tags</th>
-                </tr>
-            </thead>
-            <tbody>
-                {''.join(table_rows_html)}
-            </tbody>
-        </table>
-    </div>
-    """
-    st.markdown(full_table_html, unsafe_allow_html=True)
+    full_table_html = (
+        '<style>\n'
+        '.tablewrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0,0,0,0.02); margin-bottom: 12px; }\n'
+        '.crm-table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; color: #0F172A; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }\n'
+        '.crm-table thead th { background: #F8FAFC; color: #64748B; font-weight: 600; text-align: left; padding: 10px 14px; font-size: 11px; letter-spacing: .04em; border-bottom: 1px solid #E2E8F0; text-transform: uppercase; }\n'
+        '.crm-table tbody td { padding: 10px 14px; border-bottom: 1px solid #E2E8F0; color: #0F172A; vertical-align: middle; }\n'
+        '.crm-table tbody tr:last-child td { border-bottom: 0; }\n'
+        '.crm-table tbody tr:hover { background: #F8FAF9; }\n'
+        '.crm-table .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #083731; }\n'
+        '.pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; white-space: nowrap; display: inline-block; font-weight: 600; }\n'
+        '.p-new { background: #FFF1EC; color: #FD4D1B; }\n'
+        '.p-sent { background: #F1F5F9; color: #64748B; }\n'
+        '.p-rep { background: #E1F5EE; color: #0F6E56; }\n'
+        '.p-bounce { background: #FEE2E2; color: #DC2626; }\n'
+        '.p-warm { background: #FEF3C7; color: #D97706; }\n'
+        '.p-pass { background: #E1F5EE; color: #0F6E56; }\n'
+        '.p-fail { background: #FEE2E2; color: #DC2626; }\n'
+        '</style>\n'
+        '<div class="tablewrap">\n'
+        '<table class="crm-table">\n'
+        '<thead>\n'
+        '<tr>\n'
+        '<th style="width:36px; text-align:center;"><input type="checkbox" checked style="accent-color:#083731; cursor:pointer;"></th>\n'
+        '<th>Lead ID</th>\n'
+        '<th>Brand / Company</th>\n'
+        '<th>Contact Name</th>\n'
+        '<th>Email &amp; MX</th>\n'
+        '<th>Lead Source</th>\n'
+        '<th>Priority</th>\n'
+        '<th>Contacted?</th>\n'
+        '<th>Status</th>\n'
+        '<th>Follow-Ups</th>\n'
+        '<th>Owner</th>\n'
+        '<th>Notes</th>\n'
+        '<th>Tags</th>\n'
+        '</tr>\n'
+        '</thead>\n'
+        '<tbody>\n'
+        + '\n'.join(table_rows_html) +
+        '\n</tbody>\n'
+        '</table>\n'
+        '</div>'
+    )
+
+    if hasattr(st, "html"):
+        st.html(full_table_html)
+    else:
+        st.markdown(full_table_html, unsafe_allow_html=True)
     st.markdown("<p class='sec' style='margin-top:10px;'>Columns kept from the CRM. Statuses: New · Emailed · Replied · Bounced · Do Not Contact.</p>", unsafe_allow_html=True)
 
     # Lead Actions bar

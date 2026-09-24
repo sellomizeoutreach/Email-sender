@@ -21,6 +21,7 @@ from database import (
     set_config,
     save_all_configs,
     get_smtp_accounts,
+    reset_daily_smtp_limits,
     add_smtp_account,
     update_smtp_account,
     delete_smtp_account,
@@ -30,7 +31,7 @@ from database import (
     DB_FILE,
 )
 from smtp_dispatcher import test_smtp_connection
-from timezone_helper import TARGET_MARKETS
+from timezone_helper import TARGET_MARKETS, get_engine_now
 from ui.components import trigger_toast
 from config import (
     DEFAULT_SMTP_HOST,
@@ -203,11 +204,10 @@ def render_edit_mailbox_dialog(acc: Dict[str, Any]):
 
 def render_settings_tab():
     """Render Settings matching sellomize_reference.html."""
-    # Live PC Clock Banner
-    local_now = datetime.now()
+    # Live Engine Clock Banner (Locked to UTC+5)
+    local_now = get_engine_now()
     pc_time_formatted = local_now.strftime("%I:%M %p")
-    tz_name = local_now.astimezone().tzname() or "Local Time"
-    st.info(f"💻 **Detected Host PC Local Time:** **{pc_time_formatted}** ({tz_name}) — Scheduled outreach and sending windows evaluate against your computer's local clock.")
+    st.info(f"🕒 **Engine Timeframe Locked to UTC+5:** **{pc_time_formatted} UTC+5** — Scheduled outreach, queue pacing, and sending windows strictly follow this UTC+5 timeframe.")
 
     # =========================================================================
     # SECTION 1: MAILBOXES & WARMUP
@@ -216,10 +216,15 @@ def render_settings_tab():
 
     smtp_accounts = get_smtp_accounts(active_only=False)
 
-    top_mb_c1, top_mb_c2 = st.columns([3, 1], vertical_alignment="center")
+    top_mb_c1, top_mb_c2, top_mb_c3 = st.columns([2.2, 1.2, 1.1], vertical_alignment="center")
     with top_mb_c1:
         st.markdown(f"<span style='font-size:12px; color:#64748B;'>{len(smtp_accounts)} connected Hostinger mailbox{'es' if len(smtp_accounts) != 1 else ''}</span>", unsafe_allow_html=True)
     with top_mb_c2:
+        if st.button("🔄 Reset Daily Limits", use_container_width=True, key="btn_reset_daily_limits", help="Instantly reset sent_today to 0 for all connected mailboxes."):
+            reset_daily_smtp_limits(force=True)
+            trigger_toast("Daily sending limits successfully reset to 0!", icon="🔄")
+            st.rerun()
+    with top_mb_c3:
         if st.button("➕ Connect Mailbox", type="primary", use_container_width=True, key="btn_open_add_mb"):
             render_add_mailbox_dialog()
 
@@ -264,7 +269,7 @@ def render_settings_tab():
                 with c_mb_warm:
                     st.markdown(f"<div style='font-size:13px;'>{warmup_html}</div>", unsafe_allow_html=True)
                 with c_mb_cap:
-                    st.markdown(f"<div style='font-size:13px;'>Cap: {cap_display}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:13px;'>Cap: {cap_display}<div style='font-size:11px; color:#64748B; margin-top:2px;'>Sent: <b>{sent_today}</b>/{eff_limit}</div></div>", unsafe_allow_html=True)
                 with c_mb_stat:
                     st.markdown(f"<div style='text-align:center;'>{status_pill}</div>", unsafe_allow_html=True)
                 with c_mb_test:
@@ -290,7 +295,7 @@ def render_settings_tab():
     curr_end = get_config("sending_end_time", DEFAULT_END_TIME) or DEFAULT_END_TIME
     curr_days_str = get_config("sending_days", ",".join(DEFAULT_DAYS)) or ",".join(DEFAULT_DAYS)
     curr_days = [d.strip() for d in curr_days_str.split(",") if d.strip()]
-    curr_tz = get_config("default_timezone", "LOCAL") or "LOCAL"
+    curr_tz = get_config("default_timezone", "Asia/Karachi") or "Asia/Karachi"
     curr_min_j = int(get_config("jitter_min_seconds", str(DEFAULT_MIN_JITTER)) or DEFAULT_MIN_JITTER)
     curr_max_j = int(get_config("jitter_max_seconds", str(DEFAULT_MAX_JITTER)) or DEFAULT_MAX_JITTER)
     curr_send_now_policy = get_config("send_now_policy", "immediate") or "immediate"
@@ -328,9 +333,14 @@ def render_settings_tab():
                     end_time_val = st.text_input("Daily End Time (HH:MM)", value=curr_end)
 
                 st.markdown("**Default Timezone:**")
-                tz_opts = ["LOCAL", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Kolkata", "UTC"]
+                tz_opts = ["Asia/Karachi", "UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Kolkata", "LOCAL"]
                 tz_idx = tz_opts.index(curr_tz) if curr_tz in tz_opts else 0
-                default_tz_val = st.selectbox("Default Timezone", tz_opts, index=tz_idx, format_func=lambda x: "LOCAL (Host PC Time)" if x == "LOCAL" else x)
+                default_tz_val = st.selectbox(
+                    "Default Timezone",
+                    tz_opts,
+                    index=tz_idx,
+                    format_func=lambda x: "Asia/Karachi (UTC+5 — Engine Standard)" if x == "Asia/Karachi" else ("LOCAL (Host System Time)" if x == "LOCAL" else x)
+                )
 
                 if st.form_submit_button("Save Dispatch Schedule", type="primary", use_container_width=True):
                     is_enforce = "Restricted" in win_mode

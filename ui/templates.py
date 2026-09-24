@@ -175,13 +175,16 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
             resolved_subj = inject_variables(parse_spintax(tpl_subj_val), preview_lead)
             resolved_body = resolve_template(current_body, preview_lead)
 
-            st.markdown(
-                f"""<div class="preview" style="margin-top:8px;">
-                    <div style="font-weight:700; margin-bottom:6px; color:#083731;">Subject: {html.escape(resolved_subj)}</div>
-                    <div>{resolved_body}</div>
-                </div>""",
-                unsafe_allow_html=True
+            tpl_preview_html = (
+                '<div class="preview" style="margin-top:8px;">'
+                f'<div style="font-weight:700; margin-bottom:6px; color:#083731;">Subject: {html.escape(resolved_subj)}</div>'
+                f'<div>{resolved_body}</div>'
+                '</div>'
             )
+            if hasattr(st, "html"):
+                st.html(tpl_preview_html)
+            else:
+                st.markdown(tpl_preview_html, unsafe_allow_html=True)
 
         st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:20px 0;'>", unsafe_allow_html=True)
 

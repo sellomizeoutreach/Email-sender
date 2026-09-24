@@ -16,6 +16,7 @@ from database import (
     get_emails
 )
 from template_engine import sanitize_email_html
+from timezone_helper import get_engine_now
 
 
 def trigger_toast(msg: str, icon: str = "✅"):
@@ -183,7 +184,7 @@ def render_header():
     else:
         notif_badge_html = ""
 
-    local_time_str = datetime.now().strftime("%I:%M %p")
+    local_time_str = get_engine_now().strftime("%I:%M %p")
 
     header_html = (
         f'<div class="sellomize-header-container">'
@@ -196,8 +197,8 @@ def render_header():
         f'</div>'
         f'<div class="sellomize-header-right">'
         f'{notif_badge_html}'
-        f'<div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:4px 12px; font-size:0.8rem; font-weight:700; color:#083731;" title="Current local time on this computer">'
-        f'<span>💻</span><span>{local_time_str} Local</span>'
+        f'<div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:4px 12px; font-size:0.8rem; font-weight:700; color:#083731;" title="Engine timeframe locked to UTC+5 (Asia/Karachi)">'
+        f'<span>🕒</span><span>{local_time_str} UTC+5</span>'
         f'</div>'
         f'</div>'
         f'</div>'

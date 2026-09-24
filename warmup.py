@@ -11,6 +11,7 @@ Responsibilities:
 from datetime import datetime
 import logging
 from typing import Dict, Any, Optional, Union
+from timezone_helper import get_engine_now
 
 logger = logging.getLogger("warmup")
 
@@ -70,7 +71,7 @@ def get_warmup_info(account: Dict[str, Any], today_str: Optional[str] = None) ->
 
     try:
         start_date = datetime.strptime(start_date_str.split()[0], "%Y-%m-%d").date()
-        today = datetime.strptime(today_str, "%Y-%m-%d").date() if today_str else datetime.now().astimezone().date()
+        today = datetime.strptime(today_str, "%Y-%m-%d").date() if today_str else get_engine_now().date()
         days_elapsed = max(0, (today - start_date).days)
         day_num = days_elapsed + 1
         effective_limit = min(target_limit, start_lim + (days_elapsed * inc))

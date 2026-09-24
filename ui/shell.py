@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Tuple
 
 from database import get_config, DB_FILE
+from timezone_helper import get_engine_now
 from ui.theme import apply_theme
 from ui.components import render_notification_bell
 
@@ -39,8 +40,8 @@ def get_worker_status(db_path: str = DB_FILE) -> Tuple[bool, str, str]:
 
     try:
         hb_dt = datetime.strptime(heartbeat_str[:19], "%Y-%m-%d %H:%M:%S")
-        now_dt = datetime.now()
-        diff_seconds = abs((now_dt - hb_dt).total_seconds())
+        now_dt = get_engine_now()
+        diff_seconds = abs((now_dt.replace(tzinfo=None) - hb_dt).total_seconds())
         if diff_seconds < 45:
             return True, "Sender Running", f"Worker active (heartbeat: {int(diff_seconds)}s ago)"
         else:
@@ -116,7 +117,7 @@ def render_topbar(screen_key: str):
     }
 
     title, subtitle = screen_meta.get(screen_key, ("Sellomize Reach", "Hostinger Outreach Engine"))
-    local_time_str = datetime.now().strftime("%I:%M %p")
+    local_time_str = get_engine_now().strftime("%I:%M %p")
 
     col_title, col_time, col_bell = st.columns([3.4, 1.6, 0.6], vertical_alignment="center")
 
@@ -130,8 +131,8 @@ def render_topbar(screen_key: str):
 
     with col_time:
         st.markdown(f"""
-        <div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:6px 14px; font-size:0.82rem; font-weight:700; color:#083731; white-space:nowrap;" title="Current local system time on your computer">
-            <span>💻</span><span>{local_time_str} Local</span>
+        <div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:6px 14px; font-size:0.82rem; font-weight:700; color:#083731; white-space:nowrap;" title="Engine timeframe locked to UTC+5 (Asia/Karachi)">
+            <span>🕒</span><span>{local_time_str} UTC+5</span>
         </div>
         """, unsafe_allow_html=True)
 

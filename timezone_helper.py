@@ -4,12 +4,28 @@ Provides destination market presets (Canada, Australia, US, UK, Europe, etc.),
 live timezone offsets, market-hour validation, and dual-clock scheduling calculators.
 """
 
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 import logging
 
 logger = logging.getLogger("SellomizeTimezone")
+
+# Engine-wide authoritative UTC+5 Timeframe
+ENGINE_TZ_OFFSET = timedelta(hours=5)
+ENGINE_TZ = timezone(ENGINE_TZ_OFFSET)
+ENGINE_TZ_NAME = "UTC+5"
+
+
+def get_engine_now() -> datetime:
+    """Return the current datetime strictly in the UTC+5 engine timeframe."""
+    return datetime.now(timezone.utc).astimezone(ENGINE_TZ)
+
+
+def get_engine_now_str(fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """Return the current UTC+5 datetime string formatted as requested."""
+    return get_engine_now().strftime(fmt)
+
 
 # Predefined Target Markets and Standard Timezones
 TARGET_MARKETS: Dict[str, Dict[str, Any]] = {
@@ -117,10 +133,18 @@ TARGET_MARKETS: Dict[str, Dict[str, Any]] = {
         "default_end": "17:00",
         "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     },
+    "UTC_PLUS_5": {
+        "label": "🇵🇰 UTC+5 (PKT / Karachi, Tashkent, Yekaterinburg)",
+        "timezone": "Asia/Karachi",
+        "country": "Pakistan",
+        "default_start": "09:00",
+        "default_end": "18:00",
+        "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    },
     "LOCAL": {
-        "label": "💻 Host PC Local System Time",
-        "timezone": "LOCAL",
-        "country": "Local",
+        "label": "💻 Engine Timeframe (UTC+5)",
+        "timezone": "Asia/Karachi",
+        "country": "UTC+5",
         "default_start": "09:00",
         "default_end": "18:00",
         "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
@@ -134,6 +158,19 @@ def get_market_info(market_key: str) -> Dict[str, Any]:
 
 
 TIMEZONE_ALIASES: Dict[str, str] = {
+    "utc+5": "Asia/Karachi",
+    "utc+05": "Asia/Karachi",
+    "utc+05:00": "Asia/Karachi",
+    "utc+5:00": "Asia/Karachi",
+    "+05:00": "Asia/Karachi",
+    "+05": "Asia/Karachi",
+    "pkt": "Asia/Karachi",
+    "pakistan": "Asia/Karachi",
+    "karachi": "Asia/Karachi",
+    "islamabad": "Asia/Karachi",
+    "lahore": "Asia/Karachi",
+    "tashkent": "Asia/Karachi",
+    "yekaterinburg": "Asia/Karachi",
     "london": "Europe/London",
     "uk": "Europe/London",
     "united kingdom": "Europe/London",
@@ -193,6 +230,8 @@ def resolve_timezone(input_str: Optional[str]) -> str:
     s = str(input_str).strip()
     if s.upper() in ["LOCAL", ""]:
         return "LOCAL"
+    if s.lower() in ["utc+5", "utc+05", "utc+05:00", "utc+5:00", "+05:00", "+05", "pkt"]:
+        return "Asia/Karachi"
     try:
         ZoneInfo(s)
         return s
@@ -223,10 +262,13 @@ def get_market_current_time(market_key_or_tz: str) -> datetime:
     else:
         tz_id = market_key_or_tz
 
+    if not tz_id or str(tz_id).upper() in ["LOCAL", "UTC+5", "UTC+05:00", "+05:00", "+05"]:
+        return get_engine_now()
+
     zi = get_zoneinfo(tz_id)
     if zi:
-        return datetime.now(zi)
-    return datetime.now().astimezone()
+        return datetime.now(timezone.utc).astimezone(zi)
+    return get_engine_now()
 
 
 def get_time_difference_summary(market_key_or_tz: str) -> str:
@@ -235,7 +277,7 @@ def get_time_difference_summary(market_key_or_tz: str) -> str:
     Example: '-9 hours behind your Host PC' or '+5 hours ahead of your Host PC'.
     """
     target_dt = get_market_current_time(market_key_or_tz)
-    host_dt = datetime.now().astimezone()
+    host_dt = get_engine_now()
 
     target_offset = target_dt.utcoffset() or timedelta(0)
     host_offset = host_dt.utcoffset() or timedelta(0)

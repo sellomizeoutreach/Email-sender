@@ -2,7 +2,8 @@
 ui/outbox.py - Reference Outbox & Dispatch History for Sellomize Reach.
 Matches sellomize_reference.html:
 - Filter pills: Scheduled, Sent, Paused / failed
-- Clean table with columns: Lead, Touch, Mailbox, When (local), Status, Actions (Cancel, Review, Retry, Send now)
+- Clean table with columns: Lead, Touch, Mailbox, When (local), Status, Actions (Cancel, Review, Retry, Send now, Edit)
+- Edit Scheduled Outreach modal dialog with dual-mode editor, recipient, subject, scheduled date/time, and mailbox reassignment.
 - Scheduled follow-ups auto-pause note.
 """
 
@@ -19,8 +20,102 @@ from database import (
     get_smtp_accounts,
     get_contacts,
 )
+from timezone_helper import get_engine_now
 from scheduler import dispatch_email_hostinger
+from ui.editor import render_dual_mode_editor
 from ui.components import trigger_toast
+
+
+@st.dialog("✏️ Edit Scheduled Outreach")
+def render_edit_email_dialog(email_record: Dict[str, Any]):
+    """Modal dialog to edit subject, recipient, scheduled date/time, mailbox, and email body."""
+    eid = email_record["id"]
+    current_recip = email_record.get("recipient") or ""
+    current_subj = email_record.get("subject") or ""
+    current_sched = email_record.get("scheduled_time") or ""
+    current_html = email_record.get("email_html") or ""
+    current_mb_id = email_record.get("smtp_account_id")
+
+    all_mailboxes = get_smtp_accounts(active_only=True)
+
+    # Parse scheduled date and time
+    dt_val = get_engine_now()
+    if current_sched:
+        try:
+            dt_val = datetime.strptime(current_sched[:19], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+
+    st.markdown(f"#### Edit Outreach #OUT-{eid:04d}")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        new_recip = st.text_input("Recipient Email", value=current_recip, key=f"edit_recip_{eid}")
+    with c2:
+        if all_mailboxes:
+            mb_options = {f"{mb.get('sender_name') or mb.get('email')} <{mb.get('email')}>": mb["id"] for mb in all_mailboxes}
+            curr_idx = 0
+            for idx, mb_id in enumerate(mb_options.values()):
+                if mb_id == current_mb_id:
+                    curr_idx = idx
+                    break
+            chosen_mb_label = st.selectbox("Sending Mailbox", list(mb_options.keys()), index=curr_idx, key=f"edit_mb_{eid}")
+            chosen_mb_id = mb_options[chosen_mb_label]
+        else:
+            st.caption("No mailboxes configured.")
+            chosen_mb_id = current_mb_id
+
+    new_subj = st.text_input("Subject Line", value=current_subj, key=f"edit_subj_{eid}")
+
+    c_date, c_time = st.columns(2)
+    with c_date:
+        new_date = st.date_input("Scheduled Date", value=dt_val.date(), key=f"edit_date_{eid}")
+    with c_time:
+        new_time = st.time_input("Scheduled Time (UTC+5)", value=dt_val.time(), key=f"edit_time_{eid}")
+
+    st.markdown("<span class='lbl' style='margin-top:6px;'>Email Body Content</span>", unsafe_allow_html=True)
+    new_body = render_dual_mode_editor(
+        key_prefix=f"edit_outbox_{eid}",
+        initial_content=current_html,
+        height=180
+    )
+
+    btn_save, btn_send_now = st.columns(2)
+    with btn_save:
+        if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_{eid}"):
+            combined_dt = datetime.combine(new_date, new_time)
+            sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+            update_email(
+                email_id=eid,
+                recipient=new_recip.strip(),
+                subject=new_subj.strip(),
+                email_html=new_body,
+                scheduled_time=sched_str,
+                smtp_account_id=chosen_mb_id
+            )
+            trigger_toast(f"Email #OUT-{eid:04d} updated!", icon="💾")
+            st.rerun()
+
+    with btn_send_now:
+        if st.button("🚀 Send Immediately", use_container_width=True, key=f"send_edit_{eid}"):
+            combined_dt = datetime.combine(new_date, new_time)
+            sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+            update_email(
+                email_id=eid,
+                recipient=new_recip.strip(),
+                subject=new_subj.strip(),
+                email_html=new_body,
+                scheduled_time=sched_str,
+                smtp_account_id=chosen_mb_id
+            )
+            updated_rec = get_email_by_id(eid)
+            with st.spinner("Dispatching via Hostinger..."):
+                ok = dispatch_email_hostinger(updated_rec)
+                if ok:
+                    trigger_toast(f"Sent email to {new_recip.strip()}!", icon="🚀")
+                else:
+                    st.error("Dispatch failed. Check mailbox settings.")
+            st.rerun()
 
 
 def render_outbox_tab():
@@ -136,14 +231,12 @@ def render_outbox_tab():
             """, unsafe_allow_html=True)
 
             # Action buttons row
-            btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1, 1, 1, 3])
+            btn_col1, btn_col2, btn_col3, btn_col4, _ = st.columns([1, 1, 1, 1, 2])
 
             if current_filter == "Scheduled":
                 with btn_col1:
-                    if st.button("❌ Cancel", key=f"outbox_del_{eid}", use_container_width=True):
-                        delete_email(eid)
-                        trigger_toast(f"Email #{eid} cancelled and removed.", icon="🗑️")
-                        st.rerun()
+                    if st.button("✏️ Edit", key=f"outbox_edit_{eid}", use_container_width=True):
+                        render_edit_email_dialog(e)
                 with btn_col2:
                     if st.button("🚀 Send now", key=f"outbox_send_{eid}", use_container_width=True, type="primary"):
                         with st.spinner("Dispatching via Hostinger..."):
@@ -158,14 +251,22 @@ def render_outbox_tab():
                         update_email(email_id=eid, status="Paused")
                         trigger_toast(f"Email #{eid} paused.", icon="⏸️")
                         st.rerun()
+                with btn_col4:
+                    if st.button("❌ Cancel", key=f"outbox_del_{eid}", use_container_width=True):
+                        delete_email(eid)
+                        trigger_toast(f"Email #{eid} cancelled and removed.", icon="🗑️")
+                        st.rerun()
 
             elif current_filter == "Paused / failed":
                 with btn_col1:
+                    if st.button("✏️ Edit", key=f"outbox_pf_edit_{eid}", use_container_width=True):
+                        render_edit_email_dialog(e)
+                with btn_col2:
                     if st.button("▶️ Resume", key=f"outbox_res_{eid}", use_container_width=True, type="primary"):
                         update_email(email_id=eid, status="Approved")
                         trigger_toast(f"Email #{eid} unpaused & queued.", icon="▶️")
                         st.rerun()
-                with btn_col2:
+                with btn_col3:
                     if st.button("🔄 Retry", key=f"outbox_retry_{eid}", use_container_width=True):
                         with st.spinner("Retrying dispatch..."):
                             ok = dispatch_email_hostinger(e)
@@ -174,7 +275,7 @@ def render_outbox_tab():
                             else:
                                 st.error("Retry failed. Check mailbox credentials.")
                         st.rerun()
-                with btn_col3:
+                with btn_col4:
                     if st.button("🗑️ Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
                         delete_email(eid)
                         trigger_toast(f"Email #{eid} deleted.", icon="🗑️")

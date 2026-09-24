@@ -57,7 +57,9 @@ from timezone_helper import (
     is_within_market_hours,
     get_market_info,
     calculate_market_aware_schedule,
-    TARGET_MARKETS
+    TARGET_MARKETS,
+    get_engine_now,
+    get_engine_now_str
 )
 
 
@@ -115,10 +117,10 @@ def is_within_sending_window(
             reference_dt=check_dt
         )
 
-    # Local office hours check (default or when email has LOCAL/no timezone)
-    dt = check_dt or datetime.now().astimezone()
+    # Office hours check in UTC+5 engine timeframe
+    dt = check_dt or get_engine_now()
     if dt.tzinfo is None:
-        dt = dt.astimezone()
+        dt = dt.replace(tzinfo=get_engine_now().tzinfo)
 
     day_name = dt.strftime("%A")
     raw_days = get_config("sending_days", "Monday,Tuesday,Wednesday,Thursday,Friday", db_path=db_path) or ""
@@ -438,10 +440,10 @@ def analyze_schedule_overflow(
 
 def get_local_system_time_str() -> str:
     """
-    Return current time in Local System Time formatted strictly as YYYY-MM-DD HH:MM:SS.
-    Standardized with app.py to prevent UTC mismatches.
+    Return current time in Engine Timeframe (UTC+5) formatted strictly as YYYY-MM-DD HH:MM:SS.
+    Standardized across the engine to prevent UTC mismatches.
     """
-    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    return get_engine_now_str()
 
 def get_outlook_application():
     """
@@ -717,7 +719,7 @@ def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
     )
     from template_engine import resolve_template, format_email_html, parse_spintax, inject_variables, scan_all_negative_keywords
 
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = get_engine_now_str()
     due_rules = get_due_sequence_rules(current_time_iso=now_iso, db_path=target_db)
     generated_count = 0
 
@@ -842,9 +844,9 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     """
     target_db = db_path or DB_FILE
 
-    # Record worker heartbeat timestamp
+    # Record worker heartbeat timestamp in UTC+5
     try:
-        set_config("worker_heartbeat", datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"), db_path=target_db)
+        set_config("worker_heartbeat", get_engine_now_str(), db_path=target_db)
     except Exception:
         pass
 

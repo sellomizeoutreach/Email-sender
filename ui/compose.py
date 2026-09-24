@@ -41,6 +41,7 @@ from template_engine import (
     format_email_html,
 )
 from scheduler import dispatch_email_hostinger
+from timezone_helper import get_engine_now, get_engine_now_str
 from ui.editor import render_dual_mode_editor
 from ui.components import trigger_toast
 
@@ -284,8 +285,8 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                             subject=final_subj,
                             recipient=current_lead["email"].strip(),
                             status="Approved",
-                            scheduled_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            target_timezone="LOCAL"
+                            scheduled_time=get_engine_now_str(),
+                            target_timezone="Asia/Karachi"
                         )
                         email_record = {
                             "id": email_id,
@@ -293,7 +294,7 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                             "subject": final_subj,
                             "email_html": email_html,
                             "smtp_account_id": selected_mb["id"],
-                            "target_timezone": "LOCAL"
+                            "target_timezone": "Asia/Karachi"
                         }
                         ok = dispatch_email_hostinger(email_record)
                         if ok:
@@ -305,9 +306,9 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
 
         with c_act2:
             with st.popover("🕒 Schedule", use_container_width=True):
-                st.markdown("**Schedule Outreach**")
-                s_date = st.date_input("Date", value=datetime.now().date(), key="comp_sd")
-                s_time = st.time_input("Time", value=(datetime.now() + timedelta(hours=1)).time(), key="comp_st")
+                st.markdown("**Schedule Outreach (UTC+5)**")
+                s_date = st.date_input("Date", value=get_engine_now().date(), key="comp_sd")
+                s_time = st.time_input("Time", value=(get_engine_now() + timedelta(hours=1)).time(), key="comp_st")
                 if st.button("Confirm Schedule", type="primary", use_container_width=True, disabled=not can_send):
                     comb_dt = datetime.combine(s_date, s_time)
                     s_iso = comb_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -317,9 +318,9 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                         recipient=current_lead["email"].strip(),
                         status="Approved",
                         scheduled_time=s_iso,
-                        target_timezone="LOCAL"
+                        target_timezone="Asia/Karachi"
                     )
-                    trigger_toast(f"Scheduled for {s_iso}!", icon="🕒")
+                    trigger_toast(f"Scheduled for {s_iso} (UTC+5)!", icon="🕒")
                     st.session_state["active_screen"] = "outbox"
                     st.rerun()
 
@@ -330,8 +331,8 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                     subject=final_subj,
                     recipient=current_lead.get("email", "").strip(),
                     status="Pending",
-                    scheduled_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    target_timezone="LOCAL"
+                    scheduled_time=get_engine_now_str(),
+                    target_timezone="Asia/Karachi"
                 )
                 trigger_toast("Draft saved to Outbox.", icon="💾")
 
@@ -352,11 +353,14 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
         st.markdown(f'<span class="lbl">Live preview — what {lead_name} receives</span>', unsafe_allow_html=True)
 
         signature_html = get_config("signature_html", "") or "Jack Conner · Sellomize · jack@sellomize.com"
-        preview_box_html = f"""
-        <div class="preview">
-            {final_body}
-            <div class="sig">{signature_html}</div>
-        </div>
-        <div class="banner banner-info" style="margin-top:12px;">Variables resolved for this recipient. This exact HTML is what gets sent.</div>
-        """
-        st.markdown(preview_box_html, unsafe_allow_html=True)
+        preview_box_html = (
+            '<div class="preview">'
+            f'{final_body}'
+            f'<div class="sig">{signature_html}</div>'
+            '</div>'
+            '<div class="banner banner-info" style="margin-top:12px;">Variables resolved for this recipient. This exact HTML is what gets sent.</div>'
+        )
+        if hasattr(st, "html"):
+            st.html(preview_box_html)
+        else:
+            st.markdown(preview_box_html, unsafe_allow_html=True)

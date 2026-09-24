@@ -28,7 +28,7 @@ from template_engine import (
     format_email_html,
     _missing_tokens,
 )
-from timezone_helper import get_next_valid_market_datetime
+from timezone_helper import get_next_valid_market_datetime, get_engine_now
 from ui.editor import render_dual_mode_editor
 from ui.components import trigger_toast
 
@@ -286,14 +286,14 @@ def render_bulk_tab():
             unsafe_allow_html=True
         )
 
-        # Start Date and Start Time Pickers
+        # Start Date and Start Time Pickers (UTC+5 Engine Timeframe)
         c_date, c_time = st.columns(2)
         with c_date:
             st.markdown("<span class='lbl'>Start date</span>", unsafe_allow_html=True)
-            chosen_date = st.date_input("Start date", value=datetime.now().date(), key="bulk_start_date", label_visibility="collapsed")
+            chosen_date = st.date_input("Start date", value=get_engine_now().date(), key="bulk_start_date", label_visibility="collapsed")
         with c_time:
-            st.markdown("<span class='lbl'>Start time</span>", unsafe_allow_html=True)
-            chosen_time = st.time_input("Start time", value=datetime.now().time(), key="bulk_start_time", label_visibility="collapsed")
+            st.markdown("<span class='lbl'>Start time (UTC+5)</span>", unsafe_allow_html=True)
+            chosen_time = st.time_input("Start time", value=get_engine_now().time(), key="bulk_start_time", label_visibility="collapsed")
 
         spread_hours = st.slider(
             "Spread outreach over (Hours)",

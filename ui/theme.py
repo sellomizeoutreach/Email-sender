@@ -215,17 +215,19 @@ SELLOMIZE_THEME_CSS = """<style>
     .ebody { padding: 12px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 120px; }
     .hl { background: #FDE2DA; color: #FD4D1B; border-radius: 3px; padding: 0 3px; font-weight: 600; }
     .preview { border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; padding: 16px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 380px; display: flex; flex-direction: column; }
+    .preview img { max-width: 100%; height: auto; border-radius: 6px; margin: 8px 0; display: block; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
     .preview .sig { margin-top: auto; padding-top: 12px; border-top: 1px solid #E2E8F0; font-size: 12px; color: #64748B; }
     .spam { font-size: 12px; color: #D97706; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }
     .guard { font-size: 12px; color: #0F6E56; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }
 
     /* Tables & Filters */
-    .tablewrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; }
-    table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
-    th { background: #F8FAFC; color: #64748B; font-weight: 600; text-align: left; padding: 9px 12px; font-size: 11px; letter-spacing: .03em; border-bottom: 1px solid #E2E8F0; }
-    td { padding: 9px 12px; border-bottom: 1px solid #E2E8F0; color: #0F172A; }
-    tr:last-child td { border-bottom: 0; }
-    .mono { font-family: monospace; font-size: 12px; }
+    .tablewrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0,0,0,0.02); margin-bottom: 12px; }
+    .crm-table, table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; color: #0F172A; }
+    .crm-table th, th { background: #F8FAFC; color: #64748B; font-weight: 600; text-align: left; padding: 10px 14px; font-size: 11px; letter-spacing: .04em; border-bottom: 1px solid #E2E8F0; text-transform: uppercase; }
+    .crm-table td, td { padding: 10px 14px; border-bottom: 1px solid #E2E8F0; color: #0F172A; vertical-align: middle; }
+    .crm-table tr:last-child td, tr:last-child td { border-bottom: 0; }
+    .crm-table tr:hover, tbody tr:hover { background: #F8FAF9; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #083731; }
     .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
     .fpill { font-size: 12px; border: 1px solid #E2E8F0; border-radius: 999px; padding: 5px 12px; cursor: pointer; background: #FFFFFF; color: #475569; font-weight: 500; }
     .fpill.on { background: #083731; color: #FFFFFF; border-color: #083731; }
