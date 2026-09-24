@@ -1,15 +1,18 @@
 """
 ui/leads.py - Leads Directory for Sellomize Reach.
 Matching sellomize_reference.html:
-- Exact CRM columns kept intact: Checkbox, Lead ID (#SLM-...), Brand / Company, Contact Name,
-  Email & MX (with verification status), Lead Source, Priority, Contacted?, Status, Follow-Ups, Owner, Notes, Tags.
+- Exact CRM columns: Checkbox, Lead ID, Brand / Company, Contact Name,
+  Email & MX, Lead Source, Priority, Contacted?, Status, Follow-Ups, Owner, Notes, Tags.
 - Filter pills: All leads, Cold outreach, Follow-up #1, Follow-up #2+, Opened, High intent, Due today.
 - 5 normalized statuses: New, Emailed, Replied, Bounced, Do Not Contact.
-- CSV Import & Export.
+- CSV template & export headers match table headers exactly.
+- Sortable column headers (click to sort asc/desc).
+- Functional master checkbox (select / deselect all visible rows).
+- Bulk actions: ✏️ Bulk Edit & 🗑️ Bulk Delete via @st.dialog popups.
 """
 
 import streamlit as st
-import html
+import html as html_mod
 from typing import List, Dict, Any, Optional
 
 from database import (
@@ -18,6 +21,8 @@ from database import (
     create_contact,
     update_contact,
     delete_contact,
+    bulk_delete_contacts,
+    bulk_update_contacts,
     upsert_contact_by_email,
     LEAD_STATUSES,
     DB_FILE,
@@ -30,6 +35,10 @@ from contacts_handler import (
 from mx_checker import verify_email_domain_mx
 from ui.components import trigger_toast
 
+
+# ---------------------------------------------------------------------------
+# Dialogs
+# ---------------------------------------------------------------------------
 
 @st.dialog("➕ Add New Lead")
 def render_add_lead_dialog():
@@ -96,7 +105,7 @@ def render_edit_lead_dialog(lead: Dict[str, Any]):
 
         col_save, col_del = st.columns([3, 1])
         with col_save:
-            save_clicked = st.form_submit_button("Update Lead", type="primary", use_container_width=True)
+            save_clicked = st.form_submit_button("💾 Update Lead", type="primary", use_container_width=True)
         with col_del:
             del_clicked = st.form_submit_button("🗑️ Delete", use_container_width=True)
 
@@ -121,10 +130,145 @@ def render_edit_lead_dialog(lead: Dict[str, Any]):
             st.rerun()
 
 
+@st.dialog("✏️ Bulk Edit Selected Leads")
+def render_bulk_edit_dialog(selected_ids: List[int], count: int):
+    """Dialog to bulk-edit common fields across all selected contacts."""
+    st.markdown(f"Editing **{count} selected lead{'s' if count != 1 else ''}**. Leave a field blank to keep existing values.")
+
+    with st.form("bulk_edit_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            src_opts_bulk = ["", "Amazon scrape", "LinkedIn", "Referral", "Website", "Other"]
+            new_source = st.selectbox("Lead Source", src_opts_bulk, index=0, help="Leave blank to keep current")
+            prio_opts_bulk = ["", "High", "Med", "Low"]
+            new_priority = st.selectbox("Priority", prio_opts_bulk, index=0, help="Leave blank to keep current")
+            contacted_opts = ["", "Yes", "No"]
+            new_contacted = st.selectbox("Contacted?", contacted_opts, index=0, help="Leave blank to keep current")
+        with c2:
+            status_opts_bulk = [""] + LEAD_STATUSES
+            new_status = st.selectbox("Status", status_opts_bulk, index=0, help="Leave blank to keep current")
+            new_owner = st.text_input("Owner", placeholder="Leave blank to keep current")
+            new_company = st.text_input("Brand / Company", placeholder="Leave blank to keep current")
+        new_notes = st.text_area("Notes", placeholder="Leave blank to keep current")
+
+        c_apply, c_cancel = st.columns([2, 1])
+        with c_apply:
+            apply = st.form_submit_button("✅ Apply Changes", type="primary", use_container_width=True)
+        with c_cancel:
+            cancel = st.form_submit_button("✖️ Cancel", use_container_width=True)
+
+    if cancel:
+        st.rerun()
+
+    if apply:
+        updates: Dict[str, Any] = {}
+        if new_source:
+            updates["lead_source"] = new_source
+        if new_priority:
+            updates["priority"] = new_priority
+        if new_contacted:
+            updates["contacted"] = new_contacted
+        if new_status:
+            updates["status"] = new_status
+        if new_owner.strip():
+            updates["owner"] = new_owner.strip()
+        if new_company.strip():
+            updates["company"] = new_company.strip()
+        if new_notes.strip():
+            updates["notes"] = new_notes.strip()
+
+        if not updates:
+            st.warning("No changes specified. Please update at least one field.")
+        else:
+            affected = bulk_update_contacts(selected_ids, updates)
+            # Clear selection
+            st.session_state["crm_selected_ids"] = set()
+            st.session_state["crm_master_check"] = False
+            trigger_toast(f"Updated {affected} lead{'s' if affected != 1 else ''} successfully!", icon="✅")
+            st.rerun()
+
+
+@st.dialog("🗑️ Bulk Delete Selected Leads")
+def render_bulk_delete_dialog(selected_ids: List[int], count: int):
+    """Confirmation dialog before bulk-deleting selected leads."""
+    st.error(f"⚠️ You are about to **permanently delete {count} lead{'s' if count != 1 else ''}**. This cannot be undone.")
+    st.markdown(f"**{count} lead{'s' if count != 1 else ''} will be deleted from the CRM.**")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🗑️ Yes, Delete All", type="primary", use_container_width=True):
+            deleted = bulk_delete_contacts(selected_ids)
+            st.session_state["crm_selected_ids"] = set()
+            st.session_state["crm_master_check"] = False
+            trigger_toast(f"Deleted {deleted} lead{'s' if deleted != 1 else ''}.", icon="🗑️")
+            st.rerun()
+    with c2:
+        if st.button("✖️ Cancel", use_container_width=True):
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Sort helper
+# ---------------------------------------------------------------------------
+
+_SORT_KEY_MAP = {
+    "lead_id":      lambda c: c.get("id") or 0,
+    "company":      lambda c: (c.get("company") or "").lower(),
+    "name":         lambda c: (c.get("name") or "").lower(),
+    "email":        lambda c: (c.get("email") or "").lower(),
+    "lead_source":  lambda c: (c.get("lead_source") or "").lower(),
+    "priority":     lambda c: {"High": 0, "Med": 1, "Low": 2}.get(c.get("priority") or "Med", 1),
+    "contacted":    lambda c: (c.get("contacted") or "No").lower(),
+    "status":       lambda c: (c.get("status") or "New").lower(),
+    "follow_ups":   lambda c: int(c.get("follow_ups_sent") or 0),
+    "owner":        lambda c: (c.get("owner") or "").lower(),
+}
+
+def _sort_arrow(col_key: str) -> str:
+    """Return ▲ ▼ or ⇅ indicator for a column header."""
+    if st.session_state.get("crm_sort_col") == col_key:
+        return " ▲" if not st.session_state.get("crm_sort_desc", False) else " ▼"
+    return " ⇅"
+
+
+# ---------------------------------------------------------------------------
+# Priority / Contacted pills
+# ---------------------------------------------------------------------------
+
+def _priority_pill(prio: str) -> str:
+    p = (prio or "Med").strip()
+    if p == "High":
+        return '<span class="pill p-new">High</span>'
+    if p == "Low":
+        return '<span class="pill p-sent">Low</span>'
+    return f'<span class="pill p-warm">{html_mod.escape(p)}</span>'
+
+
+def _contacted_pill(val: str) -> str:
+    v = (val or "No").strip()
+    if v.lower() == "yes":
+        return '<span class="pill p-pass">Yes</span>'
+    return '<span class="pill p-sent">No</span>'
+
+
+# ---------------------------------------------------------------------------
+# Main leads tab
+# ---------------------------------------------------------------------------
+
 def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     """Render the full CRM leads screen matching reference structure."""
     if all_contacts is None:
         all_contacts = get_contacts()
+
+    # --- SESSION STATE INIT ---
+    if "crm_selected_ids" not in st.session_state:
+        st.session_state["crm_selected_ids"] = set()
+    if "crm_sort_col" not in st.session_state:
+        st.session_state["crm_sort_col"] = "lead_id"
+    if "crm_sort_desc" not in st.session_state:
+        st.session_state["crm_sort_desc"] = False
+    if "crm_master_check" not in st.session_state:
+        st.session_state["crm_master_check"] = False
 
     # --- TOP TOOLBAR ---
     col_tools, col_search = st.columns([3.2, 1.8], vertical_alignment="center")
@@ -134,7 +278,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         with c1:
             with st.popover("📥 Import CSV", use_container_width=True):
                 st.markdown("**Import Leads from CSV**")
-                st.caption("Upload CSV containing Contact Name, Email, Brand/Company, Priority, Tags, Notes...")
+                st.caption("Columns: Lead ID · Brand / Company · Contact Name · Email · Lead Source · Priority · Contacted? · Status · Follow-Ups · Owner · Notes · Tags")
                 st.download_button(
                     "📄 Download Sample Template",
                     data=generate_csv_template(),
@@ -160,12 +304,26 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             if st.button("➕ Add lead", type="primary", use_container_width=True):
                 render_add_lead_dialog()
         with c4:
-            with st.popover("⚡ Bulk actions", use_container_width=True):
+            sel_count = len(st.session_state["crm_selected_ids"])
+            lbl = f"⚡ Bulk actions{f' ({sel_count})' if sel_count else ''}"
+            with st.popover(lbl, use_container_width=True):
                 st.markdown("**Bulk Operations**")
-                if st.button("Mark all filtered as 'New'", use_container_width=True):
-                    trigger_toast("Selected leads updated to 'New'.", icon="🔄")
-                if st.button("Tag all filtered leads...", use_container_width=True):
-                    trigger_toast("Tags applied.", icon="🏷️")
+                if sel_count == 0:
+                    st.caption("☑️ Select rows using the checkboxes below, then choose an action.")
+                else:
+                    st.markdown(f"**{sel_count} lead{'s' if sel_count != 1 else ''} selected**")
+                    if st.button("✏️ Bulk Edit Selected", use_container_width=True, key="btn_bulk_edit"):
+                        render_bulk_edit_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
+                    if st.button("🗑️ Bulk Delete Selected", use_container_width=True, key="btn_bulk_delete"):
+                        render_bulk_delete_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
+                st.divider()
+                st.markdown("**Quick Operations on All Filtered**")
+                if st.button("☑️ Select All Filtered", use_container_width=True):
+                    st.rerun()  # handled after filtering below
+                if st.button("◻️ Clear Selection", use_container_width=True):
+                    st.session_state["crm_selected_ids"] = set()
+                    st.session_state["crm_master_check"] = False
+                    st.rerun()
 
     with col_search:
         search_query = st.text_input(
@@ -217,128 +375,211 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             or q in (c.get("notes") or "").lower()
         ]
 
-    # --- FULL CRM TABLE (ALL COLUMNS INTACT) ---
-    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+    filtered_ids = {c["id"] for c in filtered if c.get("id")}
 
+    # --- SORTING ---
+    sort_col = st.session_state.get("crm_sort_col", "lead_id")
+    sort_desc = st.session_state.get("crm_sort_desc", False)
+    if sort_col in _SORT_KEY_MAP:
+        filtered = sorted(filtered, key=_SORT_KEY_MAP[sort_col], reverse=sort_desc)
+
+    # --- SELECT ALL BUTTON (post-filter) ---
+    # Handles "Select All Filtered" from Bulk actions popover
+    if st.session_state.get("_do_select_all_filtered"):
+        st.session_state["crm_selected_ids"] = filtered_ids.copy()
+        st.session_state["crm_master_check"] = True
+        st.session_state["_do_select_all_filtered"] = False
+
+    # --- SORT HEADER BUTTONS (above table) ---
+    # 12 columns: ☐  LEAD ID  BRAND/CO  NAME  EMAIL&MX  SOURCE  PRIORITY  CONTACTED  STATUS  FOLLOW-UPS  OWNER  ACTIONS
+    sort_cols = st.columns([0.35, 0.7, 1.3, 1.3, 1.5, 0.9, 0.7, 0.75, 0.75, 0.7, 0.8, 0.8], vertical_alignment="center")
+
+    # Master checkbox
+    with sort_cols[0]:
+        master = st.checkbox(
+            "☑",
+            value=st.session_state.get("crm_master_check", False),
+            key="crm_checkbox_master",
+            label_visibility="collapsed",
+            help="Select / deselect all visible rows"
+        )
+        if master != st.session_state.get("crm_master_check", False):
+            st.session_state["crm_master_check"] = master
+            if master:
+                st.session_state["crm_selected_ids"] = filtered_ids.copy()
+            else:
+                st.session_state["crm_selected_ids"] = set()
+            st.rerun()
+
+    # Sort buttons — inline compact style
+    def sort_btn(col_key: str, label: str, col_obj):
+        arrow = _sort_arrow(col_key)
+        with col_obj:
+            if st.button(
+                f"{label}{arrow}",
+                key=f"sort_btn_{col_key}",
+                use_container_width=True,
+                help=f"Sort by {label}"
+            ):
+                if st.session_state["crm_sort_col"] == col_key:
+                    st.session_state["crm_sort_desc"] = not st.session_state["crm_sort_desc"]
+                else:
+                    st.session_state["crm_sort_col"] = col_key
+                    st.session_state["crm_sort_desc"] = False
+                st.rerun()
+
+    sort_btn("lead_id",     "Lead ID",       sort_cols[1])
+    sort_btn("company",     "Brand / Co",    sort_cols[2])
+    sort_btn("name",        "Contact Name",  sort_cols[3])
+    sort_btn("email",       "Email & MX",    sort_cols[4])
+    sort_btn("lead_source", "Source",        sort_cols[5])
+    sort_btn("priority",    "Priority",      sort_cols[6])
+    sort_btn("contacted",   "Contacted?",    sort_cols[7])
+    sort_btn("status",      "Status",        sort_cols[8])
+    sort_btn("follow_ups",  "Follow-Ups",    sort_cols[9])
+    sort_btn("owner",       "Owner",         sort_cols[10])
+    with sort_cols[11]:
+        st.markdown("<div style='font-size:11px; color:#64748B; text-align:center; font-weight:600; letter-spacing:.04em; text-transform:uppercase;'>ACTIONS</div>", unsafe_allow_html=True)
+
+    # --- CRM TABLE ROWS ---
     if not filtered:
-        st.info("No leads match your criteria. Use **+ Add lead** or **Import CSV** above.")
+        st.info("No leads match your criteria. Use **➕ Add lead** or **📥 Import CSV** above.")
         return
 
-    # Render HTML table matching sellomize_reference.html
-    table_rows_html = []
     for c in filtered:
         lid = c.get("id") or 0
         lead_code = f"#SLM-{lid:04d}"
-        company = html.escape(c.get("company") or "—")
-        name = html.escape(c.get("name") or "—")
+        company = c.get("company") or "—"
+        name = c.get("name") or "—"
         email_val = c.get("email") or ""
 
-        # MX Check
-        is_mx_valid, _, _ = verify_email_domain_mx(email_val) if "@" in email_val else (True, "OK", [])
-        mx_pill = '<span class="pill p-pass">MX ok</span>' if is_mx_valid else '<span class="pill p-fail">bad MX</span>'
-        email_cell = f"{html.escape(email_val)} {mx_pill}"
+        # MX Check (cached per email)
+        mx_cache_key = f"mx_{email_val}"
+        if mx_cache_key not in st.session_state:
+            st.session_state[mx_cache_key] = verify_email_domain_mx(email_val) if "@" in email_val else (True, "OK", [])
+        is_mx_valid, _, _ = st.session_state[mx_cache_key]
 
-        src = html.escape(c.get("lead_source") or "Amazon scrape")
-        prio = html.escape(c.get("priority") or "Med")
-        contacted = html.escape(c.get("contacted") or "No")
-
+        src = c.get("lead_source") or "Amazon scrape"
+        prio = c.get("priority") or "Med"
+        contacted = c.get("contacted") or "No"
         st_val = c.get("status") or "New"
-        if st_val == "New":
-            status_pill = '<span class="pill p-new">New</span>'
-        elif st_val == "Emailed":
-            status_pill = '<span class="pill p-sent">Emailed</span>'
-        elif st_val == "Replied":
-            status_pill = '<span class="pill p-rep">Replied</span>'
-        elif st_val == "Bounced":
-            status_pill = '<span class="pill p-bounce">Bounced</span>'
-        else:
-            status_pill = f'<span class="pill p-warm">{html.escape(st_val)}</span>'
+        follow_ups = int(c.get("follow_ups_sent") or 0)
+        owner = c.get("owner") or "—"
+        notes = c.get("notes") or "—"
+        tags = c.get("tags") or ""
 
-        follow_ups = c.get("follow_ups_sent") or 0
-        owner = html.escape(c.get("owner") or "Jack Conner")
-        notes = html.escape(c.get("notes") or "—")
-        tags = html.escape(c.get("tags") or "—")
+        is_selected = lid in st.session_state["crm_selected_ids"]
 
-        table_rows_html.append(
-            f'<tr>'
-            f'<td style="text-align:center;"><input type="checkbox" checked style="accent-color:#083731; cursor:pointer;"></td>'
-            f'<td class="mono">{lead_code}</td>'
-            f'<td><strong>{company}</strong></td>'
-            f'<td>{name}</td>'
-            f'<td class="mono">{email_cell}</td>'
-            f'<td>{src}</td>'
-            f'<td>{prio}</td>'
-            f'<td>{contacted}</td>'
-            f'<td>{status_pill}</td>'
-            f'<td>{follow_ups}</td>'
-            f'<td>{owner}</td>'
-            f'<td>{notes}</td>'
-            f'<td><code style="background:#F1F5F9; padding:2px 6px; border-radius:4px; font-size:11px; color:#475569;">{tags}</code></td>'
-            f'</tr>'
-        )
+        # Row background for selected
+        bg = "background:#F0F7F5;" if is_selected else ""
 
-    full_table_html = (
-        '<style>\n'
-        '.tablewrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0,0,0,0.02); margin-bottom: 12px; }\n'
-        '.crm-table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; color: #0F172A; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }\n'
-        '.crm-table thead th { background: #F8FAFC; color: #64748B; font-weight: 600; text-align: left; padding: 10px 14px; font-size: 11px; letter-spacing: .04em; border-bottom: 1px solid #E2E8F0; text-transform: uppercase; }\n'
-        '.crm-table tbody td { padding: 10px 14px; border-bottom: 1px solid #E2E8F0; color: #0F172A; vertical-align: middle; }\n'
-        '.crm-table tbody tr:last-child td { border-bottom: 0; }\n'
-        '.crm-table tbody tr:hover { background: #F8FAF9; }\n'
-        '.crm-table .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #083731; }\n'
-        '.pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; white-space: nowrap; display: inline-block; font-weight: 600; }\n'
-        '.p-new { background: #FFF1EC; color: #FD4D1B; }\n'
-        '.p-sent { background: #F1F5F9; color: #64748B; }\n'
-        '.p-rep { background: #E1F5EE; color: #0F6E56; }\n'
-        '.p-bounce { background: #FEE2E2; color: #DC2626; }\n'
-        '.p-warm { background: #FEF3C7; color: #D97706; }\n'
-        '.p-pass { background: #E1F5EE; color: #0F6E56; }\n'
-        '.p-fail { background: #FEE2E2; color: #DC2626; }\n'
-        '</style>\n'
-        '<div class="tablewrap">\n'
-        '<table class="crm-table">\n'
-        '<thead>\n'
-        '<tr>\n'
-        '<th style="width:36px; text-align:center;"><input type="checkbox" checked style="accent-color:#083731; cursor:pointer;"></th>\n'
-        '<th>Lead ID</th>\n'
-        '<th>Brand / Company</th>\n'
-        '<th>Contact Name</th>\n'
-        '<th>Email &amp; MX</th>\n'
-        '<th>Lead Source</th>\n'
-        '<th>Priority</th>\n'
-        '<th>Contacted?</th>\n'
-        '<th>Status</th>\n'
-        '<th>Follow-Ups</th>\n'
-        '<th>Owner</th>\n'
-        '<th>Notes</th>\n'
-        '<th>Tags</th>\n'
-        '</tr>\n'
-        '</thead>\n'
-        '<tbody>\n'
-        + '\n'.join(table_rows_html) +
-        '\n</tbody>\n'
-        '</table>\n'
-        '</div>'
+        with st.container():
+            row_cols = st.columns([0.35, 0.7, 1.3, 1.3, 1.5, 0.9, 0.7, 0.75, 0.75, 0.7, 0.8, 0.8], vertical_alignment="center")
+
+            # Checkbox
+            with row_cols[0]:
+                checked = st.checkbox(
+                    f"sel_{lid}",
+                    value=is_selected,
+                    key=f"crm_row_chk_{lid}",
+                    label_visibility="collapsed"
+                )
+                if checked != is_selected:
+                    if checked:
+                        st.session_state["crm_selected_ids"].add(lid)
+                    else:
+                        st.session_state["crm_selected_ids"].discard(lid)
+                        st.session_state["crm_master_check"] = False
+                    st.rerun()
+
+            # Lead ID
+            with row_cols[1]:
+                st.markdown(f"<span style='font-family:monospace; font-size:12px; color:#083731; font-weight:600;'>{lead_code}</span>", unsafe_allow_html=True)
+
+            # Brand / Company
+            with row_cols[2]:
+                st.markdown(f"<strong style='font-size:13px;'>{html_mod.escape(company)}</strong>", unsafe_allow_html=True)
+
+            # Contact Name
+            with row_cols[3]:
+                st.markdown(f"<span style='font-size:13px;'>{html_mod.escape(name)}</span>", unsafe_allow_html=True)
+
+            # Email & MX
+            with row_cols[4]:
+                mx_pill = '<span style="background:#E1F5EE; color:#0F6E56; font-size:10px; padding:1px 7px; border-radius:999px; font-weight:600; margin-left:5px;">MX ok</span>' if is_mx_valid else '<span style="background:#FEE2E2; color:#DC2626; font-size:10px; padding:1px 7px; border-radius:999px; font-weight:600; margin-left:5px;">bad MX</span>'
+                st.markdown(f"<span style='font-family:monospace; font-size:12px; color:#083731;'>{html_mod.escape(email_val)}</span>{mx_pill}", unsafe_allow_html=True)
+
+            # Source
+            with row_cols[5]:
+                st.markdown(f"<span style='font-size:12px; color:#475569;'>{html_mod.escape(src)}</span>", unsafe_allow_html=True)
+
+            # Priority
+            with row_cols[6]:
+                if prio == "High":
+                    pill = '<span style="background:#FFF1EC; color:#FD4D1B; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">High</span>'
+                elif prio == "Low":
+                    pill = '<span style="background:#F1F5F9; color:#64748B; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">Low</span>'
+                else:
+                    pill = f'<span style="background:#FEF3C7; color:#D97706; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">{html_mod.escape(prio)}</span>'
+                st.markdown(pill, unsafe_allow_html=True)
+
+            # Contacted?
+            with row_cols[7]:
+                if contacted.lower() == "yes":
+                    c_pill = '<span style="background:#E1F5EE; color:#0F6E56; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">Yes</span>'
+                else:
+                    c_pill = '<span style="background:#F1F5F9; color:#64748B; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">No</span>'
+                st.markdown(c_pill, unsafe_allow_html=True)
+
+            # Status
+            with row_cols[8]:
+                if st_val == "New":
+                    s_pill = '<span style="background:#FFF1EC; color:#FD4D1B; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">New</span>'
+                elif st_val == "Emailed":
+                    s_pill = '<span style="background:#F1F5F9; color:#64748B; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">Emailed</span>'
+                elif st_val == "Replied":
+                    s_pill = '<span style="background:#E1F5EE; color:#0F6E56; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">Replied</span>'
+                elif st_val == "Bounced":
+                    s_pill = '<span style="background:#FEE2E2; color:#DC2626; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">Bounced</span>'
+                else:
+                    s_pill = f'<span style="background:#FEF3C7; color:#D97706; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;">{html_mod.escape(st_val)}</span>'
+                st.markdown(s_pill, unsafe_allow_html=True)
+
+            # Follow-Ups
+            with row_cols[9]:
+                fu_color = "#0F6E56" if follow_ups > 0 else "#94A3B8"
+                st.markdown(f"<span style='font-size:13px; color:{fu_color}; font-weight:600;'>{follow_ups}</span>", unsafe_allow_html=True)
+
+            # Owner
+            with row_cols[10]:
+                st.markdown(f"<span style='font-size:12px; color:#475569;'>{html_mod.escape(owner)}</span>", unsafe_allow_html=True)
+
+            # Actions
+            with row_cols[11]:
+                a1, a2 = st.columns(2)
+                with a1:
+                    if st.button("✏️", key=f"edit_lead_{lid}", help=f"Edit {name}", use_container_width=True):
+                        render_edit_lead_dialog(c)
+                with a2:
+                    if st.button("✍️", key=f"compose_lead_{lid}", help=f"Compose to {name}", use_container_width=True):
+                        st.session_state["compose_selected_lead_id"] = lid
+                        st.session_state["active_screen"] = "compose"
+                        st.rerun()
+
+        # Thin separator line
+        st.markdown("<div style='border-bottom:1px solid #E2E8F0; margin:0 0 2px 0;'></div>", unsafe_allow_html=True)
+
+    # --- SELECTION SUMMARY BAR ---
+    sel_count = len(st.session_state["crm_selected_ids"])
+    total_shown = len(filtered)
+
+    st.markdown(
+        f"<div style='display:flex; align-items:center; gap:12px; margin-top:10px; padding:8px 14px; "
+        f"background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; font-size:12px; color:#64748B;'>"
+        f"<span>Showing <strong style='color:#083731;'>{total_shown}</strong> lead{'s' if total_shown != 1 else ''} · "
+        f"<strong style='color:#083731;'>{sel_count}</strong> selected</span>"
+        f"</div>",
+        unsafe_allow_html=True
     )
 
-    if hasattr(st, "html"):
-        st.html(full_table_html)
-    else:
-        st.markdown(full_table_html, unsafe_allow_html=True)
-    st.markdown("<p class='sec' style='margin-top:10px;'>Columns kept from the CRM. Statuses: New · Emailed · Replied · Bounced · Do Not Contact.</p>", unsafe_allow_html=True)
-
-    # Lead Actions bar
-    st.markdown("<span class='lbl' style='margin-top:12px;'>Select Lead to Edit or Compose</span>", unsafe_allow_html=True)
-    c_sel, c_act1, c_act2 = st.columns([2.5, 1, 1], vertical_alignment="center")
-    with c_sel:
-        lead_options = {f"#SLM-{c['id']:04d}: {c.get('name') or c.get('email')} ({c.get('company') or 'No Company'})": c for c in filtered}
-        chosen_lead_label = st.selectbox("Select Lead to Edit or Compose", list(lead_options.keys()), key="crm_quick_pick", label_visibility="collapsed")
-        matched_lead = lead_options.get(chosen_lead_label)
-    with c_act1:
-        if matched_lead and st.button("✏️ Edit Lead", use_container_width=True):
-            render_edit_lead_dialog(matched_lead)
-    with c_act2:
-        if matched_lead and st.button("✍️ Compose to Lead", type="primary", use_container_width=True):
-            st.session_state["compose_selected_lead_id"] = matched_lead["id"]
-            st.session_state["active_screen"] = "compose"
-            st.rerun()
+    st.markdown("<p class='sec' style='margin-top:10px;'>CRM Columns: Lead ID · Brand / Company · Contact Name · Email &amp; MX · Lead Source · Priority · Contacted? · Status · Follow-Ups · Owner · Notes · Tags. Statuses: New · Emailed · Replied · Bounced · Do Not Contact.</p>", unsafe_allow_html=True)

@@ -379,8 +379,8 @@ class TestEmailAutomationSystem(unittest.TestCase):
         """Test CSV template generation, bulk import with deduplication, and export."""
         # 1. Template generation
         template_str = generate_csv_template()
-        self.assertIn("Name,Email,Company,Country/Timezone,Status,Notes", template_str)
-        self.assertIn("Skinfix", template_str)
+        self.assertIn("Lead ID,Brand / Company,Contact Name,Email", template_str)
+        self.assertIn("DM Beauty", template_str)
 
         # 2. CSV Import
         sample_csv = (

@@ -1386,6 +1386,43 @@ def bulk_update_contacts_details(
     conn.close()
     return len(contact_ids)
 
+def bulk_update_contacts(
+    contact_ids: List[int],
+    updates: Dict[str, Any],
+    db_path: str = DB_FILE
+) -> int:
+    """
+    Bulk update specified fields (status, priority, lead_source, owner, contacted, company, notes)
+    across multiple contacts in a single SQL operation.
+    """
+    if not contact_ids or not updates:
+        return 0
+    
+    allowed_fields = {"status", "priority", "lead_source", "owner", "contacted", "company", "notes"}
+    valid_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+    if not valid_updates:
+        return 0
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+    
+    set_clauses = []
+    params = []
+    for k, v in valid_updates.items():
+        if k == "status":
+            v = normalize_lead_status(v)
+        set_clauses.append(f"{validate_identifier(k)} = ?")
+        params.append(v)
+    
+    params.extend(contact_ids)
+    sql = f"UPDATE contacts SET {', '.join(set_clauses)} WHERE id IN ({placeholders})"
+    cursor.execute(sql, tuple(params))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
 # ------------------------------------------------------------------------------
 # TEMPLATES HELPERS
 # ------------------------------------------------------------------------------

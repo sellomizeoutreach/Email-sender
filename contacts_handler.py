@@ -15,20 +15,44 @@ from mx_checker import verify_email_domain_mx
 
 def generate_csv_template() -> str:
     """
-    Generate standard CSV template text for Leads:
-    Name, Email, Company, Country/Timezone, Status, Notes
+    Generate standard CSV template text for Leads matching CRM table structure:
+    Lead ID, Brand / Company, Contact Name, Email, Lead Source, Priority, Contacted?, Status, Follow-Ups, Owner, Notes, Tags
     """
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Name", "Email", "Company", "Country/Timezone", "Status", "Notes"])
-    writer.writerow(["Elena Rostova", "elena@skinfix.com", "Skinfix", "US/Eastern", "New", "Interested in product teardown"])
-    writer.writerow(["Marcus Brody", "marcus@minoribeauty.com", "Minori Beauty", "Europe/London", "New", "Met at summit"])
+    writer.writerow([
+        "Lead ID", "Brand / Company", "Contact Name", "Email",
+        "Lead Source", "Priority", "Contacted?", "Status",
+        "Follow-Ups", "Owner", "Notes", "Tags"
+    ])
+    writer.writerow([
+        "#SLM-8491", "DM Beauty", "Danessa Myricks", "danessa@dmbeauty.com",
+        "Amazon scrape", "High", "No", "New",
+        0, "Jack Conner", "Listings unavailable, weak A+", "beauty, amazon"
+    ])
+    writer.writerow([
+        "#SLM-8492", "Wyndmere Naturals", "Cyndi Trachy", "cyndi@wyndmere.com",
+        "Referral", "Med", "Yes", "Emailed",
+        1, "Jack Conner", "Weak A+, low SEO", "essential-oils"
+    ])
+    writer.writerow([
+        "#SLM-8493", "Eva Naturals", "Daniel Crackower", "daniel@evanaturals.com",
+        "Amazon scrape", "High", "Yes", "Replied",
+        1, "Jack Conner", "Reconciliation angle", "skincare"
+    ])
+    writer.writerow([
+        "#SLM-8494", "Facile Skincare", "Danielle Nadick Levy", "danielle@facile.com",
+        "LinkedIn", "Med", "No", "Bounced",
+        0, "Jack Conner", "PPC around organic", "skincare, ppc"
+    ])
     return output.getvalue()
 
 def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
     """
     Convert a list of lead/contact dictionaries into a CSV string ready for download.
-    Contains Name, Email, Company, Country/Timezone, Status, Notes, plus dynamic custom variables.
+    Matches lead directory table headers:
+    Lead ID, Brand / Company, Contact Name, Email, Lead Source, Priority, Contacted?, Status, Follow-Ups, Owner, Notes, Tags
+    plus dynamic custom variables.
     """
     all_var_keys = set()
     for c in contacts:
@@ -46,7 +70,11 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
                     all_var_keys.add(str(k).strip())
 
     sorted_var_keys = sorted(list(all_var_keys))
-    header = ["Name", "Email", "Company", "Country/Timezone", "Status", "Notes"] + sorted_var_keys
+    header = [
+        "Lead ID", "Brand / Company", "Contact Name", "Email",
+        "Lead Source", "Priority", "Contacted?", "Status",
+        "Follow-Ups", "Owner", "Notes", "Tags"
+    ] + sorted_var_keys
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(header)
@@ -63,13 +91,21 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
         if not isinstance(cv_dict, dict):
             cv_dict = {}
 
+        lid = c.get("id") or 0
+        lead_code = f"#SLM-{lid:04d}" if lid else ""
         row = [
+            lead_code,
+            c.get("company") or "",
             c.get("name") or "",
             c.get("email") or "",
-            c.get("company") or "",
-            c.get("country_or_timezone") or "",
+            c.get("lead_source") or "Amazon scrape",
+            c.get("priority") or "Med",
+            c.get("contacted") or "No",
             c.get("status") or "New",
-            c.get("notes") or ""
+            c.get("follow_ups_sent") or 0,
+            c.get("owner") or "Jack Conner",
+            c.get("notes") or "",
+            c.get("tags") or ""
         ]
         for vk in sorted_var_keys:
             row.append(str(cv_dict.get(vk, "")))
@@ -187,19 +223,19 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
                     return actual
         return ""
 
-    name_col = find_col(["name", "full name", "contact name", "lead name"])
+    name_col = find_col(["contact name", "contact", "name", "full name", "lead name"])
     first_name_col = find_col(["first name", "firstname", "fname", "given name"])
     last_name_col = find_col(["last name", "lastname", "lname", "surname"])
-    email_col = find_col(["email", "email address", "contact email", "e-mail", "work email"])
-    company_col = find_col(["company", "company name", "organization", "brand", "account", "business"])
+    email_col = find_col(["email", "email & mx", "email and mx", "email address", "contact email", "e-mail", "work email"])
+    company_col = find_col(["brand / company", "brand/company", "brand", "company", "company name", "organization", "account", "business"])
     tags_col = find_col(["tags", "tag", "labels", "category", "list"])
-    lead_id_col = find_col(["lead id", "lead_id", "id"])
+    lead_id_col = find_col(["lead id", "lead_id", "id", "lead #", "#"])
     lead_source_col = find_col(["lead source", "lead_source", "source"])
     priority_col = find_col(["priority"])
-    contacted_col = find_col(["contacted", "contacted?"])
+    contacted_col = find_col(["contacted?", "contacted"])
     date_first_emailed_col = find_col(["date first emailed", "date_first_emailed", "first emailed"])
     status_col = find_col(["status", "lead status", "outreach status"])
-    follow_ups_sent_col = find_col(["follow-ups sent", "follow_ups_sent", "followups sent", "followups", "follow-ups"])
+    follow_ups_sent_col = find_col(["follow-ups", "follow-up", "follow-ups sent", "follow_ups_sent", "followups sent", "followups"])
     last_contact_date_col = find_col(["last contact date", "last_contact_date", "last contacted"])
     next_follow_up_col = find_col(["next follow-up", "next_follow_up", "next follow up", "follow-up date"])
     owner_col = find_col(["owner", "assigned to", "lead owner", "sales rep"])
@@ -224,6 +260,12 @@ def import_contacts_from_csv(file_content: Union[str, bytes], verify_mx: bool = 
     for row in reader:
         row_num += 1
         raw_email = (row.get(email_col) or "").strip()
+        # Clean any trailing status text like "MX ok" if present in "Email & MX" column
+        if " " in raw_email:
+            for part in raw_email.split():
+                if "@" in part:
+                    raw_email = part.strip()
+                    break
         if not raw_email or "@" not in raw_email:
             # Skip empty or invalid email rows
             continue
