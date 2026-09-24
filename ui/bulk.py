@@ -218,17 +218,25 @@ def render_bulk_tab():
         if "bulk_selected_lead_ids" not in st.session_state:
             st.session_state["bulk_selected_lead_ids"] = {c["id"] for c in filtered_candidates}
 
-        # Quick select / deselect
+        # Version counter: increment this to force Streamlit to re-create checkbox
+        # widgets from scratch (bypasses cached key state).
+        if "bulk_chk_ver" not in st.session_state:
+            st.session_state["bulk_chk_ver"] = 0
+
+        # Quick select / deselect — bump version so keys change → widget reinits
         q_c1, q_c2 = st.columns([1, 1])
         with q_c1:
             if st.button("☑️ Select All Filtered", key="bulk_btn_sel_all", use_container_width=True):
                 st.session_state["bulk_selected_lead_ids"] = {c["id"] for c in filtered_candidates}
+                st.session_state["bulk_chk_ver"] += 1
                 st.rerun()
         with q_c2:
             if st.button("◻️ Clear Selection", key="bulk_btn_clear_sel", use_container_width=True):
                 st.session_state["bulk_selected_lead_ids"] = set()
+                st.session_state["bulk_chk_ver"] += 1
                 st.rerun()
 
+        ver = st.session_state["bulk_chk_ver"]
         selected_leads = []
         if not filtered_candidates:
             st.caption("No leads match the active filters.")
@@ -242,10 +250,12 @@ def render_bulk_tab():
                     ctags = c.get("tags") or ""
 
                     is_checked = cid in st.session_state["bulk_selected_lead_ids"]
+                    # Key includes version so it re-initializes when selection is
+                    # changed programmatically via Select All / Clear Selection.
                     check_val = st.checkbox(
                         f"**{ccomp}** — {cname} (`{cemail}`) {f'· {ctags}' if ctags else ''}",
                         value=is_checked,
-                        key=f"lead_chk_{cid}"
+                        key=f"lead_chk_{cid}_v{ver}"
                     )
                     if check_val:
                         selected_leads.append(c)
