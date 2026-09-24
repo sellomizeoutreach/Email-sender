@@ -186,10 +186,11 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
 
         with c_rcpt:
             st.markdown('<span class="lbl">To (lead or type an address)</span>', unsafe_allow_html=True)
-            lead_choices = {"-- Select Lead or Type Below --": None}
+            lead_choices = {}
             for c in contacts:
                 label = f"{c.get('name') or 'Lead'} <{c.get('email')}>" + (f" — {c.get('company')}" if c.get('company') else "")
                 lead_choices[label] = c
+            lead_choices["✏️ Type custom address..."] = None
 
             preselected_idx = 0
             target_prefill_id = st.session_state.get("compose_selected_lead_id")
@@ -202,7 +203,10 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
             sel_lead_label = st.selectbox("To", list(lead_choices.keys()), index=preselected_idx, label_visibility="collapsed", key="comp_lead_pick")
             chosen_lead_obj = lead_choices.get(sel_lead_label)
 
-            custom_email = st.text_input("Or custom email", value=chosen_lead_obj.get("email") if chosen_lead_obj else "", placeholder="e.g. danessa@dmbeauty.com", label_visibility="collapsed")
+            if chosen_lead_obj is None:
+                custom_email = st.text_input("Custom recipient email", placeholder="e.g. partner@example.com", label_visibility="collapsed", key="comp_custom_email_in")
+            else:
+                custom_email = chosen_lead_obj.get("email", "")
 
         # Resolve active recipient
         if custom_email.strip():
@@ -266,7 +270,7 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
             st.markdown('<div class="guard"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg> No unfilled tokens — send guard clear</div>', unsafe_allow_html=True)
 
         # Action Buttons matching reference `.toolbtns`
-        c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.3, 1.1, 1.1, 1.4, 1.3])
+        c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.3, 1.2, 1.2, 1.3, 1.3])
 
         with c_act1:
             if st.button("🚀 Send now", type="primary", use_container_width=True, disabled=not can_send):
@@ -300,7 +304,7 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                             st.error("Dispatch failed.")
 
         with c_act2:
-            with st.popover("Schedule", use_container_width=True):
+            with st.popover("🕒 Schedule", use_container_width=True):
                 st.markdown("**Schedule Outreach**")
                 s_date = st.date_input("Date", value=datetime.now().date(), key="comp_sd")
                 s_time = st.time_input("Time", value=(datetime.now() + timedelta(hours=1)).time(), key="comp_st")
@@ -320,7 +324,7 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                     st.rerun()
 
         with c_act3:
-            if st.button("Save draft", use_container_width=True):
+            if st.button("💾 Save draft", use_container_width=True):
                 create_email(
                     email_html=format_email_html(final_body),
                     subject=final_subj,
@@ -332,13 +336,13 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
                 trigger_toast("Draft saved to Outbox.", icon="💾")
 
         with c_act4:
-            if st.button("Save as template", use_container_width=True):
+            if st.button("📋 Save template", use_container_width=True):
                 new_t_name = f"Template: {subj_val[:22]}" if subj_val else "Saved Template"
                 create_template(template_name=new_t_name, body_content=current_body)
-                trigger_toast("Saved as template!", icon="📄")
+                trigger_toast("Saved as template!", icon="📋")
 
         with c_act5:
-            if st.button("+ Add follow-up", use_container_width=True):
+            if st.button("➕ Add follow-up", use_container_width=True):
                 st.session_state["compose_body_html"] += "<br><br>P.S. Just wanted to follow up on the above."
                 st.rerun()
 

@@ -39,7 +39,7 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
     all_leads = get_contacts()
 
     # Top Toolbar: "+ New template" & Search field
-    top_col1, top_col2, _ = st.columns([1.5, 2.5, 3])
+    top_col1, top_col2, _ = st.columns([1.5, 2.5, 3], vertical_alignment="center")
     with top_col1:
         if st.button("➕ New template", type="primary", use_container_width=True, key="tpl_btn_new"):
             st.session_state["editing_template_id"] = "new"
@@ -144,7 +144,7 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                     st.rerun()
 
         with btn_comp:
-            if st.button("Load in Compose", use_container_width=True, key="btn_load_comp"):
+            if st.button("✍️ Load in Compose", use_container_width=True, key="btn_load_comp"):
                 st.session_state["compose_subject"] = tpl_subj_val.strip()
                 st.session_state["compose_body_html"] = current_body.strip()
                 st.session_state["active_screen"] = "compose"
@@ -152,14 +152,14 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                 st.rerun()
 
         with btn_bulk:
-            if st.button("Use in Bulk", use_container_width=True, key="btn_use_bulk"):
+            if st.button("🚀 Use in Bulk", use_container_width=True, key="btn_use_bulk"):
                 st.session_state["bulk_selected_template_id"] = active_id
                 st.session_state["active_screen"] = "bulk"
                 st.session_state["main_app_tabs"] = "🚀 Bulk Send"
                 st.rerun()
 
         with btn_cancel:
-            if st.button("Close", use_container_width=True, key="btn_close_editor"):
+            if st.button("✖️ Close", use_container_width=True, key="btn_close_editor"):
                 st.session_state.pop("editing_template_id", None)
                 st.rerun()
 
@@ -199,48 +199,47 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
         cols = st.columns(cards_per_row)
         for j, t in enumerate(row_templates):
             with cols[j]:
-                tid = t["id"]
-                tname = t.get("template_name") or t.get("name") or f"Template #{tid}"
-                tsubj = t.get("subject") or "No Subject"
-                tbody = t.get("body_content") or t.get("body_html") or ""
+                with st.container(border=True):
+                    tid = t["id"]
+                    tname = t.get("template_name") or t.get("name") or f"Template #{tid}"
+                    tsubj = t.get("subject") or "No Subject"
+                    tbody = t.get("body_content") or t.get("body_html") or ""
 
-                st.markdown(f"""
-                <div class="card" style="margin-bottom:8px;">
-                    <div style="font-weight:600; font-size:14px; color:#083731; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{html.escape(tname)}</div>
-                    <div style="font-size:12px; color:#64748B; margin:4px 0 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Subject: {html.escape(tsubj)}</div>
-                </div>
-                """, unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div style="font-weight:700; font-size:14px; color:#083731; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{html.escape(tname)}</div>
+                    <div style="font-size:12px; color:#64748B; margin:3px 0 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Subject: {html.escape(tsubj)}</div>
+                    """, unsafe_allow_html=True)
 
-                c1, c2, c3, c4 = st.columns([1, 1.4, 1, 0.6])
-                with c1:
-                    if st.button("Load", key=f"tpl_load_{tid}", use_container_width=True):
-                        st.session_state["compose_subject"] = tsubj
-                        st.session_state["compose_body_html"] = tbody
-                        st.session_state["active_screen"] = "compose"
-                        st.session_state["main_app_tabs"] = "✍️ Compose"
-                        trigger_toast(f"Loaded '{tname}' into Compose!", icon="✍️")
-                        st.rerun()
+                    c1, c2, c3, c4 = st.columns([1.1, 1.2, 1.1, 0.6])
+                    with c1:
+                        if st.button("📥 Load", key=f"tpl_load_{tid}", use_container_width=True):
+                            st.session_state["compose_subject"] = tsubj
+                            st.session_state["compose_body_html"] = tbody
+                            st.session_state["active_screen"] = "compose"
+                            st.session_state["main_app_tabs"] = "✍️ Compose"
+                            trigger_toast(f"Loaded '{tname}' into Compose!", icon="✍️")
+                            st.rerun()
 
-                with c2:
-                    if st.button("Use in bulk", key=f"tpl_bulk_{tid}", use_container_width=True):
-                        st.session_state["bulk_selected_template_id"] = tid
-                        st.session_state["active_screen"] = "bulk"
-                        st.session_state["main_app_tabs"] = "🚀 Bulk Send"
-                        trigger_toast(f"Selected '{tname}' for Bulk Send!", icon="🚀")
-                        st.rerun()
+                    with c2:
+                        if st.button("🚀 Bulk", key=f"tpl_bulk_{tid}", use_container_width=True):
+                            st.session_state["bulk_selected_template_id"] = tid
+                            st.session_state["active_screen"] = "bulk"
+                            st.session_state["main_app_tabs"] = "🚀 Bulk Send"
+                            trigger_toast(f"Selected '{tname}' for Bulk Send!", icon="🚀")
+                            st.rerun()
 
-                with c3:
-                    if st.button("Edit", key=f"tpl_grid_edit_{tid}", use_container_width=True):
-                        st.session_state["editing_template_id"] = tid
-                        st.session_state["tpl_name"] = tname
-                        st.session_state["tpl_subject"] = tsubj
-                        st.session_state["tpl_body_html"] = tbody
-                        st.rerun()
+                    with c3:
+                        if st.button("✏️ Edit", key=f"tpl_grid_edit_{tid}", use_container_width=True):
+                            st.session_state["editing_template_id"] = tid
+                            st.session_state["tpl_name"] = tname
+                            st.session_state["tpl_subject"] = tsubj
+                            st.session_state["tpl_body_html"] = tbody
+                            st.rerun()
 
-                with c4:
-                    if st.button("🗑️", key=f"tpl_grid_del_{tid}", use_container_width=True):
-                        delete_template(tid)
-                        if str(st.session_state.get("editing_template_id")) == str(tid):
-                            st.session_state.pop("editing_template_id", None)
-                        trigger_toast(f"Template '{tname}' deleted.", icon="🗑️")
-                        st.rerun()
+                    with c4:
+                        if st.button("🗑️", key=f"tpl_grid_del_{tid}", use_container_width=True):
+                            delete_template(tid)
+                            if str(st.session_state.get("editing_template_id")) == str(tid):
+                                st.session_state.pop("editing_template_id", None)
+                            trigger_toast(f"Template '{tname}' deleted.", icon="🗑️")
+                            st.rerun()

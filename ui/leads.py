@@ -130,7 +130,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     col_tools, col_search = st.columns([3.2, 1.8], vertical_alignment="center")
 
     with col_tools:
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4 = st.columns(4, vertical_alignment="center")
         with c1:
             with st.popover("📥 Import CSV", use_container_width=True):
                 st.markdown("**Import Leads from CSV**")
@@ -150,17 +150,17 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         with c2:
             csv_data = export_contacts_to_csv(all_contacts)
             st.download_button(
-                "📤 Export",
+                "📤 Export CSV",
                 data=csv_data,
                 file_name="sellomize_leads.csv",
                 mime="text/csv",
                 use_container_width=True
             )
         with c3:
-            if st.button("+ Add lead", type="primary", use_container_width=True):
+            if st.button("➕ Add lead", type="primary", use_container_width=True):
                 render_add_lead_dialog()
         with c4:
-            with st.popover("Bulk actions", use_container_width=True):
+            with st.popover("⚡ Bulk actions", use_container_width=True):
                 st.markdown("**Bulk Operations**")
                 if st.button("Mark all filtered as 'New'", use_container_width=True):
                     trigger_toast("Selected leads updated to 'New'.", icon="🔄")
@@ -180,7 +180,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     if "lead_filter_pill" not in st.session_state:
         st.session_state["lead_filter_pill"] = "All leads"
 
-    pill_cols = st.columns(len(filter_keys))
+    pill_cols = st.columns([1, 1.2, 1.15, 1.15, 0.9, 1.1, 1], vertical_alignment="center")
     for idx, f_name in enumerate(filter_keys):
         with pill_cols[idx]:
             is_active = (st.session_state["lead_filter_pill"] == f_name)
@@ -307,10 +307,11 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     st.markdown("<p class='sec' style='margin-top:10px;'>Columns kept from the CRM. Statuses: New · Emailed · Replied · Bounced · Do Not Contact.</p>", unsafe_allow_html=True)
 
     # Lead Actions bar
+    st.markdown("<span class='lbl' style='margin-top:12px;'>Select Lead to Edit or Compose</span>", unsafe_allow_html=True)
     c_sel, c_act1, c_act2 = st.columns([2.5, 1, 1], vertical_alignment="center")
     with c_sel:
         lead_options = {f"#SLM-{c['id']:04d}: {c.get('name') or c.get('email')} ({c.get('company') or 'No Company'})": c for c in filtered}
-        chosen_lead_label = st.selectbox("Select Lead to Edit or Compose:", list(lead_options.keys()), key="crm_quick_pick")
+        chosen_lead_label = st.selectbox("Select Lead to Edit or Compose", list(lead_options.keys()), key="crm_quick_pick", label_visibility="collapsed")
         matched_lead = lead_options.get(chosen_lead_label)
     with c_act1:
         if matched_lead and st.button("✏️ Edit Lead", use_container_width=True):

@@ -140,12 +140,12 @@ def render_outbox_tab():
 
             if current_filter == "Scheduled":
                 with btn_col1:
-                    if st.button("Cancel", key=f"outbox_del_{eid}", use_container_width=True):
+                    if st.button("❌ Cancel", key=f"outbox_del_{eid}", use_container_width=True):
                         delete_email(eid)
                         trigger_toast(f"Email #{eid} cancelled and removed.", icon="🗑️")
                         st.rerun()
                 with btn_col2:
-                    if st.button("Send now", key=f"outbox_send_{eid}", use_container_width=True, type="primary"):
+                    if st.button("🚀 Send now", key=f"outbox_send_{eid}", use_container_width=True, type="primary"):
                         with st.spinner("Dispatching via Hostinger..."):
                             ok = dispatch_email_hostinger(e)
                             if ok:
@@ -154,19 +154,19 @@ def render_outbox_tab():
                                 st.error("Dispatch failed. Check mailbox connection in Settings.")
                         st.rerun()
                 with btn_col3:
-                    if st.button("Pause", key=f"outbox_pause_{eid}", use_container_width=True):
+                    if st.button("⏸️ Pause", key=f"outbox_pause_{eid}", use_container_width=True):
                         update_email(email_id=eid, status="Paused")
                         trigger_toast(f"Email #{eid} paused.", icon="⏸️")
                         st.rerun()
 
             elif current_filter == "Paused / failed":
                 with btn_col1:
-                    if st.button("Resume", key=f"outbox_res_{eid}", use_container_width=True, type="primary"):
+                    if st.button("▶️ Resume", key=f"outbox_res_{eid}", use_container_width=True, type="primary"):
                         update_email(email_id=eid, status="Approved")
                         trigger_toast(f"Email #{eid} unpaused & queued.", icon="▶️")
                         st.rerun()
                 with btn_col2:
-                    if st.button("Retry", key=f"outbox_retry_{eid}", use_container_width=True):
+                    if st.button("🔄 Retry", key=f"outbox_retry_{eid}", use_container_width=True):
                         with st.spinner("Retrying dispatch..."):
                             ok = dispatch_email_hostinger(e)
                             if ok:
@@ -175,7 +175,7 @@ def render_outbox_tab():
                                 st.error("Retry failed. Check mailbox credentials.")
                         st.rerun()
                 with btn_col3:
-                    if st.button("Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
+                    if st.button("🗑️ Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
                         delete_email(eid)
                         trigger_toast(f"Email #{eid} deleted.", icon="🗑️")
                         st.rerun()

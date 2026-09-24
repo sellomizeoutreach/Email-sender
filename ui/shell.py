@@ -118,19 +118,19 @@ def render_topbar(screen_key: str):
     title, subtitle = screen_meta.get(screen_key, ("Sellomize Reach", "Hostinger Outreach Engine"))
     local_time_str = datetime.now().strftime("%I:%M %p")
 
-    col_title, col_time, col_bell = st.columns([3.8, 1.2, 0.4], vertical_alignment="center")
+    col_title, col_time, col_bell = st.columns([3.4, 1.6, 0.6], vertical_alignment="center")
 
     with col_title:
         st.markdown(f"""
-        <div style="margin-bottom:12px;">
-            <h1 style="margin:0; font-size:22px; font-weight:800; color:#083731;">{title}</h1>
+        <div style="margin: 0; padding: 2px 0;">
+            <h1 style="margin:0; font-size:22px; font-weight:800; color:#083731; line-height:1.2;">{title}</h1>
             <div style="font-size:13px; color:#64748B; margin-top:2px;">{subtitle}</div>
         </div>
         """, unsafe_allow_html=True)
 
     with col_time:
         st.markdown(f"""
-        <div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:5px 14px; font-size:0.82rem; font-weight:700; color:#083731;" title="Current local system time on your computer">
+        <div style="display:inline-flex; align-items:center; gap:6px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:20px; padding:6px 14px; font-size:0.82rem; font-weight:700; color:#083731; white-space:nowrap;" title="Current local system time on your computer">
             <span>💻</span><span>{local_time_str} Local</span>
         </div>
         """, unsafe_allow_html=True)

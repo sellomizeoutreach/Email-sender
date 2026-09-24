@@ -216,7 +216,7 @@ def render_settings_tab():
 
     smtp_accounts = get_smtp_accounts(active_only=False)
 
-    top_mb_c1, top_mb_c2 = st.columns([3, 1])
+    top_mb_c1, top_mb_c2 = st.columns([3, 1], vertical_alignment="center")
     with top_mb_c1:
         st.markdown(f"<span style='font-size:12px; color:#64748B;'>{len(smtp_accounts)} connected Hostinger mailbox{'es' if len(smtp_accounts) != 1 else ''}</span>", unsafe_allow_html=True)
     with top_mb_c2:
@@ -247,38 +247,35 @@ def render_settings_tab():
 
             status_pill = '<span class="pill p-pass">connected</span>'
 
-            with st.container():
-                st.markdown(f"""
-                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="flex:2; min-width:0;">
+            with st.container(border=True):
+                c_mb_info, c_mb_lim, c_mb_warm, c_mb_cap, c_mb_stat, c_mb_test, c_mb_edit = st.columns(
+                    [2.6, 0.9, 1.1, 0.9, 1.0, 1.3, 0.9],
+                    vertical_alignment="center"
+                )
+                with c_mb_info:
+                    st.markdown(f"""
+                    <div>
                         <strong style="color:#083731; font-size:14px;">{html.escape(aemail)}</strong>
                         <div style="font-size:12px; color:#64748B; font-family:monospace;">{html.escape(ahost)}:{aport}</div>
                     </div>
-                    <div style="flex:1; font-size:13px; color:#475569;">
-                        Limit: <b>{d_limit}</b>
-                    </div>
-                    <div style="flex:1; font-size:13px;">
-                        {warmup_html}
-                    </div>
-                    <div style="flex:1; font-size:13px;">
-                        Cap: {cap_display}
-                    </div>
-                    <div style="flex:1; text-align:center;">
-                        {status_pill}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                c_test, c_edit, _ = st.columns([1.2, 1, 4])
-                with c_test:
-                    if st.button("🧪 Test Connection", key=f"test_conn_{aid}", use_container_width=True):
+                    """, unsafe_allow_html=True)
+                with c_mb_lim:
+                    st.markdown(f"<div style='font-size:13px; color:#475569;'>Limit: <b>{d_limit}</b></div>", unsafe_allow_html=True)
+                with c_mb_warm:
+                    st.markdown(f"<div style='font-size:13px;'>{warmup_html}</div>", unsafe_allow_html=True)
+                with c_mb_cap:
+                    st.markdown(f"<div style='font-size:13px;'>Cap: {cap_display}</div>", unsafe_allow_html=True)
+                with c_mb_stat:
+                    st.markdown(f"<div style='text-align:center;'>{status_pill}</div>", unsafe_allow_html=True)
+                with c_mb_test:
+                    if st.button("🧪 Test", key=f"test_conn_{aid}", use_container_width=True):
                         with st.spinner(f"Verifying Hostinger SMTP credentials for {aemail}..."):
                             is_ok, err_msg = test_smtp_connection(acc, timeout=5)
                             if is_ok:
                                 trigger_toast(f"Verified {aemail}! Hostinger SMTP connected.", icon="✅")
                             else:
                                 st.error(f"Connection failed: {err_msg}")
-                with c_edit:
+                with c_mb_edit:
                     if st.button("✏️ Edit", key=f"edit_mb_{aid}", use_container_width=True):
                         render_edit_mailbox_dialog(acc)
 

@@ -221,11 +221,11 @@ def render_bulk_tab():
         # Quick select / deselect
         q_c1, q_c2 = st.columns([1, 1])
         with q_c1:
-            if st.button("Select All Filtered", key="bulk_btn_sel_all", use_container_width=True):
+            if st.button("☑️ Select All Filtered", key="bulk_btn_sel_all", use_container_width=True):
                 st.session_state["bulk_selected_lead_ids"] = {c["id"] for c in filtered_candidates}
                 st.rerun()
         with q_c2:
-            if st.button("Clear Selection", key="bulk_btn_clear_sel", use_container_width=True):
+            if st.button("◻️ Clear Selection", key="bulk_btn_clear_sel", use_container_width=True):
                 st.session_state["bulk_selected_lead_ids"] = set()
                 st.rerun()
 
@@ -286,16 +286,25 @@ def render_bulk_tab():
             unsafe_allow_html=True
         )
 
+        # Start Date and Start Time Pickers
+        c_date, c_time = st.columns(2)
+        with c_date:
+            st.markdown("<span class='lbl'>Start date</span>", unsafe_allow_html=True)
+            chosen_date = st.date_input("Start date", value=datetime.now().date(), key="bulk_start_date", label_visibility="collapsed")
+        with c_time:
+            st.markdown("<span class='lbl'>Start time</span>", unsafe_allow_html=True)
+            chosen_time = st.time_input("Start time", value=datetime.now().time(), key="bulk_start_time", label_visibility="collapsed")
+
         spread_hours = st.slider(
             "Spread outreach over (Hours)",
             min_value=1,
             max_value=12,
             value=min(6, max(2, len(selected_leads) // 5 + 1)),
             step=1,
-            help="Distributes outreach pacing evenly across the day."
+            help="Distributes outreach pacing evenly across the selected duration from start time."
         )
 
-        st.caption("🕒 24/7 Delivery: Window restrictions cancelled. Emails dispatch anytime within the day while strictly respecting daily limits.")
+        st.caption("🕒 24/7 Delivery: Window restrictions cancelled. Emails dispatch evenly from your chosen start date & time while respecting daily limits.")
 
         # Calculate fleet capacity
         total_fleet_cap = 0
@@ -307,11 +316,10 @@ def render_bulk_tab():
         recipients_count = len(selected_leads)
         per_mailbox_est = f"~{max(1, recipients_count // max(1, num_mailboxes))} each" if recipients_count > 0 else "0"
 
-        # Estimated start and end time
-        now = datetime.now()
-        est_start_str = now.strftime("%a %H:%M")
-        est_end_str = (now + timedelta(hours=spread_hours)).strftime("%H:%M")
-        time_range_str = f"{est_start_str} → {est_end_str}"
+        # Estimated start and end time based on user-picked date and time
+        base_start = datetime.combine(chosen_date, chosen_time)
+        est_end = base_start + timedelta(hours=spread_hours)
+        time_range_str = f"{base_start.strftime('%a %b %d, %H:%M')} → {est_end.strftime('%H:%M')}"
 
         st.markdown("<span class='lbl' style='margin-top:12px;'>Review</span>", unsafe_allow_html=True)
 
@@ -329,7 +337,7 @@ def render_bulk_tab():
             </div>
             <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #F1F5F9;">
                 <span style="color:var(--muted); font-size:13px;">Pacing</span>
-                <b style="color:#083731; font-size:12px;">{time_range_str} (Anytime)</b>
+                <b style="color:#083731; font-size:12px;">{time_range_str}</b>
             </div>
             <div style="display:flex; justify-content:space-between; padding:5px 0;">
                 <span style="color:var(--muted); font-size:13px;">Per mailbox</span>
@@ -375,16 +383,16 @@ def render_bulk_tab():
 
             with st.spinner("Scheduling batch outreach..."):
                 queued_count = 0
-                base_now = datetime.now()
+                base_start = datetime.combine(chosen_date, chosen_time)
                 step_seconds = max(45, int((spread_hours * 3600) / max(1, len(selected_leads))))
 
                 for i, lead in enumerate(selected_leads):
                     lead_tz = lead.get("country_or_timezone") or "LOCAL"
                     if i < total_fleet_cap:
-                        target_dt = base_now + timedelta(seconds=(i * step_seconds))
+                        target_dt = base_start + timedelta(seconds=(i * step_seconds))
                     else:
                         overflow_offset = i - total_fleet_cap
-                        target_dt = (base_now + timedelta(days=1)) + timedelta(seconds=(overflow_offset * step_seconds))
+                        target_dt = (base_start + timedelta(days=1)) + timedelta(seconds=(overflow_offset * step_seconds))
 
                     sched_time_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
 

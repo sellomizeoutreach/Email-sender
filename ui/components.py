@@ -42,9 +42,9 @@ def render_notification_bell():
     if not st.session_state.get("notifications_cleared"):
         alert_count += (1 if bounced_leads else 0) + (1 if flagged_emails else 0)
 
-    bell_label = f"🔔 Notifications ({alert_count})" if alert_count > 0 else "🔔 Notifications"
+    bell_label = f"🔔 {alert_count}" if alert_count > 0 else "🔔 Alerts"
 
-    with st.popover(bell_label, use_container_width=True):
+    with st.popover(bell_label, help="System notifications & alerts", use_container_width=True):
         c_head, c_clear = st.columns([1.8, 1.2], vertical_alignment="center")
         with c_head:
             st.markdown("<strong style='font-size:0.95rem; color:#083731;'>System Alerts</strong>", unsafe_allow_html=True)

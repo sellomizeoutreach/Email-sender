@@ -214,8 +214,8 @@ SELLOMIZE_THEME_CSS = """<style>
     .src { margin-left: auto; font-size: 12px; border: 1px solid #E2E8F0; border-radius: 6px; padding: 3px 9px; color: #FD4D1B; cursor: pointer; font-family: monospace; font-weight: 600; }
     .ebody { padding: 12px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 120px; }
     .hl { background: #FDE2DA; color: #FD4D1B; border-radius: 3px; padding: 0 3px; font-weight: 600; }
-    .preview { border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; padding: 14px; font-size: 13px; color: #334155; line-height: 1.6; }
-    .preview .sig { margin-top: 12px; padding-top: 10px; border-top: 1px solid #E2E8F0; font-size: 12px; color: #64748B; }
+    .preview { border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; padding: 16px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 380px; display: flex; flex-direction: column; }
+    .preview .sig { margin-top: auto; padding-top: 12px; border-top: 1px solid #E2E8F0; font-size: 12px; color: #64748B; }
     .spam { font-size: 12px; color: #D97706; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }
     .guard { font-size: 12px; color: #0F6E56; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }
 
@@ -697,6 +697,46 @@ SELLOMIZE_THEME_CSS = """<style>
         color: #FFFFFF !important;
     }
 
+    /* Buttons in Columns & Grid Toolbars - Responsive, Aligned & No Truncation */
+    div[data-testid="stColumn"] div.stButton > button,
+    div[data-testid="stColumn"] div.stDownloadButton > button,
+    div[data-testid="stColumn"] div[data-testid="stPopover"] > button {
+        padding: 0.35rem 0.55rem !important;
+        font-size: 13px !important;
+        min-height: 36px !important;
+        height: 36px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 4px !important;
+        white-space: nowrap !important;
+        border-radius: 7px !important;
+    }
+
+    div[data-testid="stColumn"] div[data-testid="stPopover"] > button {
+        padding: 0.35rem 0.45rem !important;
+        background: #FFFFFF !important;
+        border: 1.5px solid #083731 !important;
+        color: #083731 !important;
+    }
+    div[data-testid="stColumn"] div[data-testid="stPopover"] > button:hover {
+        background: #083731 !important;
+        color: #FFFFFF !important;
+    }
+    div[data-testid="stColumn"] div[data-testid="stPopover"] > button svg {
+        width: 14px !important;
+        height: 14px !important;
+        margin-left: 2px !important;
+        flex-shrink: 0 !important;
+    }
+
+    div[data-testid="stColumn"] div.stButton > button[kind="primary"],
+    div[data-testid="stColumn"] div.stFormSubmitButton > button[kind="primary"] {
+        padding: 0.35rem 0.85rem !important;
+        min-height: 36px !important;
+        height: 36px !important;
+    }
+
     /* Form Containers & Expanders (60% Crisp White) */
     div[data-testid="stForm"] {
         background: #FFFFFF !important;
@@ -723,14 +763,25 @@ SELLOMIZE_THEME_CSS = """<style>
         font-size: 0.95rem !important;
     }
 
-    /* Inputs, Textareas, and Dropdowns (Sellomize High-Precision SaaS Styling) */
+    /* Inputs, Textareas, and Dropdowns (Standardized 38px High-Precision SaaS Alignment) */
     div[data-baseweb="input"],
-    div[data-baseweb="textarea"],
     div[data-baseweb="select"] > div,
     div[data-testid="stTextInputRootElement"],
-    div[data-testid="stTextAreaRootElement"],
     div[data-testid="stSelectbox"] > div,
+    div[data-testid="stDateInput"] div[data-baseweb="input"],
+    div[data-testid="stTimeInput"] div[data-baseweb="input"],
     div[data-testid="stNumberInputContainer"] {
+        min-height: 38px !important;
+        height: 38px !important;
+        background-color: #FFFFFF !important;
+        border: 1.5px solid #CBD5E1 !important;
+        border-radius: 8px !important;
+        color: #0F172A !important;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+        transition: all 0.2s ease !important;
+    }
+    div[data-baseweb="textarea"],
+    div[data-testid="stTextAreaRootElement"] {
         background-color: #FFFFFF !important;
         border: 1.5px solid #CBD5E1 !important;
         border-radius: 8px !important;

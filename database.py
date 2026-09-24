@@ -1387,17 +1387,24 @@ def bulk_update_contacts_details(
 # ------------------------------------------------------------------------------
 
 def create_template(
-    template_name: str,
-    body_content: str,
+    template_name: Optional[str] = None,
+    body_content: Optional[str] = None,
+    name: Optional[str] = None,
+    subject: Optional[str] = None,
+    body_html: Optional[str] = None,
     db_path: str = DB_FILE
 ) -> int:
+    final_name = (name or template_name or "New Template").strip()
+    final_body = (body_html or body_content or "").strip()
+    final_subj = (subject or "").strip()
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO templates (template_name, body_content, created_at)
-        VALUES (?, ?, ?)
-    """, (template_name.strip(), body_content.strip(), now_iso))
+        INSERT INTO templates (template_name, name, subject, body_content, body_html, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (final_name, final_name, final_subj, final_body, final_body, now_iso, now_iso))
     tpl_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -1421,16 +1428,25 @@ def get_template_by_id(template_id: int, db_path: str = DB_FILE) -> Optional[Dic
 
 def update_template(
     template_id: int,
-    template_name: str,
-    body_content: str,
+    template_name: Optional[str] = None,
+    body_content: Optional[str] = None,
+    name: Optional[str] = None,
+    subject: Optional[str] = None,
+    body_html: Optional[str] = None,
     db_path: str = DB_FILE
 ):
+    final_name = (name or template_name or "").strip()
+    final_body = (body_html or body_content or "").strip()
+    final_subj = (subject or "").strip()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE templates SET template_name = ?, body_content = ?
+        UPDATE templates 
+        SET template_name = ?, name = ?, body_content = ?, body_html = ?, subject = ?, updated_at = ?
         WHERE id = ?
-    """, (template_name.strip(), body_content.strip(), template_id))
+    """, (final_name, final_name, final_body, final_body, final_subj, now_str, template_id))
     conn.commit()
     conn.close()
 
