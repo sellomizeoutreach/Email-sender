@@ -1,0 +1,420 @@
+<USER_REQUEST>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sellomize Reach — structure reference</title>
+<style>
+  :root{
+    /* 60 — canvas & surfaces */
+    --canvas:#F8FAFC; --surface:#FFFFFF; --ink:#0F172A; --muted:#64748B; --line:#E2E8F0;
+    /* 30 — structural authority */
+    --pine:#083731; --pine-2:#0c4a41; --pine-line:rgba(255,255,255,.12);
+    /* 10 — high-intent accent */
+    --flame:#FD4D1B; --flame-tint:#FFF1EC;
+    /* status */
+    --amber:#D97706; --amber-tint:#FEF3C7; --red:#DC2626; --red-tint:#FEE2E2;
+    --green:#0F6E56; --green-tint:#E1F5EE;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--canvas)}
+  .app{display:flex;min-height:100vh}
+
+  /* ---------- Sidebar (30% structural) ---------- */
+  .sidebar{width:236px;flex-shrink:0;background:var(--pine);color:#fff;display:flex;flex-direction:column;padding:16px 12px}
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 18px;border-bottom:1px solid var(--pine-line);margin-bottom:12px}
+  /* Replace this .logo-mark block with your real logo, e.g.:
+     <img src="sellomize-logo.png" alt="Sellomize Reach" style="height:34px"> */
+  .logo-mark{width:34px;height:34px;border-radius:9px;background:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .logo-mark svg{width:20px;height:20px}
+  .logo-text{line-height:1.05}
+  .logo-text .a{font-weight:700;font-size:15px;letter-spacing:.02em}
+  .logo-text .b{font-weight:700;font-size:15px;letter-spacing:.02em;color:var(--flame)}
+  .logo-text .v{display:block;font-size:10px;color:rgba(255,255,255,.55);letter-spacing:.14em;margin-top:2px}
+
+  .navlabel{font-size:11px;letter-spacing:.12em;color:rgba(255,255,255,.5);padding:8px 10px 6px}
+  .nav{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+  .nav button{width:100%;display:flex;align-items:center;gap:11px;background:transparent;border:0;color:rgba(255,255,255,.82);font-size:14px;padding:9px 11px;border-radius:8px;cursor:pointer;text-align:left;border-left:3px solid transparent}
+  .nav button:hover{background:var(--pine-2);color:#fff}
+  .nav button.on{background:var(--pine-2);color:#fff;border-left-color:var(--flame);font-weight:600}
+  .nav svg{width:18px;height:18px;flex-shrink:0;opacity:.9}
+  .worker{margin-top:auto;padding:10px;font-size:12px;color:#7ee0c0;display:flex;align-items:center;gap:8px;border-top:1px solid var(--pine-line)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#22c58e;display:inline-block}
+
+  /* ---------- Main ---------- */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{background:var(--surface);border-bottom:1px solid var(--line);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+  .topbar h1{margin:0;font-size:19px}
+  .topbar .sub{font-size:13px;color:var(--muted);margin-top:2px}
+  .content{padding:22px 24px;overflow:auto}
+  .panel[hidden]{display:none}
+
+  /* bits */
+  .lbl{font-size:12px;color:var(--muted);margin-bottom:5px;display:block}
+  .field{border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:13px;background:var(--surface);display:flex;align-items:center;gap:7px;min-height:38px}
+  .field svg{width:15px;height:15px;color:var(--muted);flex-shrink:0}
+  .row{display:flex;gap:12px;margin-bottom:12px}
+  .row>div{flex:1;min-width:0}
+  .btn{font-size:13px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--ink)}
+  .btn:hover{border-color:#cbd5e1}
+  .btn svg{width:15px;height:15px}
+  .btn-primary{background:var(--flame);color:#fff;border:0;font-size:13px;border-radius:8px;padding:9px 16px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600}
+  .btn-primary:hover{background:#e5431492}
+  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--pine)}
+  .card{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px}
+  .pill{font-size:11px;padding:2px 9px;border-radius:999px;white-space:nowrap;display:inline-block}
+  .p-new{background:var(--flame-tint);color:var(--flame)}
+  .p-sent{background:#f1f5f9;color:var(--muted)}
+  .p-rep{background:var(--green-tint);color:var(--green)}
+  .p-bounce{background:var(--red-tint);color:var(--red)}
+  .p-warm{background:var(--amber-tint);color:var(--amber)}
+  .p-pass{background:var(--green-tint);color:var(--green)}
+  .p-fail{background:var(--red-tint);color:var(--red)}
+  .banner{border-radius:8px;padding:10px 13px;font-size:13px;margin-bottom:12px}
+  .banner-info{background:#eef6ff;color:#175fa5;border:1px solid #d5e6fb}
+  .banner-warn{background:var(--amber-tint);color:#8a5206;border:1px solid #f3d9a0}
+  h3.sec{margin:0 0 3px;font-size:16px}
+  p.sec{margin:0 0 16px;font-size:13px;color:var(--muted)}
+
+  /* editor */
+  .editor{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .toolbar{display:flex;align-items:center;gap:3px;padding:7px 9px;border-bottom:1px solid var(--line);background:var(--canvas)}
+  .tb{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;color:#475569;cursor:pointer}
+  .tb:hover{background:#e9eef3}
+  .tb svg{width:16px;height:16px}
+  .chip{font-size:11px;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:3px 8px;color:var(--pine);cursor:pointer}
+  .src{margin-left:auto;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:3px 9px;color:var(--flame);cursor:pointer;font-family:monospace}
+  .ebody{padding:12px;font-size:13px;color:#334155;line-height:1.6;min-height:120px}
+  .hl{background:#fde2da;color:var(--flame);border-radius:3px;padding:0 2px}
+  .preview{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:14px;font-size:13px;color:#334155;line-height:1.6}
+  .preview .sig{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+  .spam{font-size:12px;color:var(--amber);display:flex;align-items:center;gap:6px;margin:8px 0}
+  .guard{font-size:12px;color:var(--green);display:flex;align-items:center;gap:6px;margin:8px 0}
+
+  /* tables */
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+  table{border-collapse:collapse;width:100%;font-size:13px;white-space:nowrap}
+  th{background:var(--canvas);color:var(--muted);font-weight:600;text-align:left;padding:9px 12px;font-size:11px;letter-spacing:.03em;border-bottom:1px solid var(--line)}
+  td{padding:9px 12px;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:0}
+  .mono{font-family:monospace;font-size:12px}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .fpill{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;background:var(--surface)}
+  .fpill.on{background:var(--pine);color:#fff;border-color:var(--pine)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+  .toolbtns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <!-- LOGO SLOT — replace this mark with: <img src="sellomize-logo.png" alt="Sellomize Reach" style="height:34px"> -->
+      <span class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M22 2 11 13" stroke="#FD4D1B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2 15 22l-4-9-9-4 20-7Z" stroke="#083731" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="logo-text"><span class="a">SELLOMIZE</span> <span class="b">REACH</span><span class="v">V2.4</span></span>
+    </div>
+
+    <div class="navlabel">OUTREACH</div>
+    <ul class="nav">
+      <li><button data-s="compose" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>Compose</button></li>
+      <li><button data-s="templates"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Templates</button></li>
+      <li><button data-s="leads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>Leads</button></li>
+      <li><button data-s="bulk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>Bulk Send</button></li>
+      <li><button data-s="outbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Outbox</button></li>
+      <li><button data-s="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>Settings</button></li>
+    </ul>
+
+    <div class="worker"><span class="dot"></span> Sender running · :8502</div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1 id="ttl">Compose</h1>
+        <div class="sub" id="tsub">Write, style and send one email — Hostinger direct.</div>
+      </div>
+      <div id="taction"></div>
+    </div>
+
+    <div class="content">
+
+      <!-- ===== COMPOSE ===== -->
+      <section class="panel" data-p="compose">
+        <div class="two">
+          <div>
+            <div class="row">
+              <div><span class="lbl">Sending mailbox</span><div class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>jack@sellomize.com</div></div>
+              <div><span class="lbl">To (lead or type an address)</span><div class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0 1 16 0"/></svg>Danessa Myricks &lt;danessa@dmbeauty.com&gt;</div></div>
+            </div>
+            <span class="lbl">Subject</span>
+            <div class="field" style="margin-bottom:12px">Danessa Myricks + Amazon</div>
+
+            <span class="lbl">Body</span>
+            <div class="editor">
+              <div class="toolbar">
+                <span class="tb" title="Bold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z"/></svg></span>
+                <span class="tb" title="Italic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 4h-9M14 20H5M15 4 9 20"/></svg></span>
+                <span class="tb" title="Underline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v7a6 6 0 0 0 12 0V3M4 21h16"/></svg></span>
+                <span class="tb" title="Link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></span>
+                <span class="tb" title="Image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></span>
+                <span class="tb" title="List"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
+                <span class="chip">[Name]</span><span class="chip">[Company]</span><span class="chip">Signature</span>
+                <span class="src">&lt;/&gt; source</span>
+              </div>
+              <div class="ebody">Hi [Name],<br><br>We haven't been properly introduced, but I'm Jack with Sellomize. I was looking through [Company] on Amazon and noticed a number of listings showing <span class="hl">"currently unavailable"</span>… <span style="color:#94a3b8">(spam term flagged below)</span></div>
+            </div>
+            <div class="spam"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> 1 spam trigger: <b>&nbsp;"guarantee"</b> &nbsp;·&nbsp; edit to enable send</div>
+            <div class="guard"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg> No unfilled tokens — send guard clear</div>
+
+            <div class="toolbtns" style="margin-top:14px">
+              <button class="btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/></svg>Send now</button>
+              <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Schedule</button>
+              <button class="btn">Save draft</button>
+              <button class="btn">Save as template</button>
+              <button class="btn btn-ghost">+ Add follow-up</button>
+            </div>
+          </div>
+
+          <div>
+            <span class="lbl">Live preview — what Danessa receives</span>
+            <div class="preview">
+              Hi Danessa,<br><br>We haven't been properly introduced, but I'm Jack with Sellomize. I was looking through DM Beauty on Amazon and noticed a number of listings showing "currently unavailable."<br><br>When a customer searches and finds it unavailable, the sale simply stops there. I'd be glad to take a look together.
+              <div class="sig">Jack Conner · Sellomize · jack@sellomize.com</div>
+            </div>
+            <div class="banner banner-info" style="margin-top:12px">Variables resolved for this recipient. This exact HTML is what gets sent.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== TEMPLATES ===== -->
+      <section class="panel" data-p="templates" hidden>
+        <div class="toolbtns"><button class="btn-primary">+ New template</button><input class="field" style="max-width:240px" placeholder="Search templates" ></div>
+        <div class="grid">
+          <div class="card"><div style="font-weight:600">Listings unavailable</div><div style="font-size:12px;color:var(--muted);margin:4px 0 10px">Subject: [Company] + Amazon</div><div class="toolbtns" style="margin:0"><span class="btn" style="padding:5px 10px">Load</span><span class="btn" style="padding:5px 10px">Use in bulk</span><span class="btn" style="padding:5px 10px">Edit</span></div></div>
+          <div class="card"><div style="font-weight:600">Reconciliation</div><div style="font-size:12px;color:var(--muted);margin:4px 0 10px">Subject: money left behind on Amazon</div><div class="toolbtns" style="margin:0"><span class="btn" style="padding:5px 10px">Load</span><span class="btn" style="padding:5px 10px">Use in bulk</span><span class="btn" style="padding:5px 10px">Edit</span></div></div>
+          <div class="card"><div style="font-weight:600">PPC around organic</div><div style="font-size:12px;color:var(--muted);margin:4px 0 10px">Subject: sponsored gap on [Company]</div><div class="toolbtns" style="margin:0"><span class="btn" style="padding:5px 10px">Load</span><span class="btn" style="padding:5px 10px">Use in bulk</span><span class="btn" style="padding:5px 10px">Edit</span></div></div>
+          <div class="card"><div style="font-weight:600">Listing + A+ content</div><div style="font-size:12px;color:var(--muted);margin:4px 0 10px">Subject: [Company] listing audit</div><div class="toolbtns" style="margin:0"><span class="btn" style="padding:5px 10px">Load</span><span class="btn" style="padding:5px 10px">Use in bulk</span><span class="btn" style="padding:5px 10px">Edit</span></div></div>
+        </div>
+      </section>
+
+      <!-- ===== LEADS (current columns kept) ===== -->
+      <section class="panel" data-p="leads" hidden>
+        <div class="toolbtns">
+          <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Import CSV</button>
+          <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Export</button>
+          <button class="btn">+ Add lead</button>
+          <button class="btn">Bulk actions</button>
+          <input class="field" style="max-width:260px;margin-left:auto" placeholder="Search name, company, email…" >
+        </div>
+        <div class="filters">
+          <span class="fpill on">All leads</span><span class="fpill">Cold outreach</span><span class="fpill">Follow-up #1</span><span class="fpill">Follow-up #2+</span><span class="fpill">Opened</span><span class="fpill">High intent</span><span class="fpill">Due today</span>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th><input type="checkbox"></th><th>Lead ID</th><th>Brand / Company</th><th>Contact Name</th><th>Email &amp; MX</th><th>Lead Source</th><th>Priority</th><th>Contacted?</th><th>Status</th><th>Follow-Ups</th><th>Owner</th><th>Notes</th><th>Tags</th>
+            </tr></thead>
+            <tbody>
+              <tr><td><input type="checkbox"></td><td class="mono">#SLM-8491</td><td>DM Beauty</td><td>Danessa Myricks</td><td class="mono">danessa@dmbeauty.com <span class="pill p-pass">MX ok</span></td><td>Amazon scrape</td><td>High</td><td>No</td><td><span class="pill p-new">New</span></td><td>0</td><td>Jack Conner</td><td>Listings unavailable</td><td>beauty</td></tr>
+              <tr><td><input type="checkbox"></td><td class="mono">#SLM-8492</td><td>Wyndmere Naturals</td><td>Cyndi Trachy</td><td class="mono">cyndi@wyndmere.com <span class="pill p-pass">MX ok</span></td><td>Referral</td><td>Med</td><td>Yes</td><td><span class="pill p-sent">Emailed</span></td><td>1</td><td>Jack Conner</td><td>Weak A+, low SEO</td><td>essential-oils</td></tr>
+              <tr><td><input type="checkbox"></td><td class="mono">#SLM-8493</td><td>Eva Naturals</td><td>Daniel Crackower</td><td class="mono">daniel@evanaturals.com <span class="pill p-pass">MX ok</span></td><td>Amazon scrape</td><td>High</td><td>Yes</td><td><span class="pill p-rep">Replied</span></td><td>1</td><td>Jack Conner</td><td>Reconciliation angle</td><td>skincare</td></tr>
+              <tr><td><input type="checkbox"></td><td class="mono">#SLM-8494</td><td>Facile Skincare</td><td>Danielle Nadick Levy</td><td class="mono">danielle@facile.com <span class="pill p-fail">bad MX</span></td><td>LinkedIn</td><td>Med</td><td>No</td><td><span class="pill p-bounce">Bounced</span></td><td>0</td><td>Jack Conner</td><td>PPC around organic</td><td>skincare, ppc</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sec" style="margin-top:12px">Columns kept from the current CRM. Statuses: New · Emailed · Replied · Bounced · Do Not Contact.</p>
+      </section>
+
+      <!-- ===== BULK SEND ===== -->
+      <section class="panel" data-p="bulk" hidden>
+
+        <!-- STEP 1: message — template OR write your own -->
+        <span class="lbl">1 · Message</span>
+        <div class="filters" style="margin-bottom:10px">
+          <span class="fpill on">Load a template</span><span class="fpill">Write your own</span>
+        </div>
+        <div class="row">
+          <div><span class="lbl">Template</span><div class="field">Reconciliation</div></div>
+          <div><span class="lbl">Subject</span><div class="field">money left behind on Amazon — [Company]</div></div>
+        </div>
+        <div class="editor" style="margin-bottom:8px">
+          <div class="toolbar">
+            <span class="tb" title="Bold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z"/></svg></span>
+            <span class="tb" title="Italic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 4h-9M14 20H5M15 4 9 20"/></svg></span>
+            <span class="tb" title="Underline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v7a6 6 0 0 0 12 0V3M4 21h16"/></svg></span>
+            <span class="tb" title="Link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></span>
+            <span class="tb" title="Image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></span>
+            <span class="chip">[Name]</span><span class="chip">[Company]</span><span class="chip">Signature</span>
+            <span class="src">&lt;/&gt; source</span>
+          </div>
+          <div class="ebody">Edit the loaded template, or switch to "Write your own" and compose from scratch — same editor, styling and source paste as Compose.</div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:18px">You can load a template and then edit it, or write the whole email yourself — either way it's spam-checked once before send.</div>
+
+        <div class="two">
+          <!-- STEP 2: recipients — tags / status / hand-pick -->
+          <div>
+            <span class="lbl">2 · Recipients — filter or hand-pick</span>
+            <div style="font-size:12px;color:var(--muted);margin:0 0 8px">Filter by tag</div>
+            <div class="filters">
+              <span class="fpill on">skincare</span><span class="fpill on">beauty</span><span class="fpill">essential-oils</span><span class="fpill">ppc</span>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin:6px 0 8px">Filter by status / stage</div>
+            <div class="filters">
+              <span class="fpill on">New</span><span class="fpill">Emailed</span><span class="fpill">Follow-up due</span><span class="fpill">No reply</span>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin:6px 0 6px">Then tick or untick individuals</div>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th><input type="checkbox" checked></th><th>Company</th><th>Contact</th><th>Tags</th></tr></thead>
+                <tbody>
+                  <tr><td><input type="checkbox" checked></td><td>DM Beauty</td><td>Danessa Myricks</td><td>beauty</td></tr>
+                  <tr><td><input type="checkbox" checked></td><td>Facile Skincare</td><td>Danielle N. Levy</td><td>skincare</td></tr>
+                  <tr><td><input type="checkbox"></td><td>Eva Naturals</td><td>Daniel Crackower</td><td>skincare</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:8px">Or manually add an address not in the CRM.</div>
+          </div>
+
+          <!-- STEP 3: schedule + review -->
+          <div>
+            <span class="lbl">3 · Mailboxes &amp; pacing</span>
+            <div class="field" style="margin-bottom:8px">3 Hostinger mailboxes · round-robin</div>
+            <div class="field" style="margin-bottom:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Spread 42 over 6 hours · each local tz</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Spread over X hours · across today's window · fixed gap · send now</div>
+
+            <span class="lbl">Review</span>
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:var(--muted)">Recipients</span><b>42</b></div>
+              <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:var(--muted)">Spam check</span><span class="pill p-pass">clean</span></div>
+              <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:var(--muted)">First / last</span><b>Mon 09:12 → 14:48</b></div>
+              <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:var(--muted)">Per mailbox</span><b>~14 each</b></div>
+            </div>
+            <div class="banner banner-warn" style="margin-top:12px">4 leads won't fit before today's cutoff — they continue tomorrow from the window start.</div>
+            <button class="btn-primary" style="margin-top:4px">Schedule batch</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== OUTBOX ===== -->
+      <section class="panel" data-p="outbox" hidden>
+        <div class="filters">
+          <span class="fpill on">Scheduled</span><span class="fpill">Sent</span><span class="fpill">Paused / failed</span>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Lead</th><th>Touch</th><th>Mailbox</th><th>When (local)</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              <tr><td>Danessa Myricks</td><td>Follow-up 1</td><td class="mono">jack@</td><td>Mon 09:12 EST</td><td><span class="pill p-sent">Scheduled</span></td><td><button class="btn" style="padding:4px 10px">Cancel</button></td></tr>
+              <tr><td>Cyndi Trachy</td><td>Follow-up 2</td><td class="mono">sales@</td><td>Wed 10:30 CST</td><td><span class="pill p-sent">Scheduled</span></td><td><button class="btn" style="padding:4px 10px">Cancel</button></td></tr>
+              <tr><td>Eva Naturals</td><td>Follow-up 1</td><td class="mono">jack@</td><td>—</td><td><span class="pill p-warm">Paused · replied</span></td><td><button class="btn" style="padding:4px 10px">Review</button></td></tr>
+              <tr><td>Facile</td><td>Initial</td><td class="mono">hi@</td><td>—</td><td><span class="pill p-fail">Bounced</span></td><td><button class="btn" style="padding:4px 10px">Retry</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sec" style="margin-top:12px">Scheduled follow-ups auto-pause here when a lead replies — cancel or edit before they fire.</p>
+      </section>
+
+      <!-- ===== SETTINGS ===== -->
+      <section class="panel" data-p="settings" hidden>
+        <h3 class="sec">Mailboxes &amp; warmup</h3>
+        <div class="tablewrap" style="margin-bottom:18px">
+          <table>
+            <thead><tr><th>Mailbox</th><th>Host</th><th>Daily limit</th><th>Warmup</th><th>Today's cap</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>jack@sellomize.com</td><td class="mono">smtp.hostinger.com:465</td><td>60</td><td>Day 9/14</td><td>34</td><td><span class="pill p-pass">connected</span></td></tr>
+              <tr><td>sales@sellomize.com</td><td class="mono">smtp.hostinger.com:465</td><td>60</td><td>Day 3/14</td><td><span class="pill p-warm">warmup 16</span></td><td><span class="pill p-pass">connected</span></td></tr>
+              <tr><td>hi@sellomize.com</td><td class="mono">smtp.hostinger.com:465</td><td>40</td><td>done</td><td>40</td><td><span class="pill p-pass">connected</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid">
+          <div class="card"><div style="font-weight:600">Sending window</div><div style="font-size:12px;color:var(--muted);margin-top:4px">Mon–Fri · 09:00–17:00 · per-lead timezone</div></div>
+          <div class="card"><div style="font-weight:600">Signature</div><div style="font-size:12px;color:var(--muted);margin-top:4px">Saved corporate HTML</div></div>
+          <div class="card"><div style="font-weight:600">Negative keywords</div><div style="font-size:12px;color:var(--muted);margin-top:4px">guarantee · 100% free · act now …</div></div>
+          <div class="card"><div style="font-weight:600">Send-now outside window</div><div style="font-size:12px;color:var(--muted);margin-top:4px">Hold to next window (default)</div></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+(function(){
+  var meta={
+    compose:["Compose","Write, style and send one email — Hostinger direct."],
+    templates:["Templates","Reusable emails. Load into Compose, or use in bulk."],
+    leads:["Leads","Your cherry-picked prospects. Import CSV, full CRM columns."],
+    bulk:["Bulk Send","One template to a group, spread over time per timezone."],
+    outbox:["Outbox","Scheduled, sent and failed — cancel a follow-up before it fires."],
+    settings:["Settings","Mailboxes, warmup, signature, keywords and window."]
+  };
+  var nav=document.querySelectorAll('.nav button');
+  var panels=document.querySelectorAll('.panel');
+  nav.forEach(function(b){
+    b.addEventListener('click',function(){
+      nav.forEach(function(n){n.classList.remove('on')});
+      b.classList.add('on');
+      var s=b.getAttribute('data-s');
+      panels.forEach(function(p){p.hidden=p.getAttribute('data-p')!==s;});
+      document.getElementById('ttl').textContent=meta[s][0];
+      document.getElementById('tsub').textContent=meta[s][1];
+    });
+  });
+  document.querySelectorAll('.fpill').forEach(function(p){
+    p.addEventListener('click',function(){
+      var sibs=p.parentElement.querySelectorAll('.fpill');
+      sibs.forEach(function(s){s.classList.remove('on')});
+      p.classList.add('on');
+    });
+  });
+})();
+</script>
+</body>
+</html>
+
+# Instruction: Apply the 6-screen structure to the current app
+
+Use `sellomize_reference.html` as the visual reference for the final UI, and `RESTRUCTURE_SPEC_full.md` + `FINAL_BUILD_SPEC.md` for behavior. This is a restructure of the existing app — reuse the working engines, don't rebuild them. Confirm the mapping below before deleting anything.
+
+## Brand (keep exactly)
+- Colors (60-30-10): canvas white `#FFFFFF`/`#F8FAFC`, text `#0F172A`; structural deep pine `#083731` (sidebar, headers); accent flame `#FD4D1B` (one primary action per screen only). Warnings amber `#D97706`, errors/bounces red `#DC2626`, success green `#0F6E56`.
+- Logo: use the real Sellomize logo asset in the sidebar header (the reference has a placeholder slot marked with an HTML comment — swap in `assets/sellomize-logo.png`).
+
+## The 6 destinations (left pine sidebar)
+Compose · Templates · Leads · Bulk Send · Outbox · Settings, plus the "Sender running" worker indicator pinned at the bottom (green when the worker's heartbeat is fresh, grey when stopped).
+
+## Map current features → new screens
+- Old "Targeted Thread" + old "Campaign Generator" single-send → **Compose** (dual-mode editor, live preview, spam check, send-guard, follow-ups via "Add follow-up").
+- Old "Studio & Templates" → **Templates** (list, load into Compose, use in bulk).
+- Old "Leads & Contacts" CRM → **Leads** — **KEEP THE CURRENT COLUMNS INTACT**: checkbox, Lead ID, Brand/Company, Contact Name, Email & MX, Lead Source, Priority, Contacted?, Status, Follow-Ups, Owner, Notes, Tags. Keep search + the funnel filter pills. Simplify only the status VALUES to: New, Emailed, Replied, Bounced, Do Not Contact.
+- Old campaign generator (bulk) → **Bulk Send**. Must support: (a) **message = load a template OR write your own** from scratch in the same dual-mode editor as Compose (not template-only); (b) **build the recipient group by filtering on tags, filtering on status/stage, and hand-picking individual contacts with checkboxes**, mixed freely, plus optionally adding an address not in the CRM; (c) timezone-aware schedule + per-mailbox review + overflow note. Spam-check the final message once before send.
+- New (was missing) → **Outbox** (Scheduled / Sent / Paused-failed; cancel/edit/retry). Scheduled follow-ups auto-pause here on reply.
+- Old sidebar infrastructure (engine, mailbox fleet, warmup, diagnostics, signature, negative keywords) → **Settings**.
+
+## Remove (per FINAL_BUILD_SPEC §2)
+Research fields, proof library, angle engine, reply classifier, 17-stage statuses, the 3-pane thread workspace, the metric-card dashboard, and any remaining AI/keys. Separate any of these from shared engines before removing, so the engines keep working.
+
+## Keep the engines (per FINAL_BUILD_SPEC §1 / RESTRUCTURE §B)
+Hostinger SMTP + rotation + limits, scheduler, timezone_helper, template_engine spam check, warmup, SQLite, encrypted passwords, the independent sender worker, build pipeline.
+
+## Order
+1. Confirm this mapping with me.
+2. Build the sidebar shell + 6 screens matching the reference (brand colors, real logo).
+3. Keep Leads columns; simplify status values only.
+4. Wire each screen to backend services (no logic in UI).
+5. Acceptance: paste real test output; launch the exe and open all 6 screens; grep clean for AI/keys; confirm the worker sends with the UI closed.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-24T17:05:11+05:00.
+</ADDITIONAL_METADATA>

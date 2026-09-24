@@ -1,16 +1,17 @@
 """
 ui/settings.py - Clean Settings Hub for Sellomize Reach.
-Section C6 & Part B of Complete Restructure Spec.
-
-Sub-tabs:
-1. 📧 Hostinger Mailboxes (Hostinger SMTP accounts, Fernet encryption, 5s connection test, warmup settings)
-2. 🕒 Sending Window (Start/End time, active days, default timezone, dispatch jitter, send-now policy)
-3. ✒️ Signatures (Corporate HTML signature editor, live preview)
-4. 🛡️ Deliverability & Spam Rules (Custom negative keywords, action on match: warn/block, score threshold)
-5. ⚡ Dispatch Worker Status (Heartbeat, running/stopped badge, poll interval, worker instructions)
+Matches sellomize_reference.html:
+- Mailboxes & warmup table/cards: Mailbox, Host, Daily limit, Warmup, Today's cap, Status.
+- 4 configuration cards:
+  1. Sending window (Mon-Fri 09:00-18:00, per-lead timezone, Host PC local time)
+  2. Signature (Saved corporate HTML)
+  3. Negative keywords (guarantee, 100% free, act now...)
+  4. Send-now outside window policy (Hold to next window vs Send immediately)
+- Independent worker status and credentials encrypted at rest.
 """
 
 import streamlit as st
+import html
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -30,7 +31,7 @@ from database import (
 )
 from smtp_dispatcher import test_smtp_connection
 from timezone_helper import TARGET_MARKETS
-from ui.components import render_tab_header, trigger_toast
+from ui.components import trigger_toast
 from config import (
     DEFAULT_SMTP_HOST,
     DEFAULT_SMTP_PORT,
@@ -98,8 +99,8 @@ def render_add_mailbox_dialog():
     """Modal dialog to add a new Hostinger SMTP mailbox."""
     with st.form("form_add_mailbox", clear_on_submit=True):
         st.markdown("#### Hostinger SMTP Details")
-        name = st.text_input("Sender Display Name *", placeholder="e.g. Elena Rostova | Sellomize")
-        email = st.text_input("Hostinger Email Address *", placeholder="elena@yourdomain.com")
+        name = st.text_input("Sender Display Name *", placeholder="e.g. Jack Connor | Sellomize")
+        email = st.text_input("Hostinger Email Address *", placeholder="jack@sellomize.com")
         pw = st.text_input("Password *", type="password", help="Stored encrypted at rest using AES-Fernet.")
 
         c_host, c_port = st.columns([2, 1])
@@ -201,255 +202,231 @@ def render_edit_mailbox_dialog(acc: Dict[str, Any]):
 
 
 def render_settings_tab():
-    """Render the definitive Settings Hub."""
-    render_tab_header(
-        "⚙️ System Settings",
-        "Configure Hostinger mailboxes, sending windows, corporate signatures, and deliverability spam guard rules."
-    )
+    """Render Settings matching sellomize_reference.html."""
+    # Live PC Clock Banner
+    local_now = datetime.now()
+    pc_time_formatted = local_now.strftime("%I:%M %p")
+    tz_name = local_now.astimezone().tzname() or "Local Time"
+    st.info(f"💻 **Detected Host PC Local Time:** **{pc_time_formatted}** ({tz_name}) — Scheduled outreach and sending windows evaluate against your computer's local clock.")
 
-    settings_sub_tabs = st.tabs([
-        "📧 Hostinger Mailboxes",
-        "🕒 Sending Window",
-        "✒️ Signatures",
-        "🛡️ Negative Keywords & Spam Rules",
-        "⚡ Worker Status"
-    ])
+    # =========================================================================
+    # SECTION 1: MAILBOXES & WARMUP
+    # =========================================================================
+    st.markdown("<h3 class='sec' style='font-size:17px; font-weight:700; color:#083731; margin-bottom:8px;'>Mailboxes &amp; warmup</h3>", unsafe_allow_html=True)
 
-    # ==========================================================================
-    # SUB-TAB 1: 📧 MAILBOXES
-    # ==========================================================================
-    with settings_sub_tabs[0]:
-        st.markdown("### Hostinger Mailbox Accounts")
-        st.caption("Add and manage your Hostinger email accounts. Passwords are encrypted at rest using AES-Fernet.")
+    smtp_accounts = get_smtp_accounts(active_only=False)
 
-        smtp_accounts = get_smtp_accounts(active_only=False)
+    top_mb_c1, top_mb_c2 = st.columns([3, 1])
+    with top_mb_c1:
+        st.markdown(f"<span style='font-size:12px; color:#64748B;'>{len(smtp_accounts)} connected Hostinger mailbox{'es' if len(smtp_accounts) != 1 else ''}</span>", unsafe_allow_html=True)
+    with top_mb_c2:
+        if st.button("➕ Connect Mailbox", type="primary", use_container_width=True, key="btn_open_add_mb"):
+            render_add_mailbox_dialog()
 
-        top_mb_c1, top_mb_c2 = st.columns([3, 1])
-        with top_mb_c1:
-            st.markdown(f"**Connected Mailboxes ({len(smtp_accounts)}):**")
-        with top_mb_c2:
-            if st.button("➕ Connect Mailbox", type="primary", use_container_width=True):
-                render_add_mailbox_dialog()
+    if not smtp_accounts:
+        st.info("No mailboxes connected yet. Click '➕ Connect Mailbox' to add your Hostinger account.")
+    else:
+        for acc in smtp_accounts:
+            aid = acc["id"]
+            aname = acc.get("sender_name") or acc.get("email")
+            aemail = acc.get("email") or ""
+            ahost = acc.get("smtp_host") or DEFAULT_SMTP_HOST
+            aport = acc.get("smtp_port") or DEFAULT_SMTP_PORT
+            d_limit = acc.get("daily_limit") or DEFAULT_DAILY_LIMIT
 
-        if not smtp_accounts:
-            st.info("No mailboxes connected yet. Click '➕ Connect Mailbox' to add your Hostinger account.")
-        else:
-            for acc in smtp_accounts:
-                aid = acc["id"]
-                aname = acc.get("sender_name") or acc.get("email")
-                aemail = acc.get("email")
-                ahost = acc.get("smtp_host") or DEFAULT_SMTP_HOST
-                aport = acc.get("smtp_port") or DEFAULT_SMTP_PORT
-                sent_today = acc.get("sent_today", 0)
+            w_info = get_warmup_info(acc)
+            eff_limit = w_info["effective_limit"]
+            sent_today = acc.get("sent_today", 0)
 
-                w_info = get_warmup_info(acc)
-                eff_limit = w_info["effective_limit"]
-                warmup_status = f"🔥 Warmup Day {w_info['day_num']} (Limit: {eff_limit}/day)" if w_info["is_warmup"] else f"Standard Limit: {eff_limit}/day"
+            if w_info["is_warmup"]:
+                warmup_html = f'<span class="pill p-warm">warmup {w_info["day_num"]}/14</span>'
+                cap_display = f'<span class="pill p-warm">{eff_limit}</span>'
+            else:
+                warmup_html = "done"
+                cap_display = f"<b>{eff_limit}</b>"
 
-                with st.container():
-                    st.markdown(f"""
-                    <div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.14); border-radius:8px; padding:14px 16px; margin-bottom:8px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <strong style="color:#083731; font-size:1.05rem;">{aname}</strong>
-                            <span style="font-size:0.8rem; color:#475569;">{ahost}:{aport}</span>
-                        </div>
-                        <div style="color:#1E293B; font-size:0.9rem;">📧 {aemail}</div>
-                        <div style="font-size:0.85rem; color:#0369A1; font-weight:600; margin-top:4px;">
-                            {warmup_status} — {sent_today}/{eff_limit} sent today
-                        </div>
+            status_pill = '<span class="pill p-pass">connected</span>'
+
+            with st.container():
+                st.markdown(f"""
+                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="flex:2; min-width:0;">
+                        <strong style="color:#083731; font-size:14px;">{html.escape(aemail)}</strong>
+                        <div style="font-size:12px; color:#64748B; font-family:monospace;">{html.escape(ahost)}:{aport}</div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    <div style="flex:1; font-size:13px; color:#475569;">
+                        Limit: <b>{d_limit}</b>
+                    </div>
+                    <div style="flex:1; font-size:13px;">
+                        {warmup_html}
+                    </div>
+                    <div style="flex:1; font-size:13px;">
+                        Cap: {cap_display}
+                    </div>
+                    <div style="flex:1; text-align:center;">
+                        {status_pill}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                    c_act1, c_act2, c_act3 = st.columns([1.2, 1, 4])
-                    with c_act1:
-                        if st.button("🧪 Test Connection", key=f"test_conn_{aid}", use_container_width=True):
-                            with st.spinner("Testing SMTP connection to Hostinger (5s timeout)..."):
-                                is_ok, err_msg = test_smtp_connection(acc, timeout=5)
-                                if is_ok:
-                                    st.success("✅ Connection Successful! Hostinger SMTP credentials verified.")
-                                else:
-                                    st.error(f"❌ Connection Failed: {err_msg}")
-                    with c_act2:
-                        if st.button("✏️ Edit", key=f"edit_mb_{aid}", use_container_width=True):
-                            render_edit_mailbox_dialog(acc)
+                c_test, c_edit, _ = st.columns([1.2, 1, 4])
+                with c_test:
+                    if st.button("🧪 Test Connection", key=f"test_conn_{aid}", use_container_width=True):
+                        with st.spinner(f"Verifying Hostinger SMTP credentials for {aemail}..."):
+                            is_ok, err_msg = test_smtp_connection(acc, timeout=5)
+                            if is_ok:
+                                trigger_toast(f"Verified {aemail}! Hostinger SMTP connected.", icon="✅")
+                            else:
+                                st.error(f"Connection failed: {err_msg}")
+                with c_edit:
+                    if st.button("✏️ Edit", key=f"edit_mb_{aid}", use_container_width=True):
+                        render_edit_mailbox_dialog(acc)
 
-    # ==========================================================================
-    # SUB-TAB 2: 🕒 SENDING WINDOW
-    # ==========================================================================
-    with settings_sub_tabs[1]:
-        st.markdown("### Outreach Sending Window")
-        local_now = datetime.now()
-        pc_time_formatted = local_now.strftime("%I:%M %p")
-        tz_name = local_now.astimezone().tzname() or "Local Time"
-        st.info(f"💻 **Detected Host PC Local Time:** **{pc_time_formatted}** ({tz_name}) — Scheduled outreach and sending windows evaluate against your computer's local clock.")
+    st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:22px 0 16px;'>", unsafe_allow_html=True)
 
-        curr_start = get_config("sending_start_time", DEFAULT_START_TIME) or DEFAULT_START_TIME
-        curr_end = get_config("sending_end_time", DEFAULT_END_TIME) or DEFAULT_END_TIME
-        curr_days_str = get_config("sending_days", ",".join(DEFAULT_DAYS)) or ",".join(DEFAULT_DAYS)
-        curr_days = [d.strip() for d in curr_days_str.split(",") if d.strip()]
-        curr_tz = get_config("default_timezone", "LOCAL") or "LOCAL"
-        curr_min_j = int(get_config("jitter_min_seconds", str(DEFAULT_MIN_JITTER)) or DEFAULT_MIN_JITTER)
-        curr_max_j = int(get_config("jitter_max_seconds", str(DEFAULT_MAX_JITTER)) or DEFAULT_MAX_JITTER)
-        curr_send_now_policy = get_config("send_now_policy", "immediate") or "immediate"
+    # =========================================================================
+    # SECTION 2: 4 CONFIGURATION CARDS (Matching Reference Grid)
+    # =========================================================================
+    st.markdown("<h3 class='sec' style='font-size:17px; font-weight:700; color:#083731; margin-bottom:12px;'>Configuration</h3>", unsafe_allow_html=True)
 
-        with st.form("form_sending_window"):
-            w_c1, w_c2 = st.columns(2)
-            with w_c1:
-                start_time_val = st.text_input("Daily Start Time (HH:MM)", value=curr_start, help="Outreach dispatches will not begin before this time.")
-            with w_c2:
-                end_time_val = st.text_input("Daily End Time (HH:MM)", value=curr_end, help="Outreach dispatches will strictly stop at this cutoff time (e.g. 18:00).")
+    curr_start = get_config("sending_start_time", DEFAULT_START_TIME) or DEFAULT_START_TIME
+    curr_end = get_config("sending_end_time", DEFAULT_END_TIME) or DEFAULT_END_TIME
+    curr_days_str = get_config("sending_days", ",".join(DEFAULT_DAYS)) or ",".join(DEFAULT_DAYS)
+    curr_days = [d.strip() for d in curr_days_str.split(",") if d.strip()]
+    curr_tz = get_config("default_timezone", "LOCAL") or "LOCAL"
+    curr_min_j = int(get_config("jitter_min_seconds", str(DEFAULT_MIN_JITTER)) or DEFAULT_MIN_JITTER)
+    curr_max_j = int(get_config("jitter_max_seconds", str(DEFAULT_MAX_JITTER)) or DEFAULT_MAX_JITTER)
+    curr_send_now_policy = get_config("send_now_policy", "immediate") or "immediate"
+    saved_sig = get_config("signature_html", "") or DEFAULT_SIGNATURE_TEMPLATE
+    saved_neg = get_config("negative_keywords", "guarantee, 100% free, act now, urgent, winner, make money, cash") or ""
+    saved_action = get_config("negative_keywords_action", DEFAULT_NEGATIVE_KEYWORD_ACTION) or DEFAULT_NEGATIVE_KEYWORD_ACTION
+    saved_threshold = int(get_config("spam_score_threshold", str(DEFAULT_SPAM_SCORE_THRESHOLD)) or DEFAULT_SPAM_SCORE_THRESHOLD)
 
-            st.markdown("**Active Sending Days:**")
-            selected_days = []
-            day_cols = st.columns(7)
-            for i, day in enumerate(WEEKDAY_NAMES):
-                with day_cols[i]:
-                    if st.checkbox(day[:3], value=(day in curr_days), key=f"win_day_{day}"):
-                        selected_days.append(day)
+    enforce_win = (get_config("enforce_sending_window", "false") or "false").lower() in ["true", "1", "yes"]
+    win_summary = "Anytime 24/7 (Window Cancelled) · Daily limit enforced" if not enforce_win else f"Restricted: {curr_start}–{curr_end} · {curr_tz}"
+    policy_summary = "Send immediately (Window cancelled)" if curr_send_now_policy == "immediate" else "Hold to next window"
+    neg_summary = (saved_neg[:35] + "…") if len(saved_neg) > 35 else (saved_neg or "None")
 
-            st.markdown("---")
-            st.markdown("**Default Timezone & Pacing Jitter:**")
-            tz_c1, tz_c2, tz_c3 = st.columns(3)
-            with tz_c1:
+    card_c1, card_c2 = st.columns(2)
+    with card_c1:
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">🕒 Dispatch schedule</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{win_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Dispatch Window & Schedule Mode", expanded=False):
+            with st.form("form_sending_win"):
+                win_mode = st.radio(
+                    "Schedule Mode",
+                    ["24/7 Anytime (Window Cancelled — Recommended)", "Restricted Hours Window (e.g. 09:00 - 18:00)"],
+                    index=0 if not enforce_win else 1,
+                    help="When Window is cancelled, you can schedule and send outreach at any time within the day while strictly respecting mailbox daily limits."
+                )
+
+                w_c1, w_c2 = st.columns(2)
+                with w_c1:
+                    start_time_val = st.text_input("Daily Start Time (HH:MM)", value=curr_start)
+                with w_c2:
+                    end_time_val = st.text_input("Daily End Time (HH:MM)", value=curr_end)
+
+                st.markdown("**Default Timezone:**")
                 tz_opts = ["LOCAL", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Kolkata", "UTC"]
                 tz_idx = tz_opts.index(curr_tz) if curr_tz in tz_opts else 0
                 default_tz_val = st.selectbox("Default Timezone", tz_opts, index=tz_idx, format_func=lambda x: "LOCAL (Host PC Time)" if x == "LOCAL" else x)
-            with tz_c2:
-                min_jitter_val = st.number_input("Min Dispatch Delay (seconds)", min_value=5, max_value=600, value=curr_min_j)
-            with tz_c3:
-                max_jitter_val = st.number_input("Max Dispatch Delay (seconds)", min_value=5, max_value=600, value=curr_max_j)
 
-            st.markdown("---")
-            st.markdown("**Send-Now Policy:**")
-            send_now_options = ["immediate", "window"]
-            sn_idx = 0 if curr_send_now_policy == "immediate" else 1
-            send_now_val = st.radio(
-                "When operator clicks 'Send Now' outside active hours:",
-                send_now_options,
-                index=sn_idx,
-                format_func=lambda x: "Send immediately via direct SMTP (override window)" if x == "immediate" else "Queue for next valid window opening"
-            )
+                if st.form_submit_button("Save Dispatch Schedule", type="primary", use_container_width=True):
+                    is_enforce = "Restricted" in win_mode
+                    set_config("enforce_sending_window", "true" if is_enforce else "false")
+                    set_config("schedule_mode", "adaptive_multi_country" if is_enforce else "continuous")
+                    set_config("sending_start_time", start_time_val.strip())
+                    set_config("sending_end_time", end_time_val.strip())
+                    set_config("default_timezone", default_tz_val.strip())
+                    trigger_toast("Dispatch schedule updated!", icon="💾")
+                    st.rerun()
 
-            if st.form_submit_button("Save Sending Window Settings", type="primary", use_container_width=True):
-                set_config("sending_start_time", start_time_val.strip())
-                set_config("sending_end_time", end_time_val.strip())
-                set_config("sending_days", ",".join(selected_days))
-                set_config("default_timezone", default_tz_val.strip())
-                set_config("jitter_min_seconds", str(min_jitter_val))
-                set_config("jitter_max_seconds", str(max_jitter_val))
-                set_config("send_now_policy", send_now_val)
-                trigger_toast("Sending window settings saved!", icon="💾")
-                st.rerun()
-
-    # ==========================================================================
-    # SUB-TAB 3: ✒️ SIGNATURES
-    # ==========================================================================
-    with settings_sub_tabs[2]:
-        st.markdown("### Corporate Email Signature")
-        st.caption("Clean HTML signature appended to cold outreach messages.")
-
-        saved_sig = get_config("signature_html", "") or (
-            "<p style='font-size:0.9rem; color:#475569;'>Best regards,<br>"
-            "<strong>Jack Connor</strong><br>"
-            "Outreach Director | Sellomize<br>"
-            "<a href='https://sellomize.com' style='color:#083731; text-decoration:none;'>sellomize.com</a></p>"
-        )
-
-        with st.form("form_signature"):
-            new_sig = st.text_area("HTML Signature Code", value=saved_sig, height=180)
-            st.markdown("**Live Signature Preview:**")
-            st.markdown(
-                f"""<div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.15); border-radius:8px; padding:14px; margin-bottom:10px;">
-                    {new_sig}
-                </div>""",
-                unsafe_allow_html=True
-            )
-            if st.form_submit_button("Save Signature", type="primary", use_container_width=True):
-                set_config("signature_html", new_sig.strip())
-                trigger_toast("Signature updated successfully!", icon="✒️")
-                st.rerun()
-
-    # ==========================================================================
-    # SUB-TAB 4: 🛡️ NEGATIVE KEYWORDS & SPAM RULES
-    # ==========================================================================
-    with settings_sub_tabs[3]:
-        st.markdown("### Negative Keywords & Spam Rules")
-        st.caption("Custom keywords that flag or block dispatches before they leave your outbox.")
-
-        saved_neg = get_config("negative_keywords", "guarantee, 100% free, act now, urgent, winner, make money, cash") or ""
-        saved_action = get_config("negative_keywords_action", DEFAULT_NEGATIVE_KEYWORD_ACTION) or DEFAULT_NEGATIVE_KEYWORD_ACTION
-        saved_threshold = int(get_config("spam_score_threshold", str(DEFAULT_SPAM_SCORE_THRESHOLD)) or DEFAULT_SPAM_SCORE_THRESHOLD)
-
-        with st.form("form_spam_rules"):
-            neg_kw_input = st.text_area(
-                "Custom Negative Keywords (comma-separated)",
-                value=saved_neg,
-                height=120,
-                help="Appends to built-in spam triggers (guarantee, 100% free, act now, urgent, winner, etc.)."
-            )
-
-            c_act, c_thresh = st.columns(2)
-            with c_act:
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">🛡️ Negative keywords</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{neg_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Negative Keywords & Spam Rules", expanded=False):
+            with st.form("form_spam_cfg"):
+                neg_kw_input = st.text_area("Custom Negative Keywords (comma-separated)", value=saved_neg, height=100)
                 action_options = ["warn", "block"]
                 act_idx = 0 if saved_action == "warn" else 1
-                action_val = st.selectbox(
-                    "Action on Match",
-                    action_options,
-                    index=act_idx,
-                    format_func=lambda x: "Warn only (highlight in editor)" if x == "warn" else "Block queueing (hard stop)"
+                action_val = st.selectbox("Action on Match", action_options, index=act_idx, format_func=lambda x: "Warn only (highlight in editor)" if x == "warn" else "Block queueing (hard stop)")
+
+                if st.form_submit_button("Save Spam Rules", type="primary", use_container_width=True):
+                    set_config("negative_keywords", neg_kw_input.strip())
+                    set_config("negative_keywords_action", action_val)
+                    trigger_toast("Spam rules updated!", icon="🛡️")
+                    st.rerun()
+
+    with card_c2:
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">✒️ Signature</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">Saved corporate HTML</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Corporate Signature", expanded=False):
+            with st.form("form_sig_cfg"):
+                new_sig = st.text_area("HTML Signature Code", value=saved_sig, height=160)
+                st.markdown("**Live Preview:**")
+                st.markdown(f"<div style='border:1px solid #E2E8F0; border-radius:6px; padding:10px;'>{new_sig}</div>", unsafe_allow_html=True)
+                if st.form_submit_button("Save Signature", type="primary", use_container_width=True):
+                    set_config("signature_html", new_sig.strip())
+                    trigger_toast("Signature updated!", icon="✒️")
+                    st.rerun()
+
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">⚡ Send-now policy</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{policy_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Send-Now Policy", expanded=False):
+            with st.form("form_sn_policy"):
+                send_now_options = ["immediate", "window"]
+                sn_idx = 0 if curr_send_now_policy == "immediate" else 1
+                send_now_val = st.radio(
+                    "When operator clicks 'Send Now':",
+                    send_now_options,
+                    index=sn_idx,
+                    format_func=lambda x: "Send immediately via direct SMTP (Window cancelled)" if x == "immediate" else "Hold to next window slot"
                 )
-            with c_thresh:
-                thresh_val = st.slider("Deliverability Spam Score Threshold (0–100)", min_value=50, max_value=95, value=saved_threshold)
+                if st.form_submit_button("Save Policy", type="primary", use_container_width=True):
+                    set_config("send_now_policy", send_now_val)
+                    trigger_toast("Send-now policy updated!", icon="💾")
+                    st.rerun()
 
-            if st.form_submit_button("Save Spam Rules", type="primary", use_container_width=True):
-                set_config("negative_keywords", neg_kw_input.strip())
-                set_config("negative_keywords_action", action_val)
-                set_config("spam_score_threshold", str(thresh_val))
-                trigger_toast("Spam rules saved!", icon="🛡️")
-                st.rerun()
-
-    # ==========================================================================
-    # SUB-TAB 5: ⚡ WORKER STATUS
-    # ==========================================================================
-    with settings_sub_tabs[4]:
-        st.markdown("### Background Dispatch Worker Status")
-        st.caption("Sellomize Reach uses an independent scheduler process to dispatch queued emails outside the UI render thread.")
-
+    # =========================================================================
+    # SECTION 3: INDEPENDENT DISPATCH WORKER STATUS
+    # =========================================================================
+    st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:16px 0;'>", unsafe_allow_html=True)
+    with st.expander("⚡ Independent Background Sender Daemon Status", expanded=False):
         heartbeat_str = get_config("worker_heartbeat", "")
         worker_active = False
         last_hb_display = "Never started"
 
         if heartbeat_str:
             try:
-                hb_dt = datetime.fromisoformat(heartbeat_str)
-                now_dt = datetime.now(timezone.utc) if hb_dt.tzinfo else datetime.now()
-                sec_diff = (now_dt - hb_dt).total_seconds()
+                hb_dt = datetime.strptime(heartbeat_str[:19], "%Y-%m-%d %H:%M:%S")
+                sec_diff = (datetime.now() - hb_dt).total_seconds()
                 if sec_diff < 45:
                     worker_active = True
-                last_hb_display = f"{int(sec_diff)}s ago ({heartbeat_str})"
+                last_hb_display = f"{int(sec_diff)}s ago"
             except Exception:
                 last_hb_display = heartbeat_str
 
         w_col1, w_col2, w_col3 = st.columns(3)
         with w_col1:
-            if worker_active:
-                st.metric("Worker Status", "🟢 Running")
-            else:
-                st.metric("Worker Status", "⚪ Stopped")
+            st.metric("Worker Status", "🟢 Running" if worker_active else "⚪ Stopped")
         with w_col2:
             st.metric("Last Heartbeat", last_hb_display)
         with w_col3:
             st.metric("Poll Interval", f"{WORKER_POLL_INTERVAL_SECONDS} seconds")
 
-        st.markdown("---")
-        st.markdown("#### Starting the Background Worker")
-        st.markdown(
-            "To launch the background sender daemon on Windows, double-click or run:\n"
-            "```bat\n"
-            "run_scheduler.bat\n"
-            "```\n"
-            "Or directly in terminal:\n"
-            "```bash\n"
-            "python scheduler.py\n"
-            "```"
-        )
+        st.caption("To start the background daemon, run `run_scheduler.bat` or `python scheduler.py` in the terminal.")

@@ -13,15 +13,226 @@ SELLOMIZE_THEME_CSS = """<style>
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
     }
 
-    /* Complete Sidebar Elimination (Full Horizontal Space dedicated to Core Content) */
-    [data-testid="stSidebar"],
-    [data-testid="stSidebarCollapsedControl"],
-    section[data-testid="stSidebar"] {
-        display: none !important;
-        width: 0 !important;
-        margin: 0 !important;
-        padding: 0 !important;
+    /* Reference Design System Tokens (60-30-10) */
+    :root {
+        --canvas: #F8FAFC;
+        --surface: #FFFFFF;
+        --ink: #0F172A;
+        --muted: #64748B;
+        --line: #E2E8F0;
+        --pine: #083731;
+        --pine-2: #0C4A41;
+        --pine-line: rgba(255,255,255,0.12);
+        --flame: #FD4D1B;
+        --flame-tint: #FFF1EC;
+        --amber: #D97706;
+        --amber-tint: #FEF3C7;
+        --red: #DC2626;
+        --red-tint: #FEE2E2;
+        --green: #0F6E56;
+        --green-tint: #E1F5EE;
     }
+
+    /* ---------- Left Sidebar (30% structural authority: Deep Pine #083731) ---------- */
+    [data-testid="stSidebar"],
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        background-color: #083731 !important;
+        background: #083731 !important;
+        color: #FFFFFF !important;
+        width: 240px !important;
+        min-width: 240px !important;
+        max-width: 240px !important;
+        padding: 16px 12px !important;
+        border-right: 1px solid rgba(255,255,255,0.12) !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: #FFFFFF;
+    }
+    [data-testid="stSidebar"] .stButton > button {
+        width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: 10px !important;
+        background: transparent !important;
+        border: 0 !important;
+        color: rgba(255, 255, 255, 0.85) !important;
+        font-size: 14px !important;
+        padding: 9px 12px !important;
+        border-radius: 8px !important;
+        text-align: left !important;
+        border-left: 3px solid transparent !important;
+        margin-bottom: 3px !important;
+        box-shadow: none !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: #0C4A41 !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: #0C4A41 !important;
+        color: #FFFFFF !important;
+        border-left: 3px solid #FD4D1B !important;
+        font-weight: 600 !important;
+    }
+
+    /* Sidebar Brand & Worker Badge */
+    .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 8px 18px;
+        border-bottom: 1px solid rgba(255,255,255,0.12);
+        margin-bottom: 12px;
+    }
+    .logo-mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        background: #FFFFFF;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        overflow: hidden;
+    }
+    .logo-mark img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .logo-text {
+        line-height: 1.1;
+    }
+    .logo-text .a {
+        font-weight: 800;
+        font-size: 15px;
+        letter-spacing: .02em;
+        color: #FFFFFF;
+    }
+    .logo-text .b {
+        font-weight: 800;
+        font-size: 15px;
+        letter-spacing: .02em;
+        color: #FD4D1B;
+    }
+    .logo-text .v {
+        display: block;
+        font-size: 10px;
+        color: rgba(255,255,255,.55);
+        letter-spacing: .14em;
+        margin-top: 2px;
+    }
+    .navlabel {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .12em;
+        color: rgba(255,255,255,.5);
+        padding: 8px 10px 6px;
+        text-transform: uppercase;
+    }
+    .worker {
+        margin-top: 24px;
+        padding: 10px;
+        font-size: 12px;
+        color: #7EE0C0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-top: 1px solid rgba(255,255,255,0.12);
+    }
+    .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22C58E;
+        display: inline-block;
+    }
+    .dot-stale {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #94A3B8;
+        display: inline-block;
+    }
+
+    /* Topbar Layout */
+    .topbar {
+        background: #FFFFFF;
+        border-bottom: 1px solid #E2E8F0;
+        padding: 14px 20px;
+        margin-bottom: 18px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .topbar h1 {
+        margin: 0 !important;
+        font-size: 20px !important;
+        color: #083731 !important;
+    }
+    .topbar .sub {
+        font-size: 13px;
+        color: #64748B;
+        margin-top: 2px;
+    }
+
+    /* Components & Pills */
+    .lbl { font-size: 12px; color: #64748B; margin-bottom: 5px; display: block; font-weight: 600; }
+    .field { border: 1px solid #E2E8F0; border-radius: 8px; padding: 8px 12px; font-size: 13px; background: #FFFFFF; display: flex; align-items: center; gap: 7px; min-height: 38px; color: #0F172A; }
+    .row { display: flex; gap: 12px; margin-bottom: 12px; }
+    .row > div { flex: 1; min-width: 0; }
+    .btn { font-size: 13px; border: 1px solid #E2E8F0; background: #FFFFFF; border-radius: 8px; padding: 7px 14px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: #0F172A; font-weight: 500; text-decoration: none; }
+    .btn:hover { border-color: #CBD5E1; }
+    .btn-primary { background: #FD4D1B; color: #FFFFFF !important; border: 0; font-size: 13px; border-radius: 8px; padding: 8px 16px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; text-decoration: none; }
+    .btn-primary:hover { background: #E03E0F; color: #FFFFFF !important; }
+    .btn-ghost { background: transparent; border: 1px solid #E2E8F0; color: #083731; }
+    .card { border: 1px solid #E2E8F0; border-radius: 12px; background: #FFFFFF; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+    .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; white-space: nowrap; display: inline-block; font-weight: 600; }
+    .p-new { background: #FFF1EC; color: #FD4D1B; }
+    .p-sent { background: #F1F5F9; color: #64748B; }
+    .p-rep { background: #E1F5EE; color: #0F6E56; }
+    .p-bounce { background: #FEE2E2; color: #DC2626; }
+    .p-warm { background: #FEF3C7; color: #D97706; }
+    .p-pass { background: #E1F5EE; color: #0F6E56; }
+    .p-fail { background: #FEE2E2; color: #DC2626; }
+    .banner { border-radius: 8px; padding: 10px 13px; font-size: 13px; margin-bottom: 12px; }
+    .banner-info { background: #EEF6FF; color: #175FA5; border: 1px solid #D5E6FB; }
+    .banner-warn { background: #FEF3C7; color: #8A5206; border: 1px solid #F3D9A0; }
+    h3.sec { margin: 0 0 3px; font-size: 16px; color: #083731; font-weight: 700; }
+    p.sec { margin: 0 0 16px; font-size: 13px; color: #64748B; }
+
+    /* Editor styles */
+    .editor { border: 1px solid #E2E8F0; border-radius: 10px; overflow: hidden; background: #FFFFFF; }
+    .toolbar { display: flex; align-items: center; gap: 4px; padding: 7px 9px; border-bottom: 1px solid #E2E8F0; background: #F8FAFC; flex-wrap: wrap; }
+    .tb { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: #475569; cursor: pointer; }
+    .tb:hover { background: #E2E8F0; }
+    .chip { font-size: 11px; border: 1px solid #E2E8F0; background: #FFFFFF; border-radius: 6px; padding: 3px 8px; color: #083731; cursor: pointer; font-weight: 600; }
+    .src { margin-left: auto; font-size: 12px; border: 1px solid #E2E8F0; border-radius: 6px; padding: 3px 9px; color: #FD4D1B; cursor: pointer; font-family: monospace; font-weight: 600; }
+    .ebody { padding: 12px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 120px; }
+    .hl { background: #FDE2DA; color: #FD4D1B; border-radius: 3px; padding: 0 3px; font-weight: 600; }
+    .preview { border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; padding: 14px; font-size: 13px; color: #334155; line-height: 1.6; }
+    .preview .sig { margin-top: 12px; padding-top: 10px; border-top: 1px solid #E2E8F0; font-size: 12px; color: #64748B; }
+    .spam { font-size: 12px; color: #D97706; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }
+    .guard { font-size: 12px; color: #0F6E56; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }
+
+    /* Tables & Filters */
+    .tablewrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
+    th { background: #F8FAFC; color: #64748B; font-weight: 600; text-align: left; padding: 9px 12px; font-size: 11px; letter-spacing: .03em; border-bottom: 1px solid #E2E8F0; }
+    td { padding: 9px 12px; border-bottom: 1px solid #E2E8F0; color: #0F172A; }
+    tr:last-child td { border-bottom: 0; }
+    .mono { font-family: monospace; font-size: 12px; }
+    .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .fpill { font-size: 12px; border: 1px solid #E2E8F0; border-radius: 999px; padding: 5px 12px; cursor: pointer; background: #FFFFFF; color: #475569; font-weight: 500; }
+    .fpill.on { background: #083731; color: #FFFFFF; border-color: #083731; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .toolbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media(max-width: 820px) { .two { grid-template-columns: 1fr; } }
 
     /* Custom Sleek Scrollbar */
     ::-webkit-scrollbar {

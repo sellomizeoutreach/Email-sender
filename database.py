@@ -476,8 +476,8 @@ def init_db(db_path: str = DB_FILE):
         "default_window_end": "17:00",
         "send_delay_seconds": "60",
         "worker_heartbeat": "",
-        "send_now_outside_window_policy": "hold",
-        "enforce_sending_window": "true"
+        "send_now_outside_window_policy": "immediate",
+        "enforce_sending_window": "false"
     }
 
     for key, val in default_configs.items():

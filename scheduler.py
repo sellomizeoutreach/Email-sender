@@ -90,14 +90,14 @@ def is_within_sending_window(
     with target_timezone, it validates against the target market's business hours.
     Returns (True, message) if dispatch is allowed, or (False, reason) if paused.
     """
-    sched_mode = (get_config("schedule_mode", "adaptive_multi_country", db_path=db_path) or "adaptive_multi_country").strip()
-    if sched_mode == "continuous":
-        return True, "Continuous 24/7 delivery enabled"
-
-    enforce_str = get_config("enforce_sending_window", "true", db_path=db_path) or "true"
+    enforce_str = get_config("enforce_sending_window", "false", db_path=db_path) or "false"
     enforce = enforce_str.strip().lower() in ["true", "1", "yes", "on"]
     if not enforce:
         return True, "Sending window enforcement disabled (24/7 delivery allowed)"
+
+    sched_mode = (get_config("schedule_mode", "adaptive_multi_country", db_path=db_path) or "adaptive_multi_country").strip()
+    if sched_mode == "continuous":
+        return True, "Continuous 24/7 delivery enabled"
 
     # Adaptive multi-country evaluation:
     if sched_mode == "adaptive_multi_country" and email_record and email_record.get("target_timezone") and email_record["target_timezone"].upper() != "LOCAL":

@@ -1,7 +1,15 @@
 """
-ui/compose.py - Streamlined Compose & Outreach for Sellomize Reach.
-Fast, clean dual-mode email authoring with real-time deliverability audit,
-safety gates, and Hostinger SMTP dispatch.
+ui/compose.py - Compose Screen for Sellomize Reach.
+Matching sellomize_reference.html:
+- Left column:
+  - Sending mailbox & To (lead or type an address)
+  - Subject input
+  - Dual-mode editor (Visual toolbar + raw HTML source toggle)
+  - Spam trigger warning badge + Send guard badge
+  - Tool buttons: Send now, Schedule, Save draft, Save as template, + Add follow-up
+- Right column:
+  - Live preview of resolved email with corporate signature
+  - Info banner: Variables resolved for this recipient.
 """
 
 import streamlit as st
@@ -34,7 +42,7 @@ from template_engine import (
 )
 from scheduler import dispatch_email_hostinger
 from ui.editor import render_dual_mode_editor
-from ui.components import render_tab_header, trigger_toast
+from ui.components import trigger_toast
 
 _TOKEN_RE = re.compile(r'\[([A-Za-z0-9_]+)\]|\{([A-Za-z0-9_]+)\}')
 
@@ -137,12 +145,7 @@ def _get_default_copy(touch_step: int, sample_contact: dict, is_single_recipient
 
 
 def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, templates: Optional[List[Dict[str, Any]]] = None):
-    """Render the simple, focused Compose & Style tab."""
-    render_tab_header(
-        "✍️ Compose & Outreach",
-        "Compose styled cold emails, test live variable previews, and dispatch safely through Hostinger."
-    )
-
+    """Render the Compose screen matching sellomize_reference.html."""
     if contacts is None:
         contacts = get_contacts()
     if templates is None:
@@ -155,250 +158,201 @@ def render_compose_tab(contacts: Optional[List[Dict[str, Any]]] = None, template
     if prefill_lead_id:
         st.session_state["compose_selected_lead_id"] = prefill_lead_id
 
-    # Initialize default state
+    # Initialize default body and subject
     if "compose_body_html" not in st.session_state:
         st.session_state["compose_body_html"] = (
-            "<p>Hi [Name],</p>\n"
-            "<p>I noticed [Company] and wanted to reach out regarding your brand growth.</p>\n"
-            "<p>Do you have a few minutes this week for a brief call?</p>\n"
-            "<p>Best regards,</p>"
+            "Hi [Name],<br><br>"
+            "We haven't been properly introduced, but I was looking through [Company] on Amazon and noticed a number of listings showing currently unavailable.<br><br>"
+            "When a customer searches and finds it unavailable, the sale simply stops there. I'd be glad to take a look together."
         )
     if "compose_subject" not in st.session_state:
-        st.session_state["compose_subject"] = "Quick observation for [Company]"
+        st.session_state["compose_subject"] = "[Company] + Amazon"
 
-    # --- ROW 1: SENDER MAILBOX & TEMPLATE SELECTOR ---
-    c_mb, c_tpl = st.columns([1.5, 1.5])
-    with c_mb:
-        if not smtp_accounts:
-            st.warning("⚠️ No active Hostinger mailboxes. Connect one in **Settings**.")
-            selected_mb = None
-        else:
-            mb_choices = {f"{a.get('sender_name') or 'Mailbox'} <{a['email']}>": a for a in smtp_accounts}
-            sel_mb_label = st.selectbox("Sender Mailbox", list(mb_choices.keys()), key="compose_mb_sel")
-            selected_mb = mb_choices[sel_mb_label]
+    # Layout into 2 columns matching reference `.two`
+    col_editor, col_preview = st.columns([1.1, 0.9], gap="large")
 
-    with c_tpl:
-        if templates:
-            tpl_choices = {"-- Select a Template to Load --": None}
-            for t in templates:
-                tpl_choices[t.get("template_name") or t.get("name") or "Template"] = t
-            sel_tpl_name = st.selectbox("Load Template", list(tpl_choices.keys()), key="compose_tpl_sel")
-            if sel_tpl_name and sel_tpl_name != "-- Select a Template to Load --":
-                chosen_t = tpl_choices[sel_tpl_name]
-                if chosen_t:
-                    new_subj = chosen_t.get("subject") or ""
-                    new_body = chosen_t.get("body_content") or chosen_t.get("body_html") or ""
-                    if st.session_state.get("_last_loaded_tpl") != sel_tpl_name:
-                        st.session_state["compose_subject"] = new_subj
-                        st.session_state["compose_body_html"] = new_body
-                        st.session_state["_last_loaded_tpl"] = sel_tpl_name
-                        st.rerun()
-        else:
-            st.selectbox("Load Template", ["No templates saved yet"], disabled=True)
+    with col_editor:
+        # Row 1: Mailbox + Recipient
+        c_mb, c_rcpt = st.columns(2)
+        with c_mb:
+            st.markdown('<span class="lbl">Sending mailbox</span>', unsafe_allow_html=True)
+            if not smtp_accounts:
+                st.warning("No active Hostinger mailboxes. Configure in Settings.")
+                selected_mb = None
+            else:
+                mb_choices = {f"{a.get('sender_name') or 'Mailbox'} <{a['email']}>": a for a in smtp_accounts}
+                sel_mb_label = st.selectbox("Mailbox", list(mb_choices.keys()), label_visibility="collapsed", key="comp_mb_pick")
+                selected_mb = mb_choices[sel_mb_label]
 
-    # --- ROW 2: RECIPIENT ---
-    lead_choices = {"-- Type or select recipient --": None}
-    for c in contacts:
-        label = f"{c.get('name') or 'Lead'} <{c.get('email')}>" + (f" ({c.get('company')})" if c.get('company') else "")
-        lead_choices[label] = c
+        with c_rcpt:
+            st.markdown('<span class="lbl">To (lead or type an address)</span>', unsafe_allow_html=True)
+            lead_choices = {"-- Select Lead or Type Below --": None}
+            for c in contacts:
+                label = f"{c.get('name') or 'Lead'} <{c.get('email')}>" + (f" — {c.get('company')}" if c.get('company') else "")
+                lead_choices[label] = c
 
-    recip_col1, recip_col2 = st.columns([2, 1])
-    with recip_col1:
-        # Preselected index if navigated from Leads tab
-        preselected_idx = 0
-        target_prefill_id = st.session_state.get("compose_selected_lead_id")
-        if target_prefill_id:
-            for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
-                if l_obj and l_obj.get("id") == target_prefill_id:
-                    preselected_idx = idx
-                    break
+            preselected_idx = 0
+            target_prefill_id = st.session_state.get("compose_selected_lead_id")
+            if target_prefill_id:
+                for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
+                    if l_obj and l_obj.get("id") == target_prefill_id:
+                        preselected_idx = idx
+                        break
 
-        sel_lead_label = st.selectbox(
-            "Select Recipient from Leads",
-            list(lead_choices.keys()),
-            index=preselected_idx,
-            key="compose_lead_picker"
-        )
-        selected_lead_obj = lead_choices.get(sel_lead_label)
+            sel_lead_label = st.selectbox("To", list(lead_choices.keys()), index=preselected_idx, label_visibility="collapsed", key="comp_lead_pick")
+            chosen_lead_obj = lead_choices.get(sel_lead_label)
 
-    with recip_col2:
-        custom_email_typed = st.text_input(
-            "Or Type Email Directly",
-            value=selected_lead_obj.get("email") if selected_lead_obj else "",
-            placeholder="lead@company.com",
-            key="compose_custom_email"
-        )
+            custom_email = st.text_input("Or custom email", value=chosen_lead_obj.get("email") if chosen_lead_obj else "", placeholder="e.g. danessa@dmbeauty.com", label_visibility="collapsed")
 
-    # Resolve active recipient
-    if selected_lead_obj and not custom_email_typed.strip():
-        current_lead = selected_lead_obj
-    elif custom_email_typed.strip():
-        matched = get_contact_by_email(custom_email_typed.strip())
-        if matched:
-            current_lead = matched
+        # Resolve active recipient
+        if custom_email.strip():
+            matched = get_contact_by_email(custom_email.strip())
+            if matched:
+                current_lead = matched
+            else:
+                current_lead = {
+                    "id": None,
+                    "name": chosen_lead_obj.get("name", "") if chosen_lead_obj else "",
+                    "email": custom_email.strip(),
+                    "company": chosen_lead_obj.get("company", "") if chosen_lead_obj else "DM Beauty",
+                    "country_or_timezone": "LOCAL"
+                }
+        elif chosen_lead_obj:
+            current_lead = chosen_lead_obj
         else:
             current_lead = {
-                "id": None,
-                "name": selected_lead_obj.get("name", "") if selected_lead_obj else "",
-                "email": custom_email_typed.strip(),
-                "company": selected_lead_obj.get("company", "") if selected_lead_obj else "",
+                "name": "Danessa Myricks",
+                "email": "danessa@dmbeauty.com",
+                "company": "DM Beauty",
                 "country_or_timezone": "LOCAL"
             }
-    else:
-        current_lead = {"name": "", "email": "", "company": "", "country_or_timezone": "LOCAL"}
 
-    # --- ROW 3: SUBJECT LINE & THREADING ---
-    subj_val = st.text_input(
-        "Subject Line",
-        value=st.session_state.get("compose_subject", ""),
-        placeholder="e.g. Quick question for [Company]",
-        key="input_compose_subject"
-    )
-    st.session_state["compose_subject"] = subj_val
+        # Row 2: Subject Line
+        st.markdown('<span class="lbl">Subject</span>', unsafe_allow_html=True)
+        subj_val = st.text_input("Subject", value=st.session_state.get("compose_subject", ""), label_visibility="collapsed", key="comp_subj_in")
+        st.session_state["compose_subject"] = subj_val
 
-    # Auto-threading check
-    is_reply_on_thread = st.checkbox(
-        "🧵 Thread as reply to previous email to this recipient (sets In-Reply-To & References)",
-        value=False,
-        key="compose_thread_toggle"
-    )
-    original_msg_id = ""
-    if is_reply_on_thread and current_lead.get("email"):
-        # Auto-lookup the most recent sent email to this recipient
-        prev_emails = [e for e in get_emails() if (e.get("recipient") or "").lower() == current_lead["email"].lower() and e.get("status") == "Sent"]
-        if prev_emails:
-            latest_prev = prev_emails[-1]
-            original_msg_id = latest_prev.get("message_id") or latest_prev.get("in_reply_to") or f"<msg-{latest_prev['id']}@sellomize.com>"
-            st.caption(f"✓ Automatically threading onto previous Message-ID: `{original_msg_id}`")
-        else:
-            st.caption("ℹ️ No previous sent emails found for this lead; a clean outbound email will be sent.")
+        # Row 3: Body Editor
+        st.markdown('<span class="lbl">Body</span>', unsafe_allow_html=True)
+        current_body = render_dual_mode_editor(
+            key_prefix="compose",
+            initial_content=st.session_state.get("compose_body_html", ""),
+            height=180
+        )
+        st.session_state["compose_body_html"] = current_body
 
-    # --- ROW 4: DUAL-MODE EDITOR ---
-    st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
-    current_body = render_dual_mode_editor(
-        key_prefix="compose",
-        initial_content=st.session_state.get("compose_body_html", ""),
-        height=240
-    )
-    st.session_state["compose_body_html"] = current_body
+        # Safety & Deliverability Check
+        final_subj = inject_variables(parse_spintax(subj_val), current_lead)
+        final_body = resolve_template(current_body, current_lead)
 
-    # --- ROW 5: DELIVERABILITY & LIVE RESOLVED PREVIEW ---
-    final_subj = inject_variables(parse_spintax(subj_val), current_lead)
-    final_body = resolve_template(current_body, current_lead)
-    display_subj = f"Re: {final_subj}" if (is_reply_on_thread and not final_subj.lower().startswith("re:")) else final_subj
+        missing_tokens = sorted(list(set(_missing_tokens(final_subj) + _missing_tokens(final_body))))
+        neg_keywords = get_config("negative_keywords", "")
+        audit = audit_email_deliverability(body_html=final_body, subject=final_subj, custom_negative_keywords=neg_keywords)
+        triggers = audit.get("detected_spam_words", [])
 
-    missing_tokens = sorted(list(set(_missing_tokens(final_subj) + _missing_tokens(final_body))))
-    neg_keywords = get_config("negative_keywords", "")
-    audit = audit_email_deliverability(body_html=final_body, subject=display_subj, custom_negative_keywords=neg_keywords)
-
-    score = audit.get("score", 100)
-    detected_spam = audit.get("detected_spam_words", [])
-
-    c_audit, c_prev = st.columns([1.2, 2.8])
-
-    with c_audit:
-        st.markdown("**Deliverability & Safety**")
-        if missing_tokens:
-            st.error(f"🚫 **Unfilled Tokens:** {', '.join(missing_tokens)}")
+        # Display Spam & Guard Badges matching reference HTML
+        if triggers:
+            trig_names = ", ".join(f'"{t.get("word")}"' for t in triggers[:2])
+            st.markdown(f'<div class="spam"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> {len(triggers)} spam trigger: <b>&nbsp;{trig_names}</b> &nbsp;·&nbsp; edit to enable send</div>', unsafe_allow_html=True)
             can_send = False
         else:
             can_send = bool((current_lead.get("email") or "").strip())
 
-        if detected_spam:
-            st.warning(f"⚠️ **Spam Triggers ({len(detected_spam)}):**")
-            for w in detected_spam:
-                st.markdown(f"- `{w.get('word')}`")
+        if missing_tokens:
+            toks_str = ", ".join(missing_tokens)
+            st.markdown(f'<div class="spam" style="color:#DC2626;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg> Unfilled tokens: <b>{toks_str}</b> — fill before send</div>', unsafe_allow_html=True)
+            can_send = False
         else:
-            st.success(f"✅ **Spam Score:** {score}/100 · Clean")
+            st.markdown('<div class="guard"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg> No unfilled tokens — send guard clear</div>', unsafe_allow_html=True)
 
-        if not (current_lead.get("email") or "").strip():
-            st.caption("Enter a recipient email to enable sending.")
+        # Action Buttons matching reference `.toolbtns`
+        c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.3, 1.1, 1.1, 1.4, 1.3])
 
-    with c_prev:
-        lead_display_name = current_lead.get("name") or current_lead.get("email") or "Lead"
-        st.markdown(f"**Live Preview for `{lead_display_name}`:**")
-        st.markdown(
-            f"""<div style="background:#FFFFFF; border:1px solid rgba(8,55,49,0.18); border-radius:8px; padding:12px 14px; font-size:0.88rem;">
-                <div style="border-bottom:1px solid #E2E8F0; padding-bottom:6px; margin-bottom:8px; font-size:0.8rem; color:#475569;">
-                    <div><strong>To:</strong> {html.escape(current_lead.get('email') or 'recipient@example.com')}</div>
-                    <div><strong>Subject:</strong> {html.escape(display_subj or '(No Subject)')}</div>
-                </div>
-                <div style="line-height:1.55; color:#0F172A;">
-                    {final_body}
-                </div>
-            </div>""",
-            unsafe_allow_html=True
-        )
+        with c_act1:
+            if st.button("🚀 Send now", type="primary", use_container_width=True, disabled=not can_send):
+                if not selected_mb:
+                    st.error("No active mailbox configured to send.")
+                else:
+                    with st.spinner("Connecting to Hostinger and sending..."):
+                        email_html = format_email_html(final_body)
+                        email_id = create_email(
+                            email_html=email_html,
+                            subject=final_subj,
+                            recipient=current_lead["email"].strip(),
+                            status="Approved",
+                            scheduled_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            target_timezone="LOCAL"
+                        )
+                        email_record = {
+                            "id": email_id,
+                            "recipient": current_lead["email"].strip(),
+                            "subject": final_subj,
+                            "email_html": email_html,
+                            "smtp_account_id": selected_mb["id"],
+                            "target_timezone": "LOCAL"
+                        }
+                        ok = dispatch_email_hostinger(email_record)
+                        if ok:
+                            trigger_toast(f"Email sent to {current_lead['email']}!", icon="🚀")
+                            st.session_state["active_screen"] = "outbox"
+                            st.rerun()
+                        else:
+                            st.error("Dispatch failed.")
 
-    # --- ROW 6: ACTIONS ---
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-    act_c1, act_c2, act_c3 = st.columns([1.5, 1.5, 1.2])
-
-    with act_c1:
-        if st.button("🚀 Send Now", type="primary", use_container_width=True, disabled=not can_send):
-            if not selected_mb:
-                st.error("No active mailbox configured to send.")
-            else:
-                with st.spinner("Dispatching via Hostinger SMTP..."):
-                    email_html = format_email_html(final_body)
-                    email_id = create_email(
-                        email_html=email_html,
-                        subject=display_subj,
+        with c_act2:
+            with st.popover("Schedule", use_container_width=True):
+                st.markdown("**Schedule Outreach**")
+                s_date = st.date_input("Date", value=datetime.now().date(), key="comp_sd")
+                s_time = st.time_input("Time", value=(datetime.now() + timedelta(hours=1)).time(), key="comp_st")
+                if st.button("Confirm Schedule", type="primary", use_container_width=True, disabled=not can_send):
+                    comb_dt = datetime.combine(s_date, s_time)
+                    s_iso = comb_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    create_email(
+                        email_html=format_email_html(final_body),
+                        subject=final_subj,
                         recipient=current_lead["email"].strip(),
                         status="Approved",
-                        scheduled_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        in_reply_to=original_msg_id.strip(),
+                        scheduled_time=s_iso,
                         target_timezone="LOCAL"
                     )
-                    email_record = {
-                        "id": email_id,
-                        "recipient": current_lead["email"].strip(),
-                        "subject": display_subj,
-                        "email_html": email_html,
-                        "in_reply_to": original_msg_id.strip(),
-                        "smtp_account_id": selected_mb["id"],
-                        "target_timezone": "LOCAL"
-                    }
-                    ok = dispatch_email_hostinger(email_record)
-                    if ok:
-                        trigger_toast(f"Email sent successfully to {current_lead['email']}!", icon="🚀")
-                        st.session_state["main_app_tabs"] = "📥 Outbox"
-                        st.rerun()
-                    else:
-                        st.error("Dispatch failed. Check mailbox settings.")
+                    trigger_toast(f"Scheduled for {s_iso}!", icon="🕒")
+                    st.session_state["active_screen"] = "outbox"
+                    st.rerun()
 
-    with act_c2:
-        with st.popover("🕒 Schedule...", use_container_width=True):
-            st.markdown("**Schedule Outreach Dispatch**")
-            sched_date = st.date_input("Date", value=datetime.now().date(), key="compose_sched_d")
-            sched_time = st.time_input("Time", value=(datetime.now() + timedelta(hours=1)).time(), key="compose_sched_t")
-            if st.button("Confirm Schedule", type="primary", use_container_width=True, disabled=not can_send):
-                combined_dt = datetime.combine(sched_date, sched_time)
-                sched_iso = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
-                email_html = format_email_html(final_body)
+        with c_act3:
+            if st.button("Save draft", use_container_width=True):
                 create_email(
-                    email_html=email_html,
-                    subject=display_subj,
-                    recipient=current_lead["email"].strip(),
-                    status="Approved",
-                    scheduled_time=sched_iso,
-                    in_reply_to=original_msg_id.strip(),
+                    email_html=format_email_html(final_body),
+                    subject=final_subj,
+                    recipient=current_lead.get("email", "").strip(),
+                    status="Pending",
+                    scheduled_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     target_timezone="LOCAL"
                 )
-                trigger_toast(f"Email scheduled for {sched_iso}!", icon="🕒")
-                st.session_state["main_app_tabs"] = "📥 Outbox"
+                trigger_toast("Draft saved to Outbox.", icon="💾")
+
+        with c_act4:
+            if st.button("Save as template", use_container_width=True):
+                new_t_name = f"Template: {subj_val[:22]}" if subj_val else "Saved Template"
+                create_template(template_name=new_t_name, body_content=current_body)
+                trigger_toast("Saved as template!", icon="📄")
+
+        with c_act5:
+            if st.button("+ Add follow-up", use_container_width=True):
+                st.session_state["compose_body_html"] += "<br><br>P.S. Just wanted to follow up on the above."
                 st.rerun()
 
-    with act_c3:
-        if st.button("💾 Save Draft", use_container_width=True):
-            email_html = format_email_html(final_body)
-            create_email(
-                email_html=email_html,
-                subject=display_subj,
-                recipient=current_lead.get("email", "").strip(),
-                status="Pending",
-                scheduled_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                in_reply_to=original_msg_id.strip(),
-                target_timezone="LOCAL"
-            )
-            trigger_toast("Draft saved to Outbox!", icon="💾")
+    # Right Column: Live Preview matching reference HTML
+    with col_preview:
+        lead_name = current_lead.get("name") or "Danessa"
+        st.markdown(f'<span class="lbl">Live preview — what {lead_name} receives</span>', unsafe_allow_html=True)
+
+        signature_html = get_config("signature_html", "") or "Jack Conner · Sellomize · jack@sellomize.com"
+        preview_box_html = f"""
+        <div class="preview">
+            {final_body}
+            <div class="sig">{signature_html}</div>
+        </div>
+        <div class="banner banner-info" style="margin-top:12px;">Variables resolved for this recipient. This exact HTML is what gets sent.</div>
+        """
+        st.markdown(preview_box_html, unsafe_allow_html=True)

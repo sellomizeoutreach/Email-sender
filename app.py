@@ -1,14 +1,11 @@
 """
 app.py - Streamlit Frontend for Sellomize Reach.
 Section B1, B2 & Part C of Complete Restructure Spec.
-
-Exactly 6 tabs/destinations:
-1. Compose
-2. Templates
-3. Leads
-4. Bulk Send
-5. Outbox
-6. Settings
+Matches sellomize_reference.html:
+- 240px Left Pine Sidebar (#083731) with real Sellomize logo, brand title, and pinned worker indicator.
+- 6 clean destinations: Compose, Templates, Leads, Bulk Send, Outbox, Settings.
+- Live detected local PC clock in the topbar.
+- Zero horizontal tab redundancy.
 """
 
 import os
@@ -49,11 +46,24 @@ st.set_page_config(
     page_title="Sellomize Reach | Agency Email Automation",
     page_icon="🚀",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# Render unified App Shell (Pine Theme tokens, header, worker status badge, notification bell)
-render_app_shell()
+# Synchronize backwards compatibility for session tab switches
+TAB_TO_SCREEN = {
+    "✍️ Compose": "compose",
+    "📄 Templates": "templates",
+    "👥 Leads": "leads",
+    "🚀 Bulk Send": "bulk",
+    "📥 Outbox": "outbox",
+    "⚙️ Settings": "settings",
+}
+if "main_app_tabs" in st.session_state and st.session_state["main_app_tabs"] in TAB_TO_SCREEN:
+    st.session_state["active_screen"] = TAB_TO_SCREEN[st.session_state["main_app_tabs"]]
+    st.session_state.pop("main_app_tabs", None)
+
+# Render Left Pine Sidebar Navigation & Topbar
+screen_key = render_app_shell()
 
 # Global Non-Blocking Toast Listener
 if "pending_toast" in st.session_state and st.session_state["pending_toast"]:
@@ -74,42 +84,22 @@ try:
 except Exception:
     pass
 
-# Retrieve cached or fresh data
+# Retrieve fresh leads and templates
 all_contacts = get_contacts()
 all_templates = get_templates()
 
 # ==============================================================================
-# PRIMARY APP NAVIGATION (Exactly 6 destinations)
+# RENDER ACTIVE SCREEN (Exactly 6 destinations)
 # ==============================================================================
-TAB_NAMES = [
-    "✍️ Compose",
-    "📄 Templates",
-    "👥 Leads",
-    "🚀 Bulk Send",
-    "📥 Outbox",
-    "⚙️ Settings",
-]
-
-tab_compose, tab_templates, tab_leads, tab_bulk, tab_outbox, tab_settings = st.tabs(
-    TAB_NAMES,
-    key="main_app_tabs",
-    on_change="rerun"
-)
-
-with tab_compose:
+if screen_key == "compose":
     render_compose_tab(all_contacts, all_templates)
-
-with tab_templates:
+elif screen_key == "templates":
     render_templates_tab(all_templates)
-
-with tab_leads:
+elif screen_key == "leads":
     render_leads_tab(all_contacts)
-
-with tab_bulk:
+elif screen_key == "bulk":
     render_bulk_tab()
-
-with tab_outbox:
+elif screen_key == "outbox":
     render_outbox_tab()
-
-with tab_settings:
+elif screen_key == "settings":
     render_settings_tab()
