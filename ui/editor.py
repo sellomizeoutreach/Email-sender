@@ -334,6 +334,29 @@ def render_dual_mode_editor(
             st.session_state[textarea_key] = new_visual
             st.rerun()
 
+        def _insert_image(img_tag: str):
+            """Inserts a clean [Image X] token in visual text without exposing raw base64 or HTML."""
+            existing_nums = [
+                int(m.group(1)) for m in re.finditer(r'\[Image\s+(\d+)\]', live_visual, re.IGNORECASE)
+            ]
+            next_num = (max(existing_nums) + 1) if existing_nums else (len(img_map) + 1)
+            placeholder = f"[Image {next_num}]"
+
+            img_map[placeholder] = img_tag
+            sep = "\n\n" if live_visual and not live_visual.endswith("\n\n") else ""
+            new_visual = f"{live_visual}{sep}{placeholder}\n\n"
+
+            new_html = visual_text_to_html(new_visual, img_map)
+            st.session_state[state_key] = new_html
+            st.session_state[textarea_key] = new_visual
+            st.rerun()
+
+        # Safeguard: if live_visual contains any raw <img tags, extract them to clean placeholders
+        if "<img" in live_visual.lower():
+            live_visual, extracted_imgs = extract_images_to_placeholders(live_visual)
+            img_map.update(extracted_imgs)
+            st.session_state[textarea_key] = live_visual
+
         # ------------------------------------------------------------------
         # Row 1: Formatting toolbar
         # ------------------------------------------------------------------
@@ -364,11 +387,12 @@ def render_dual_mode_editor(
                     _insert_html(f" [{l_txt}]({l_url})")
 
         with tb_cols[4]:
-            with st.popover("🖼️ Image", help="Insert or Paste Image", use_container_width=True):
-                st.markdown("**Insert or Paste Image**")
+            with st.popover("🖼️ Image", help="Paste or Upload Screenshot (Ctrl+V)", use_container_width=True):
+                st.markdown("**Paste or Upload Screenshot**")
+                st.caption("Matches your email format: write your message, insert screenshot, and continue.")
                 img_method = st.radio(
                     "Method",
-                    ["📋 Paste from Clipboard (Fastest)", "File Upload", "Image URL"],
+                    ["📋 Paste from Clipboard (Ctrl+C / Ctrl+V)", "File Upload", "Image URL"],
                     key=f"{key_prefix}_img_src",
                     horizontal=True
                 )
@@ -377,7 +401,7 @@ def render_dual_mode_editor(
                     <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:10px; margin-bottom:10px;">
                         <div style="font-weight:700; color:#083731; font-size:13px;">📋 Instant Clipboard Paste</div>
                         <div style="font-size:12px; color:#64748B; margin-top:3px;">
-                            Copy any image or screenshot (<kbd style="background:#E2E8F0; padding:1px 5px; border-radius:3px;">Win+Shift+S</kbd>
+                            Copy any screenshot (<kbd style="background:#E2E8F0; padding:1px 5px; border-radius:3px;">Win+Shift+S</kbd>
                             or right-click → Copy Image), then click below.
                         </div>
                     </div>
@@ -387,49 +411,49 @@ def render_dual_mode_editor(
                         res = grab_clipboard_image()
                         if res:
                             data_uri, fpath, w, h = res
-                            tag = (f'<img src="{data_uri}" alt="Pasted Image" '
-                                   f'style="max-width:100%; height:auto; border-radius:6px; margin:8px 0; display:block;" />')
-                            _insert_html(f"\n{tag}\n")
-                            trigger_toast(f"Pasted image ({w}x{h}px) from clipboard!", icon="📋")
+                            tag = (f'<img src="{data_uri}" alt="Screenshot" '
+                                   f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                            _insert_image(tag)
+                            trigger_toast(f"Pasted screenshot ({w}x{h}px) as [Image] token!", icon="📋")
                         else:
-                            st.warning("⚠️ No image found on clipboard. Take a screenshot (Win+Shift+S) or copy an image, then click Paste.")
+                            st.warning("⚠️ No image found on local clipboard. Or switch to 'File Upload' below and drop / paste your file.")
 
                 elif img_method == "File Upload":
-                    st.caption("Upload PNG, JPEG, or WebP. Images are optimized for email delivery.")
-                    up_file = st.file_uploader("Choose Image", type=["png", "jpg", "jpeg", "webp"],
+                    st.caption("Upload or paste screenshot. Optimized for email delivery.")
+                    up_file = st.file_uploader("Choose Image (or press Ctrl+V in browser)", type=["png", "jpg", "jpeg", "webp"],
                                                key=f"{key_prefix}_img_up")
                     if up_file:
                         raw_bytes = up_file.read()
                         try:
                             pil_img = Image.open(io.BytesIO(raw_bytes))
                             w, h = pil_img.size
-                            if w > 700:
-                                ratio = 700 / float(w)
-                                pil_img = pil_img.resize((700, int(h * ratio)), Image.Resampling.LANCZOS)
-                                w, h = 700, int(h * ratio)
+                            if w > 720:
+                                ratio = 720 / float(w)
+                                pil_img = pil_img.resize((720, int(h * ratio)), Image.Resampling.LANCZOS)
+                                w, h = 720, int(h * ratio)
                             buf = io.BytesIO()
                             pil_img.save(buf, format="PNG", optimize=True)
                             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
                         except Exception:
                             b64 = base64.b64encode(raw_bytes).decode("utf-8")
                         mime = up_file.type or "image/png"
-                        tag  = (f'<img src="data:{mime};base64,{b64}" alt="Uploaded Image" '
-                                f'style="max-width:100%; height:auto; border-radius:6px; margin:8px 0; display:block;" />')
-                        if st.button("Insert Uploaded Image", type="primary",
+                        tag  = (f'<img src="data:{mime};base64,{b64}" alt="Screenshot" '
+                                f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                        if st.button("Insert Screenshot into Email", type="primary",
                                      key=f"{key_prefix}_btn_ins_up_img", use_container_width=True):
-                            _insert_html(f"\n{tag}\n")
-                            trigger_toast("Image inserted into email!", icon="🖼️")
+                            _insert_image(tag)
+                            trigger_toast("Screenshot inserted as [Image] token!", icon="🖼️")
                 else:
                     img_url = st.text_input("Image Direct URL", placeholder="https://sellomize.com/logo.png",
                                             key=f"{key_prefix}_img_url_val")
-                    img_alt = st.text_input("Alt Text", value="Image", key=f"{key_prefix}_img_alt_val")
+                    img_alt = st.text_input("Alt Text", value="Screenshot", key=f"{key_prefix}_img_alt_val")
                     if st.button("Insert URL Image", type="primary",
                                  key=f"{key_prefix}_btn_ins_url_img", use_container_width=True):
                         if img_url.strip():
                             tag = (f'<img src="{html.escape(img_url.strip())}" alt="{html.escape(img_alt)}" '
-                                   f'style="max-width:100%; height:auto; border-radius:6px; margin:8px 0; display:block;" />')
-                            _insert_html(f"\n{tag}\n")
-                            trigger_toast("Image inserted!", icon="🖼️")
+                                   f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                            _insert_image(tag)
+                            trigger_toast("Image inserted as [Image] token!", icon="🖼️")
 
         with tb_cols[5]:
             with st.popover("📋 List", help="Insert Bullet or Numbered List", use_container_width=True):
@@ -518,7 +542,11 @@ def render_dual_mode_editor(
                             unsafe_allow_html=True
                         )
                         if st.button(f"🗑️ Remove {ph}", key=f"{key_prefix}_del_{ph}"):
-                            st.session_state[state_key] = st.session_state[state_key].replace(img_tag, "")
+                            cur_vis = st.session_state.get(textarea_key, live_visual)
+                            cur_vis = re.sub(rf'\n*{re.escape(ph)}\n*', '\n\n', cur_vis).strip()
+                            img_map.pop(ph, None)
+                            st.session_state[textarea_key] = cur_vis
+                            st.session_state[state_key] = visual_text_to_html(cur_vis, img_map)
                             trigger_toast(f"Removed {ph}.", icon="🗑️")
                             st.rerun()
 
