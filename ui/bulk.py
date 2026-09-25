@@ -612,7 +612,141 @@ def render_bulk_tab():
                 unsafe_allow_html=True
             )
 
-        # ── Schedule batch ────────────────────────────────────────────────
+@st.dialog("🚀 Confirm Batch Schedule & Sequence Timing (UTC+5)")
+def render_bulk_schedule_dialog(
+    selected_leads: List[Dict[str, Any]],
+    selected_subject: str,
+    current_body: str,
+    all_mailboxes: List[Dict[str, Any]],
+    default_date,
+    default_time,
+    spread_hours: int,
+    total_fleet_cap: int,
+    followup_steps: List[Dict[str, Any]],
+):
+    """Modal dialog allowing exact date and time customization for initial batch and each follow-up step separately."""
+    recipients_count = len(selected_leads)
+    num_mailboxes    = len(all_mailboxes)
+    now_engine       = get_engine_now()
+
+    st.markdown(
+        f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;'>"
+        f"<b>Recipients:</b> {recipients_count} leads &nbsp;·&nbsp; "
+        f"<b>Fleet:</b> {num_mailboxes} active Hostinger mailbox{'es' if num_mailboxes != 1 else ''} &nbsp;·&nbsp; "
+        f"<b>Pacing:</b> {spread_hours}h spread"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── Section 1: Initial Batch Timing ──
+    st.markdown("##### 📧 Initial Outreach Batch")
+    st.markdown(f"**Subject:** *{html.escape(selected_subject)}*")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        batch_date = st.date_input("Start Date (UTC+5)", value=default_date, min_value=now_engine.date(), key="bulk_dlg_init_d")
+    with c2:
+        batch_time = st.time_input("Start Time (UTC+5)", value=default_time, key="bulk_dlg_init_t")
+
+    init_start_dt = datetime.combine(batch_date, batch_time)
+    st.caption(f"📅 Initial emails will pace evenly from **{init_start_dt.strftime('%a %b %d, %H:%M')}** across **{spread_hours} hours**.")
+
+    # ── Section 2: Follow-up Sequences (Set each date and time separately) ──
+    fu_start_dts = []
+    if followup_steps:
+        st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:14px 0 10px;'>", unsafe_allow_html=True)
+        st.markdown(f"##### ↩️ Follow-Up Sequence Schedule ({len(followup_steps)} step{'s' if len(followup_steps) != 1 else ''})")
+        st.caption("Set the exact start date and time for each follow-up step separately:")
+
+        for idx, step in enumerate(followup_steps):
+            with st.container(border=True):
+                st.markdown(f"**Follow-Up #{idx + 1}:** *{html.escape(step['subject'])}*")
+                default_fu_dt = init_start_dt + timedelta(days=step.get("delay_days", (idx + 1) * 3))
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    fu_d = st.date_input(
+                        f"Start Date for Follow-up #{idx + 1}",
+                        value=default_fu_dt.date(),
+                        min_value=now_engine.date(),
+                        key=f"bulk_dlg_fu_d_{idx}"
+                    )
+                with fc2:
+                    fu_t = st.time_input(
+                        f"Start Time (UTC+5) for Follow-up #{idx + 1}",
+                        value=default_fu_dt.time(),
+                        key=f"bulk_dlg_fu_t_{idx}"
+                    )
+                step_start_dt = datetime.combine(fu_d, fu_t)
+                fu_start_dts.append(step_start_dt)
+                st.caption(f"📅 Follow-up #{idx + 1} batch will pace evenly from **{step_start_dt.strftime('%a %b %d, %Y at %H:%M')} (UTC+5)**.")
+
+    # ── Confirmation Action ──
+    st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+    if st.button("🚀 Confirm & Launch Campaign Batch", type="primary", use_container_width=True, key="bulk_dlg_confirm_cta"):
+        with st.spinner("Scheduling batch outreach and sequences..."):
+            queued_count = 0
+            fu_queued    = 0
+            step_seconds = max(45, int((spread_hours * 3600) / max(1, len(selected_leads))))
+
+            # 1. Initial emails
+            for i, lead in enumerate(selected_leads):
+                lead_tz = lead.get("country_or_timezone") or "LOCAL"
+                if i < total_fleet_cap:
+                    target_dt = init_start_dt + timedelta(seconds=(i * step_seconds))
+                else:
+                    overflow_offset = i - total_fleet_cap
+                    target_dt = (init_start_dt + timedelta(days=1)) + timedelta(seconds=(overflow_offset * step_seconds))
+
+                lead_subj      = inject_variables(parse_spintax(selected_subject), lead)
+                lead_body      = resolve_template(current_body, lead)
+                formatted_body = format_email_html(lead_body)
+
+                create_email(
+                    email_html=formatted_body,
+                    subject=lead_subj,
+                    recipient=lead["email"].strip(),
+                    status="Approved",
+                    scheduled_time=target_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    target_timezone=lead_tz
+                )
+                queued_count += 1
+
+            # 2. Follow-up emails for each step with individually chosen start date and time
+            for idx, step in enumerate(followup_steps):
+                step_base_dt = fu_start_dts[idx]
+                fu_body_raw  = step["body"]
+                fu_body_html = "<p>" + fu_body_raw.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+
+                for i, lead in enumerate(selected_leads):
+                    lead_tz   = lead.get("country_or_timezone") or "LOCAL"
+                    fu_target = step_base_dt + timedelta(seconds=(i * step_seconds))
+
+                    fu_subj_resolved = inject_variables(parse_spintax(step["subject"]), lead)
+                    fu_body_resolved = resolve_template(fu_body_html, lead)
+
+                    create_email(
+                        email_html=format_email_html(fu_body_resolved),
+                        subject=fu_subj_resolved,
+                        recipient=lead["email"].strip(),
+                        status="Approved",
+                        scheduled_time=fu_target.strftime("%Y-%m-%d %H:%M:%S"),
+                        target_timezone=lead_tz
+                    )
+                    fu_queued += 1
+
+        if fu_queued:
+            msg = f"Scheduled {queued_count} initial + {fu_queued} follow-up email(s)!"
+        else:
+            msg = f"Successfully scheduled batch of {queued_count} emails!"
+
+        st.session_state["bulk_followup_steps"] = []
+        trigger_toast(msg, icon="🚀")
+        st.session_state["active_screen"]  = "outbox"
+        st.session_state["main_app_tabs"]  = "📥 Outbox"
+        st.rerun()
+
+
+        # ── Schedule batch CTA Button ─────────────────────────────────────
         if st.button("🚀 Schedule batch", type="primary", use_container_width=True, key="bulk_schedule_cta"):
             if not selected_leads:
                 st.error("Please select at least one recipient lead.")
@@ -636,68 +770,14 @@ def render_bulk_tab():
                 st.error(f"Unfilled variables: {', '.join(set(unfilled_sample))}. Fill or use fallbacks.")
                 return
 
-            with st.spinner("Scheduling batch outreach..."):
-                queued_count  = 0
-                fu_queued     = 0
-                base_start_dt = datetime.combine(chosen_date, chosen_time)
-                step_seconds  = max(45, int((spread_hours * 3600) / max(1, len(selected_leads))))
-
-                # ── Initial emails ────────────────────────────────────────
-                for i, lead in enumerate(selected_leads):
-                    lead_tz = lead.get("country_or_timezone") or "LOCAL"
-                    if i < total_fleet_cap:
-                        target_dt = base_start_dt + timedelta(seconds=(i * step_seconds))
-                    else:
-                        overflow_offset = i - total_fleet_cap
-                        target_dt = (base_start_dt + timedelta(days=1)) + timedelta(seconds=(overflow_offset * step_seconds))
-
-                    lead_subj      = inject_variables(parse_spintax(selected_subject), lead)
-                    lead_body      = resolve_template(current_body, lead)
-                    formatted_body = format_email_html(lead_body)
-
-                    create_email(
-                        email_html=formatted_body,
-                        subject=lead_subj,
-                        recipient=lead["email"].strip(),
-                        status="Approved",
-                        scheduled_time=target_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                        target_timezone=lead_tz
-                    )
-                    queued_count += 1
-
-                # ── Follow-up emails ──────────────────────────────────────
-                for step in st.session_state["bulk_followup_steps"]:
-                    fu_body_raw  = step["body"]
-                    fu_body_html = "<p>" + fu_body_raw.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
-
-                    for i, lead in enumerate(selected_leads):
-                        lead_tz   = lead.get("country_or_timezone") or "LOCAL"
-                        fu_target = (
-                            base_start_dt
-                            + timedelta(days=step["delay_days"])
-                            + timedelta(seconds=(i * step_seconds))
-                        )
-
-                        fu_subj_resolved = inject_variables(parse_spintax(step["subject"]), lead)
-                        fu_body_resolved = resolve_template(fu_body_html, lead)
-
-                        create_email(
-                            email_html=format_email_html(fu_body_resolved),
-                            subject=fu_subj_resolved,
-                            recipient=lead["email"].strip(),
-                            status="Approved",
-                            scheduled_time=fu_target.strftime("%Y-%m-%d %H:%M:%S"),
-                            target_timezone=lead_tz
-                        )
-                        fu_queued += 1
-
-            if fu_queued:
-                msg = f"Scheduled {queued_count} initial + {fu_queued} follow-up email(s)!"
-            else:
-                msg = f"Successfully scheduled batch of {queued_count} emails!"
-
-            st.session_state["bulk_followup_steps"] = []
-            trigger_toast(msg, icon="🚀")
-            st.session_state["active_screen"]  = "outbox"
-            st.session_state["main_app_tabs"]  = "📥 Outbox"
-            st.rerun()
+            render_bulk_schedule_dialog(
+                selected_leads=selected_leads,
+                selected_subject=selected_subject,
+                current_body=current_body,
+                all_mailboxes=all_mailboxes,
+                default_date=chosen_date,
+                default_time=chosen_time,
+                spread_hours=spread_hours,
+                total_fleet_cap=total_fleet_cap,
+                followup_steps=st.session_state.get("bulk_followup_steps", [])
+            )

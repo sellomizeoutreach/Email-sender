@@ -414,6 +414,158 @@ def render_compose_tab(contacts=None, templates=None):
                 unsafe_allow_html=True
             )
 
+@st.dialog("🚀 Confirm Outreach & Schedule Sequence (UTC+5)")
+def render_compose_schedule_dialog(
+    mode: str,
+    current_lead: Dict[str, Any],
+    selected_mb: Dict[str, Any],
+    final_subj: str,
+    final_body: str,
+    followup_steps: List[Dict[str, Any]],
+):
+    """Modal popup allowing exact custom date and time setting for initial email and each follow-up separately."""
+    recipient_clean = (current_lead.get("email") or "").strip()
+    recipient_name  = current_lead.get("name") or recipient_clean
+    lead_tz         = current_lead.get("country_or_timezone") or "LOCAL"
+    now_engine      = get_engine_now()
+
+    st.markdown(
+        f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;'>"
+        f"<b>Recipient:</b> {html.escape(recipient_name)} &lt;{html.escape(recipient_clean)}&gt;<br>"
+        f"<b>Sending Mailbox:</b> {html.escape(selected_mb.get('email', ''))}"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── Section 1: Initial Email ──
+    st.markdown("##### 📧 Initial Email")
+    st.markdown(f"**Subject:** *{html.escape(final_subj)}*")
+
+    if mode == "send_now":
+        init_choice = st.radio(
+            "Initial Email Dispatch",
+            ["🚀 Send immediately right now", "🕒 Set custom date & time (UTC+5)"],
+            horizontal=True,
+            key="comp_dlg_init_choice"
+        )
+        if init_choice.startswith("🕒"):
+            c1, c2 = st.columns(2)
+            with c1:
+                init_date = st.date_input("Initial Date (UTC+5)", value=now_engine.date(), min_value=now_engine.date(), key="comp_dlg_init_d")
+            with c2:
+                init_time = st.time_input("Initial Time (UTC+5)", value=(now_engine + timedelta(minutes=15)).time(), key="comp_dlg_init_t")
+            init_dt = datetime.combine(init_date, init_time)
+        else:
+            init_dt = None
+    else:
+        st.markdown("<span class='lbl'>Scheduled Date &amp; Time (UTC+5)</span>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            init_date = st.date_input("Scheduled Date", value=now_engine.date(), min_value=now_engine.date(), key="comp_dlg_sched_d", label_visibility="collapsed")
+        with c2:
+            init_time = st.time_input("Scheduled Time", value=(now_engine + timedelta(hours=1)).time(), key="comp_dlg_sched_t", label_visibility="collapsed")
+        init_dt = datetime.combine(init_date, init_time)
+
+    # ── Section 2: Follow-up Emails (Set each date and time separately) ──
+    fu_dts = []
+    if followup_steps:
+        st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:14px 0 10px;'>", unsafe_allow_html=True)
+        st.markdown(f"##### ↩️ Follow-Up Sequence ({len(followup_steps)} step{'s' if len(followup_steps) != 1 else ''})")
+        st.caption("Set the exact date and time for each follow-up email separately:")
+
+        ref_base = init_dt if init_dt else now_engine
+
+        for idx, fu in enumerate(followup_steps):
+            with st.container(border=True):
+                st.markdown(f"**Follow-Up #{idx + 1}:** *{html.escape(fu['subject'])}*")
+                default_fu_dt = ref_base + timedelta(days=fu.get("delay_days", (idx + 1) * 3))
+                f_c1, f_c2 = st.columns(2)
+                with f_c1:
+                    f_date = st.date_input(
+                        f"Date for Follow-up #{idx + 1}",
+                        value=default_fu_dt.date(),
+                        min_value=now_engine.date(),
+                        key=f"comp_dlg_fu_d_{idx}"
+                    )
+                with f_c2:
+                    f_time = st.time_input(
+                        f"Time (UTC+5) for Follow-up #{idx + 1}",
+                        value=default_fu_dt.time(),
+                        key=f"comp_dlg_fu_t_{idx}"
+                    )
+                target_fu_dt = datetime.combine(f_date, f_time)
+                fu_dts.append(target_fu_dt)
+                st.caption(f"📅 Scheduled to dispatch: **{target_fu_dt.strftime('%a %b %d, %Y at %H:%M')} (UTC+5)**")
+
+    # ── Confirmation Action ──
+    st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+    confirm_label = "🚀 Launch Outreach Sequence" if (mode == "send_now" and init_dt is None) else "🕒 Confirm Scheduled Sequence"
+    if st.button(confirm_label, type="primary", use_container_width=True, key="comp_dlg_confirm_cta"):
+        with st.spinner("Processing outreach..."):
+            email_html = format_email_html(final_body)
+
+            # 1. Initial Email
+            if init_dt is None:
+                email_id = create_email(
+                    email_html=email_html,
+                    subject=final_subj,
+                    recipient=recipient_clean,
+                    status="Approved",
+                    scheduled_time=get_engine_now_str(),
+                    target_timezone=lead_tz
+                )
+                ok = dispatch_email_hostinger({
+                    "id": email_id,
+                    "recipient": recipient_clean,
+                    "subject": final_subj,
+                    "email_html": email_html,
+                    "smtp_account_id": selected_mb["id"],
+                    "target_timezone": lead_tz
+                })
+            else:
+                sched_str = init_dt.strftime("%Y-%m-%d %H:%M:%S")
+                create_email(
+                    email_html=email_html,
+                    subject=final_subj,
+                    recipient=recipient_clean,
+                    status="Approved",
+                    scheduled_time=sched_str,
+                    target_timezone=lead_tz
+                )
+                ok = True
+
+            # 2. Follow-ups with individually customized timing
+            for idx, fu in enumerate(followup_steps):
+                fu_target_dt = fu_dts[idx]
+                fu_sched_str = fu_target_dt.strftime("%Y-%m-%d %H:%M:%S")
+                fu_subj_res  = inject_variables(parse_spintax(fu["subject"]), current_lead)
+                fu_body_raw  = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
+                fu_body_res  = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
+
+                create_email(
+                    email_html=format_email_html(fu_body_res),
+                    subject=fu_subj_res,
+                    recipient=recipient_clean,
+                    status="Approved",
+                    scheduled_time=fu_sched_str,
+                    target_timezone=lead_tz
+                )
+
+            st.session_state["compose_followups"] = []
+            if init_dt is None:
+                msg = f"Sent initial email to {recipient_clean}!"
+                if followup_steps:
+                    msg += f" Scheduled {len(followup_steps)} follow-up(s) with custom timing."
+            else:
+                msg = f"Scheduled initial email for {init_dt.strftime('%b %d at %H:%M')}!"
+                if followup_steps:
+                    msg += f" Along with {len(followup_steps)} follow-up(s)."
+            trigger_toast(msg, icon="🚀")
+            st.session_state["active_screen"] = "outbox"
+            st.session_state["main_app_tabs"] = "📥 Outbox"
+            st.rerun()
+
+
         # =====================================================================
         # ACTION BUTTONS (Send now, Schedule, Save draft, Save template)
         # =====================================================================
@@ -428,110 +580,32 @@ def render_compose_tab(contacts=None, templates=None):
                 if not selected_mb:
                     st.error("No active mailbox configured to send.")
                 else:
-                    with st.spinner("Sending outreach..."):
-                        recipient_clean = current_lead["email"].strip()
-                        lead_tz = current_lead.get("country_or_timezone") or "LOCAL"
-                        email_html = format_email_html(final_body)
-                        now_str = get_engine_now_str()
-
-                        # 1. Create and dispatch initial email immediately
-                        email_id = create_email(
-                            email_html=email_html,
-                            subject=final_subj,
-                            recipient=recipient_clean,
-                            status="Approved",
-                            scheduled_time=now_str,
-                            target_timezone=lead_tz
-                        )
-                        ok = dispatch_email_hostinger({
-                            "id": email_id,
-                            "recipient": recipient_clean,
-                            "subject": final_subj,
-                            "email_html": email_html,
-                            "smtp_account_id": selected_mb["id"],
-                            "target_timezone": lead_tz
-                        })
-
-                        # 2. If follow-up sequence is attached, queue follow-ups in Outbox
-                        now_dt = get_engine_now()
-                        queued_fu_count = 0
-                        for fu in st.session_state["compose_followups"]:
-                            fu_target_dt = now_dt + timedelta(days=fu["delay_days"])
-                            fu_subj_res = inject_variables(parse_spintax(fu["subject"]), current_lead)
-                            fu_body_raw = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
-                            fu_body_res = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
-                            create_email(
-                                email_html=format_email_html(fu_body_res),
-                                subject=fu_subj_res,
-                                recipient=recipient_clean,
-                                status="Approved",
-                                scheduled_time=fu_target_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                                target_timezone=lead_tz
-                            )
-                            queued_fu_count += 1
-
-                        if ok:
-                            msg = f"Email sent to {recipient_clean}!"
-                            if queued_fu_count:
-                                msg += f" Queued {queued_fu_count} follow-up(s) in Outbox."
-                            trigger_toast(msg, icon="🚀")
-                            st.session_state["compose_followups"] = []
-                            st.session_state["active_screen"] = "outbox"
-                            st.session_state["main_app_tabs"] = "📥 Outbox"
-                            st.rerun()
-                        else:
-                            st.error("Dispatch failed.")
+                    render_compose_schedule_dialog(
+                        mode="send_now",
+                        current_lead=current_lead,
+                        selected_mb=selected_mb,
+                        final_subj=final_subj,
+                        final_body=final_body,
+                        followup_steps=st.session_state.get("compose_followups", [])
+                    )
 
         with c_act2:
             sched_label = "🕒 Schedule"
             if st.session_state["compose_followups"]:
-                sched_label += f" (+{len(st.session_state['compose_followups'])})"
+                sched_label += f" (+{len(st.session_state['compose_followups'])} FU)"
 
-            with st.popover(sched_label, use_container_width=True):
-                st.markdown("**Schedule Outreach (UTC+5)**")
-                s_date = st.date_input("Start date", value=get_engine_now().date(), key="comp_sd")
-                s_time = st.time_input("Start time", value=(get_engine_now() + timedelta(hours=1)).time(), key="comp_st")
-
-                if st.session_state["compose_followups"]:
-                    st.caption(f"Will also schedule {len(st.session_state['compose_followups'])} follow-up(s) automatically.")
-
-                if st.button("Confirm Schedule", type="primary", use_container_width=True, disabled=not can_send):
-                    comb_dt = datetime.combine(s_date, s_time)
-                    s_iso   = comb_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    recipient_clean = current_lead["email"].strip()
-                    lead_tz = current_lead.get("country_or_timezone") or "LOCAL"
-
-                    create_email(
-                        email_html=format_email_html(final_body),
-                        subject=final_subj,
-                        recipient=recipient_clean,
-                        status="Approved",
-                        scheduled_time=s_iso,
-                        target_timezone=lead_tz
+            if st.button(sched_label, use_container_width=True, disabled=not can_send):
+                if not selected_mb:
+                    st.error("No active mailbox configured.")
+                else:
+                    render_compose_schedule_dialog(
+                        mode="schedule",
+                        current_lead=current_lead,
+                        selected_mb=selected_mb,
+                        final_subj=final_subj,
+                        final_body=final_body,
+                        followup_steps=st.session_state.get("compose_followups", [])
                     )
-
-                    for fu in st.session_state["compose_followups"]:
-                        fu_target_dt = comb_dt + timedelta(days=fu["delay_days"])
-                        fu_subj_res = inject_variables(parse_spintax(fu["subject"]), current_lead)
-                        fu_body_raw = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
-                        fu_body_res = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
-                        create_email(
-                            email_html=format_email_html(fu_body_res),
-                            subject=fu_subj_res,
-                            recipient=recipient_clean,
-                            status="Approved",
-                            scheduled_time=fu_target_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                            target_timezone=lead_tz
-                        )
-
-                    msg = f"Scheduled for {s_iso} (UTC+5)!"
-                    if st.session_state["compose_followups"]:
-                        msg += f" Along with {len(st.session_state['compose_followups'])} follow-up(s)."
-                    st.session_state["compose_followups"] = []
-                    trigger_toast(msg, icon="🕒")
-                    st.session_state["active_screen"] = "outbox"
-                    st.session_state["main_app_tabs"] = "📥 Outbox"
-                    st.rerun()
 
         with c_act3:
             if st.button("💾 Save draft", use_container_width=True):
