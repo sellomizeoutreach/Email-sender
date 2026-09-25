@@ -477,7 +477,7 @@ SELLOMIZE_THEME_CSS = """<style>
     /* Modern Segmented Navigation Tabs (Sellomize 60-30-10 Enterprise Design) */
     .stTabs,
     div[data-testid="stTabs"] {
-        margin-bottom: 1.6rem !important;
+        margin-bottom: 0.75rem !important;
     }
 
     /* Tab List Container Bar (Swipeable on touch screens) */
@@ -485,22 +485,31 @@ SELLOMIZE_THEME_CSS = """<style>
     div[data-testid="stTabs"] [role="tablist"],
     div[data-testid="stTabs"] > div:first-child,
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px !important;
+        gap: 6px !important;
         background: #F0F5F4 !important;
-        padding: 6px !important;
-        border-radius: 12px !important;
-        border: 1px solid rgba(8, 55, 49, 0.15) !important;
-        box-shadow: inset 0 1px 3px rgba(8, 55, 49, 0.05) !important;
+        padding: 4px 6px !important;
+        border-radius: 10px !important;
+        border: 1px solid rgba(8, 55, 49, 0.12) !important;
+        box-shadow: inset 0 1px 2px rgba(8, 55, 49, 0.04) !important;
         display: flex !important;
         align-items: center !important;
         position: relative !important;
-        border-bottom: 1px solid rgba(8, 55, 49, 0.15) !important;
+        border-bottom: 1px solid rgba(8, 55, 49, 0.12) !important;
         overflow-x: auto !important;
         max-width: 100% !important;
         white-space: nowrap !important;
         flex-wrap: nowrap !important;
         scrollbar-width: none !important;
         -webkit-overflow-scrolling: touch !important;
+    }
+    .stTabs [role="tablist"]::before,
+    div[data-testid="stTabs"] [role="tablist"]::before,
+    div[data-testid="stTabs"] > div:first-child::before,
+    .stTabs [data-baseweb="tab-list"]::before {
+        display: none !important;
+        content: none !important;
+        width: 0 !important;
+        height: 0 !important;
     }
     .stTabs [role="tablist"]::-webkit-scrollbar {
         display: none !important;
@@ -1291,33 +1300,6 @@ SELLOMIZE_THEME_CSS = """<style>
 </style>"""
 
 def apply_theme():
-    """Inject the custom Sellomize SaaS stylesheet into the Streamlit app with branded tab bar logo."""
+    """Inject the custom Sellomize SaaS stylesheet into the Streamlit app."""
     st.markdown(SELLOMIZE_THEME_CSS, unsafe_allow_html=True)
-    try:
-        from ui.components import get_logo_base64
-        logo_b64 = get_logo_base64()
-        if logo_b64:
-            tab_logo_css = f"""<style>
-            .stTabs [role="tablist"]::before,
-            div[data-testid="stTabs"] [role="tablist"]::before,
-            div[data-testid="stTabs"] > div:first-child::before,
-            .stTabs [data-baseweb="tab-list"]::before {{
-                content: '' !important;
-                display: inline-block !important;
-                width: 28px !important;
-                height: 28px !important;
-                min-width: 28px !important;
-                background-image: url('data:image/jpeg;base64,{logo_b64}') !important;
-                background-size: cover !important;
-                background-position: center !important;
-                border-radius: 7px !important;
-                border: 1.5px solid #FD4D1B !important;
-                box-shadow: 0 2px 8px rgba(253, 77, 27, 0.35) !important;
-                flex-shrink: 0 !important;
-                margin-right: 8px !important;
-                margin-left: 2px !important;
-            }}
-            </style>"""
-            st.markdown(tab_logo_css, unsafe_allow_html=True)
-    except Exception:
-        pass
+

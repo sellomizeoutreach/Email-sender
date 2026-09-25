@@ -58,66 +58,100 @@ def render_bulk_tab():
     # =========================================================================
     # STEP 1 · MESSAGE & SEQUENCE + LIVE PREVIEW (Side-by-side like Compose)
     # =========================================================================
-    st.markdown("<span class='lbl' style='font-size:14px; font-weight:700; color:#083731;'>1 · Message &amp; Sequence</span>", unsafe_allow_html=True)
-
     col_msg, col_prev = st.columns([1.1, 0.9], gap="large")
 
     with col_msg:
-        # Header row: mode toggles + ➕ Add follow-up + ◻️ Clear
-        hdr_c1, hdr_c2, hdr_gap, hdr_add, hdr_clear = st.columns(
-            [1.2, 1.2, 1.2, 1.5, 0.9], vertical_alignment="center"
-        )
+        st.markdown("<span class='lbl' style='font-size:14px; font-weight:700; color:#083731;'>1 · Message &amp; Sequence</span>", unsafe_allow_html=True)
 
-        with hdr_c1:
-            if "bulk_mode" not in st.session_state:
-                st.session_state["bulk_mode"] = "template" if all_templates else "custom"
-            if st.button(
-                "📄 Load template", key="bulk_mode_tpl",
-                type="primary" if st.session_state["bulk_mode"] == "template" else "secondary",
-                use_container_width=True
-            ):
-                st.session_state["bulk_mode"] = "template"
-                st.rerun()
+        if "bulk_mode" not in st.session_state:
+            st.session_state["bulk_mode"] = "template" if all_templates else "custom"
 
-        with hdr_c2:
-            if st.button(
-                "✍️ Write custom", key="bulk_mode_custom",
-                type="primary" if st.session_state["bulk_mode"] == "custom" else "secondary",
-                use_container_width=True
-            ):
-                st.session_state["bulk_mode"] = "custom"
-                st.rerun()
+        fu_count = len(st.session_state["bulk_followup_steps"])
+        can_add  = fu_count < 3
 
-        with hdr_add:
-            fu_count = len(st.session_state["bulk_followup_steps"])
-            can_add  = fu_count < 3
-            if st.button(
-                f"➕ Add follow-up{'' if can_add else ' (max 3)'}",
-                key="bulk_add_fu",
-                use_container_width=True,
-                disabled=not can_add,
-                help="Adds a follow-up tab in this row — each editable separately"
-            ):
-                delay = (fu_count + 1) * 3
-                init_subj = st.session_state.get("bulk_subject", "[Company] + Amazon")
-                re_prefix = "Re: " if not init_subj.startswith("Re:") else ""
-                st.session_state["bulk_followup_steps"].append({
-                    "delay_days": delay,
-                    "subject":    f"{re_prefix}{init_subj}",
-                    "body":       (
-                        "Hi [Name],\n\n"
-                        "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
-                        "Would love to connect if the timing works.\n\n"
-                        "Best regards,"
-                    ),
-                })
-                st.rerun()
-
-        with hdr_clear:
-            if fu_count > 0:
+        if fu_count > 0:
+            c1, c2, c3, c4 = st.columns([1.5, 1.5, 2.0, 1.0], vertical_alignment="center")
+            with c1:
+                if st.button(
+                    "📄 Load template", key="bulk_mode_tpl",
+                    type="primary" if st.session_state["bulk_mode"] == "template" else "secondary",
+                    use_container_width=True
+                ):
+                    st.session_state["bulk_mode"] = "template"
+                    st.rerun()
+            with c2:
+                if st.button(
+                    "✍️ Write custom", key="bulk_mode_custom",
+                    type="primary" if st.session_state["bulk_mode"] == "custom" else "secondary",
+                    use_container_width=True
+                ):
+                    st.session_state["bulk_mode"] = "custom"
+                    st.rerun()
+            with c3:
+                if st.button(
+                    f"➕ Add follow-up ({fu_count}/3)",
+                    key="bulk_add_fu",
+                    use_container_width=True,
+                    disabled=not can_add,
+                    help="Adds a follow-up tab in this row — each editable separately"
+                ):
+                    delay = (fu_count + 1) * 3
+                    init_subj = st.session_state.get("bulk_subject", "[Company] + Amazon")
+                    re_prefix = "Re: " if not init_subj.startswith("Re:") else ""
+                    st.session_state["bulk_followup_steps"].append({
+                        "delay_days": delay,
+                        "subject":    f"{re_prefix}{init_subj}",
+                        "body":       (
+                            "Hi [Name],\n\n"
+                            "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
+                            "Would love to connect if the timing works.\n\n"
+                            "Best regards,"
+                        ),
+                    })
+                    st.rerun()
+            with c4:
                 if st.button("◻️ Clear", key="bulk_clear_fu", use_container_width=True,
                              help="Remove all follow-up steps"):
                     st.session_state["bulk_followup_steps"] = []
+                    st.rerun()
+        else:
+            c1, c2, c3 = st.columns([1.5, 1.5, 2.2], vertical_alignment="center")
+            with c1:
+                if st.button(
+                    "📄 Load template", key="bulk_mode_tpl",
+                    type="primary" if st.session_state["bulk_mode"] == "template" else "secondary",
+                    use_container_width=True
+                ):
+                    st.session_state["bulk_mode"] = "template"
+                    st.rerun()
+            with c2:
+                if st.button(
+                    "✍️ Write custom", key="bulk_mode_custom",
+                    type="primary" if st.session_state["bulk_mode"] == "custom" else "secondary",
+                    use_container_width=True
+                ):
+                    st.session_state["bulk_mode"] = "custom"
+                    st.rerun()
+            with c3:
+                if st.button(
+                    "➕ Add follow-up",
+                    key="bulk_add_fu",
+                    use_container_width=True,
+                    help="Adds a follow-up tab in this row — each editable separately"
+                ):
+                    delay = 3
+                    init_subj = st.session_state.get("bulk_subject", "[Company] + Amazon")
+                    re_prefix = "Re: " if not init_subj.startswith("Re:") else ""
+                    st.session_state["bulk_followup_steps"].append({
+                        "delay_days": delay,
+                        "subject":    f"{re_prefix}{init_subj}",
+                        "body":       (
+                            "Hi [Name],\n\n"
+                            "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
+                            "Would love to connect if the timing works.\n\n"
+                            "Best regards,"
+                        ),
+                    })
                     st.rerun()
 
         # Build tabs in the same horizontal row
