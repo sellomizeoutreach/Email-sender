@@ -25,9 +25,9 @@ with open("ui/compose.py", encoding="utf-8") as f:
 
 compose_checks = {
     "Custom address is top-level toggle button": "compose_custom_mode" in csrc,
-    "Follow-up popover with date picker":        "comp_fu_date" in csrc,
-    "Follow-up queues real email":               "Queue follow-up" in csrc and "create_email" in csrc,
-    "2-row action button layout":                "a1, a2, a3" in csrc and "b1, b2" in csrc,
+    "Sequence tabs in same row":                 "tabs = st.tabs(tab_titles)" in csrc,
+    "Follow-up queues real email on Send/Schedule": "create_email(" in csrc and "compose_followups" in csrc,
+    "Live preview shows subject preview":        "Subject: {html.escape(preview_subj)}" in csrc,
 }
 
 print("\n=== Compose follow-up fix ===")

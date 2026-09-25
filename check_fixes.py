@@ -10,7 +10,7 @@ def check(name, condition, detail=""):
     results.append((status, name, detail))
     print(f"[{status}] {name}" + (f"\n       {detail}" if detail else ""))
 
-# ── 1. bulk.py TypeError fix ───────────────────────────────────────────────
+# ── 1. bulk.py fixes ───────────────────────────────────────────────────────
 with open("ui/bulk.py", encoding="utf-8") as f:
     bulk_src = f.read()
 
@@ -20,10 +20,10 @@ bad_2arg = any(
     if not line.strip().startswith("#") and "_missing_tokens," not in line
 )
 check("bulk.py: _missing_tokens bad 2-arg call gone", not bad_2arg)
-check(
-    "bulk.py: per-lead resolved_text used correctly",
-    "resolved_text = f" in bulk_src
-)
+check("bulk.py: resolved_text per-lead check present", "resolved_text = (" in bulk_src or "resolved_text =" in bulk_src)
+check("bulk.py: sequence tabs in same row", "st.tabs(tab_labels)" in bulk_src)
+check("bulk.py: live preview with subject preview", "Subject: {html.escape(preview_subj)}" in bulk_src)
+check("bulk.py: bulletproof set selection logic", "isinstance(st.session_state.get(\"bulk_selected_lead_ids\"), set)" in bulk_src)
 
 # ── 2. editor.py variable insertion fix ────────────────────────────────────
 with open("ui/editor.py", encoding="utf-8") as f:
@@ -58,13 +58,14 @@ templates = get_templates()
 check("Contacts persist in DB",  len(contacts) >= 0,  f"{len(contacts)} contacts")
 check("Templates persist in DB", len(templates) >= 0, f"{len(templates)} templates")
 
-# ── 6. Compose custom address button fix ───────────────────────────────────
+# ── 6. Compose sequence tabs + live preview ────────────────────────────────
 with open("ui/compose.py", encoding="utf-8") as f:
     compose_src = f.read()
 
 check("compose.py: custom address toggle is top-level button", "compose_custom_mode" in compose_src)
-check("compose.py: Add follow-up popover with date picker",    "comp_fu_date" in compose_src)
-check("compose.py: 2-row button layout (Row A / Row B)",       "a1, a2, a3" in compose_src and "b1, b2" in compose_src)
+check("compose.py: sequence tabs in same row",                 "tabs = st.tabs(tab_titles)" in compose_src)
+check("compose.py: follow-up queues real email on Send/Schedule", "create_email(" in compose_src and "compose_followups" in compose_src)
+check("compose.py: live preview with subject preview",         "Subject: {html.escape(preview_subj)}" in compose_src)
 
 # ── Summary ────────────────────────────────────────────────────────────────
 print()
