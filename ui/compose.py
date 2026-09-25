@@ -160,8 +160,8 @@ def render_compose_tab(contacts=None, templates=None):
     # Default body / subject
     if "compose_body_html" not in st.session_state:
         st.session_state["compose_body_html"] = (
-            "Hi [Name],<br><br>"
-            "We haven't been properly introduced, but I was looking through [Company] on Amazon and noticed a number of listings showing currently unavailable.<br><br>"
+            "Hi [Name],\n\n"
+            "We haven't been properly introduced, but I was looking through [Company] on Amazon and noticed a number of listings showing currently unavailable.\n\n"
             "When a customer searches and finds it unavailable, the sale simply stops there. I'd be glad to take a look together."
         )
     if "compose_subject" not in st.session_state:

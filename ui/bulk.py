@@ -240,7 +240,7 @@ def render_bulk_tab():
                     key_prefix="bulk_custom_editor",
                     initial_content=st.session_state.get(
                         "bulk_body_html",
-                        "<p>Hi [Name],</p><p>I noticed [Company] and wanted to connect.</p>"
+                        "Hi [Name],\n\nI noticed [Company] and wanted to connect."
                     ),
                     height=160
                 )

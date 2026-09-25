@@ -46,6 +46,15 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
         except Exception:
             pass
 
+    from database import get_contact_by_email
+    from template_engine import inject_variables, parse_spintax
+
+    # If recipient exists in CRM, ensure variables are fully resolved to their final values
+    lead_match = get_contact_by_email(current_recip) if current_recip else None
+    if lead_match:
+        current_subj = inject_variables(parse_spintax(current_subj), lead_match)
+        current_html = inject_variables(current_html, lead_match)
+
     st.markdown(f"#### Edit Outreach #OUT-{eid:04d}")
 
     c1, c2 = st.columns(2)
@@ -73,7 +82,7 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
     with c_time:
         new_time = st.time_input("Scheduled Time (UTC+5)", value=dt_val.time(), key=f"edit_time_{eid}")
 
-    st.markdown("<span class='lbl' style='margin-top:6px;'>Email Body Content</span>", unsafe_allow_html=True)
+    st.markdown("<span class='lbl' style='margin-top:6px;'>Email Body Content (Final text with variables — edits take priority)</span>", unsafe_allow_html=True)
     new_body = render_dual_mode_editor(
         key_prefix=f"edit_outbox_{eid}",
         initial_content=current_html,

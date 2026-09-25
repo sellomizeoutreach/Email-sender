@@ -45,7 +45,7 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
             st.session_state["editing_template_id"] = "new"
             st.session_state["tpl_name"] = "New Outreach Template"
             st.session_state["tpl_subject"] = "Quick question for [Company]"
-            st.session_state["tpl_body_html"] = "<p>Hi [Name],</p><p>I noticed [Company] and wanted to connect.</p>"
+            st.session_state["tpl_body_html"] = "Hi [Name],\n\nI noticed [Company] and wanted to connect."
             st.rerun()
 
     with top_col2:
