@@ -129,12 +129,33 @@ def render_edit_lead_dialog(lead: Dict[str, Any]):
             status=status, lead_source=lead_source, priority=priority,
             owner=owner.strip(), notes=notes.strip(), tags=tags.strip()
         )
+        st.session_state.pop("crm_data_editor", None)
         trigger_toast(f"Lead #SLM-{lid:04d} updated!", icon="✅")
         st.rerun()
     if del_clicked:
         delete_contact(lid)
+        st.session_state.get("crm_selected_ids", set()).discard(lid)
+        st.session_state.pop("crm_data_editor", None)
         trigger_toast("Lead deleted.", icon="🗑️")
         st.rerun()
+
+
+@st.dialog("🗑️ Delete Lead")
+def render_delete_lead_dialog(lead: Dict[str, Any]):
+    lid = lead["id"]
+    name = lead.get("name") or lead.get("email") or f"#SLM-{lid:04d}"
+    st.error(f"⚠️ Permanently delete **{name}** (#SLM-{lid:04d})? This cannot be undone.")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🗑️ Yes, Delete Lead", type="primary", use_container_width=True):
+            delete_contact(lid)
+            st.session_state.get("crm_selected_ids", set()).discard(lid)
+            st.session_state.pop("crm_data_editor", None)
+            trigger_toast(f"Lead '{name}' deleted.", icon="🗑️")
+            st.rerun()
+    with c2:
+        if st.button("✖️ Cancel", use_container_width=True):
+            st.rerun()
 
 
 @st.dialog("✏️ Bulk Edit Selected Leads")
@@ -174,6 +195,7 @@ def render_bulk_edit_dialog(selected_ids: List[int], count: int):
         else:
             affected = bulk_update_contacts(selected_ids, updates)
             st.session_state["crm_selected_ids"] = set()
+            st.session_state.pop("crm_data_editor", None)
             trigger_toast(f"Updated {affected} lead{'s' if affected != 1 else ''}!", icon="✅")
             st.rerun()
 
@@ -186,6 +208,7 @@ def render_bulk_delete_dialog(selected_ids: List[int], count: int):
         if st.button("🗑️ Yes, Delete All", type="primary", use_container_width=True):
             deleted = bulk_delete_contacts(selected_ids)
             st.session_state["crm_selected_ids"] = set()
+            st.session_state.pop("crm_data_editor", None)
             trigger_toast(f"Deleted {deleted} lead{'s' if deleted != 1 else ''}.", icon="🗑️")
             st.rerun()
     with c2:
@@ -339,6 +362,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                 st.divider()
                 if st.button("◻️ Clear All Selections", use_container_width=True):
                     st.session_state["crm_selected_ids"] = set()
+                    st.session_state.pop("crm_data_editor", None)
                     st.rerun()
 
     with col_search:
@@ -444,6 +468,31 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     }
 
     # =========================================================================
+    # CONTEXTUAL SELECTION BAR (Prominently displayed when rows are checked)
+    # =========================================================================
+    sel_count = len(st.session_state["crm_selected_ids"])
+    if sel_count > 0:
+        bar_c1, bar_c2, bar_c3, bar_c4 = st.columns([3, 1.3, 1.3, 1.1], vertical_alignment="center")
+        with bar_c1:
+            st.markdown(
+                f"<div style='font-size:13px;font-weight:600;color:#083731;padding:6px 0;'>"
+                f"⚡ <span style='background:#E1F5EE;color:#0F6E56;padding:2px 8px;border-radius:12px;font-weight:700;'>{sel_count}</span> "
+                f"lead{'s' if sel_count != 1 else ''} selected</div>",
+                unsafe_allow_html=True,
+            )
+        with bar_c2:
+            if st.button("✏️ Bulk Edit", type="primary", use_container_width=True, key="bar_btn_bulk_edit"):
+                render_bulk_edit_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
+        with bar_c3:
+            if st.button("🗑️ Bulk Delete", use_container_width=True, key="bar_btn_bulk_del"):
+                render_bulk_delete_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
+        with bar_c4:
+            if st.button("✖ Clear", use_container_width=True, key="bar_btn_clear"):
+                st.session_state["crm_selected_ids"] = set()
+                st.session_state.pop("crm_data_editor", None)
+                st.rerun()
+
+    # =========================================================================
     # RENDER DATA EDITOR
     # Click column header → sort (ascending / descending, built-in)
     # Click ☑ header   → select all / deselect all (built-in CheckboxColumn)
@@ -451,9 +500,9 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     # =========================================================================
     edit_mode = st.session_state["crm_edit_mode"]
 
-    # Columns that must always remain read-only
-    always_disabled = ["☑", "Lead ID", "MX", "Follow-Ups"]
-    disabled_cols   = always_disabled if edit_mode else True   # True = all disabled
+    # Columns that must always remain read-only ("☑" is NOT disabled so selection always works)
+    always_disabled = ["Lead ID", "MX", "Follow-Ups"]
+    disabled_cols   = always_disabled if edit_mode else [c for c in original_df.columns if c != "☑"]
 
     edited_df = st.data_editor(
         original_df,
@@ -476,8 +525,8 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
 
     if new_selected != st.session_state["crm_selected_ids"]:
         st.session_state["crm_selected_ids"] = new_selected
-        # Don't rerun here — let Streamlit's next natural rerun pick it up
-        # so we don't fight the data_editor state
+        st.session_state.pop("crm_data_editor", None)
+        st.rerun()
 
     # -------------------------------------------------------------------------
     # 2. Save inline cell edits (manual edits have priority — written first)
@@ -488,11 +537,12 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         edit_new      = edited_df.drop(columns=["☑", "MX"], errors="ignore")
         saved_count   = _save_inline_edits(edit_new, edit_original, id_list)
         if saved_count > 0:
+            st.session_state.pop("crm_data_editor", None)
             trigger_toast(f"Saved {saved_count} inline change{'s' if saved_count != 1 else ''}.", icon="💾")
             st.rerun()
 
     # =========================================================================
-    # PER-ROW ACTION BUTTONS  (✏️ full edit dialog  |  ✍️ compose)
+    # PER-ROW ACTION BUTTONS  (✏️ full edit dialog  |  ✍️ compose  |  🗑️ delete)
     # A slim row of buttons beneath the table aligned to each lead row.
     # =========================================================================
     st.markdown(
@@ -506,7 +556,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         lid  = c.get("id") or 0
         name = c.get("name") or f"#SLM-{lid:04d}"
 
-        act_c = st.columns([0.6, 8, 1.2], vertical_alignment="center")
+        act_c = st.columns([0.8, 7.4, 1.8], vertical_alignment="center")
         with act_c[0]:
             st.markdown(
                 f"<span style='font-family:monospace;font-size:11px;color:#083731;"
@@ -519,7 +569,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                 unsafe_allow_html=True,
             )
         with act_c[2]:
-            b1, b2 = st.columns(2)
+            b1, b2, b3 = st.columns(3)
             with b1:
                 if st.button("✏️", key=f"edit_lead_{lid}",
                              help=f"Full edit — {name}", use_container_width=True):
@@ -530,6 +580,10 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                     st.session_state["compose_selected_lead_id"] = lid
                     st.session_state["active_screen"] = "compose"
                     st.rerun()
+            with b3:
+                if st.button("🗑️", key=f"del_lead_{lid}",
+                             help=f"Delete lead — {name}", use_container_width=True):
+                    render_delete_lead_dialog(c)
 
         st.markdown(
             "<div style='border-bottom:1px solid #F1F5F9;margin:1px 0;'></div>",
