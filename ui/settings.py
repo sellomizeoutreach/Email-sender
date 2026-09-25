@@ -12,6 +12,7 @@ Matches sellomize_reference.html:
 
 import streamlit as st
 import html
+import re
 from datetime import datetime, timezone
 import json
 from typing import List, Dict, Any, Optional
@@ -411,6 +412,83 @@ def render_settings_tab():
                 if st.form_submit_button("Save Policy", type="primary", use_container_width=True):
                     set_config("send_now_policy", send_now_val)
                     trigger_toast("Send-now policy updated!", icon="💾")
+                    st.rerun()
+
+    # Row 3: Outbound BCC Compliance & Anti-Spam Human Pacing
+    card_c3, card_c4 = st.columns(2)
+    saved_bcc = get_config("bcc_email", "") or ""
+    bcc_parts = [e.strip() for e in re.split(r'[,;]+', saved_bcc) if e.strip()]
+    if bcc_parts:
+        bcc_count_lbl = f"{len(bcc_parts)} address{'es' if len(bcc_parts) != 1 else ''}"
+        bcc_summary = f"{', '.join(bcc_parts)} ({bcc_count_lbl})"
+        if len(bcc_summary) > 42:
+            bcc_summary = bcc_summary[:39] + "…"
+    else:
+        bcc_summary = "None configured (direct to lead only)"
+
+    with card_c3:
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">📬 Outbound BCC &amp; CRM tracking</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{bcc_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Global BCC Archival & CRM Tracking", expanded=False):
+            with st.form("form_bcc_cfg"):
+                st.caption(
+                    "Every outgoing email dispatched via Hostinger SMTP or Desktop Outlook will automatically send a hidden BCC copy to these addresses. "
+                    "Ideal for CRM logging (HubSpot, Salesforce, Pipedrive) or internal record keeping. **Supports 1, 2, or more comma-separated addresses**."
+                )
+                new_bcc = st.text_input(
+                    "Global BCC Email Address(es)",
+                    value=saved_bcc,
+                    placeholder="e.g. audit@sellomize.com, crm-sync@hubspot.com",
+                    help="Enter 1 or more email addresses separated by commas (e.g. email1@brand.com, email2@brand.com)"
+                )
+                parsed_bccs = [e.strip() for e in re.split(r'[,;]+', new_bcc) if e.strip()]
+                if parsed_bccs:
+                    st.markdown(f"""
+                    <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:6px; padding:6px 12px; margin:6px 0 10px;">
+                        <span style="font-size:0.82rem; color:#15803D; font-weight:700;">Active Outbound BCC ({len(parsed_bccs)} address{'es' if len(parsed_bccs) != 1 else ''}):</span>
+                        <span style="font-size:0.82rem; color:#0F172A; font-family:monospace;"> {', '.join(parsed_bccs)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.caption("ℹ️ No BCC address configured. Outbound emails will only be sent directly to the lead.")
+
+                if st.form_submit_button("Save BCC Settings", type="primary", use_container_width=True):
+                    clean_bccs = ", ".join(parsed_bccs)
+                    set_config("bcc_email", clean_bccs)
+                    auto_save_backup()
+                    trigger_toast("BCC configuration updated & saved!", icon="📬")
+                    st.rerun()
+
+    curr_min_j = int(get_config("min_delay_seconds", str(DEFAULT_MIN_JITTER)) or DEFAULT_MIN_JITTER)
+    curr_max_j = int(get_config("max_delay_seconds", str(DEFAULT_MAX_JITTER)) or DEFAULT_MAX_JITTER)
+    jitter_summary = f"{curr_min_j}s – {curr_max_j}s random human delay between dispatches"
+
+    with card_c4:
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">⏱️ Anti-spam pacing &amp; jitter</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{jitter_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Anti-Spam Sending Pacing", expanded=False):
+            with st.form("form_jitter_cfg"):
+                st.caption("Adds randomized human-like delays between consecutive dispatches to prevent spam filter triggers.")
+                j_c1, j_c2 = st.columns(2)
+                with j_c1:
+                    new_min_j = st.number_input("Min Delay (seconds)", min_value=5, max_value=300, value=curr_min_j)
+                with j_c2:
+                    new_max_j = st.number_input("Max Delay (seconds)", min_value=10, max_value=600, value=curr_max_j)
+                if st.form_submit_button("Save Pacing", type="primary", use_container_width=True):
+                    if new_min_j > new_max_j:
+                        new_min_j, new_max_j = new_max_j, new_min_j
+                    set_config("min_delay_seconds", str(int(new_min_j)))
+                    set_config("max_delay_seconds", str(int(new_max_j)))
+                    auto_save_backup()
+                    trigger_toast("Anti-spam pacing updated & saved!", icon="⏱️")
                     st.rerun()
 
     # =========================================================================

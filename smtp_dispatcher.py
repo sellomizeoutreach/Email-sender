@@ -160,16 +160,19 @@ def send_smtp_email(
     part_html = MIMEText(html_content, "html", "utf-8")
     msg.attach(part_html)
 
-    # Build recipient list including optional BCC
+    # Build recipient list including optional BCC (supports 1, 2, or more comma- or semicolon-separated addresses)
     destinations = [target_recipient]
     if bcc_email and bcc_email.strip():
         bcc_clean = sanitize_header(bcc_email)
         if bcc_clean:
-            msg["Bcc"] = bcc_clean
-            for bcc_single in bcc_clean.split(","):
+            bcc_list = []
+            for bcc_single in re.split(r'[,;]+', bcc_clean):
                 b_s = bcc_single.strip()
-                if b_s and b_s not in destinations:
+                if b_s and b_s not in destinations and b_s not in bcc_list:
+                    bcc_list.append(b_s)
                     destinations.append(b_s)
+            if bcc_list:
+                msg["Bcc"] = ", ".join(bcc_list)
 
     context = ssl.create_default_context()
 

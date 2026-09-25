@@ -547,7 +547,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
 
     # Prepare signature, tracking pixel, and payload
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
-    bcc_address = sanitize_header(get_config("bcc_email", db_path=db_path) or "")
+    bcc_address = sanitize_header(email_record.get("bcc_email") or get_config("bcc_email", db_path=db_path) or "")
 
     # Click tracking (if enabled with a public domain) applies ONLY to campaign body links.
     # Corporate signature links (e.g. sellomize.com) remain 100% direct and pristine.
@@ -633,7 +633,7 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
 
     # Fetch configuration
     designated_sender = sanitize_header(get_config("sender_email", db_path=db_path) or "")
-    bcc_address = sanitize_header(get_config("bcc_email", db_path=db_path) or "")
+    bcc_address = sanitize_header(email_record.get("bcc_email") or get_config("bcc_email", db_path=db_path) or "")
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
 
     followup_delay = int(get_config("followup_delay_days", "4", db_path=db_path) or 4)

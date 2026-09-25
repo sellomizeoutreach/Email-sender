@@ -155,6 +155,7 @@ def render_compose_schedule_dialog(
     final_subj: str,
     final_body: str,
     followup_steps: List[Dict[str, Any]],
+    bcc_email: str = "",
 ):
     """Modal popup allowing exact custom date and time setting for initial email and each follow-up separately."""
     recipient_clean = (current_lead.get("email") or "").strip()
@@ -162,10 +163,12 @@ def render_compose_schedule_dialog(
     lead_tz         = current_lead.get("country_or_timezone") or "LOCAL"
     now_engine      = get_engine_now()
 
+    bcc_badge_html = f"<br><b>BCC:</b> <span style='font-family:monospace; color:#083731;'>{html.escape(bcc_email)}</span>" if bcc_email.strip() else ""
     st.markdown(
         f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;'>"
         f"<b>Recipient:</b> {html.escape(recipient_name)} &lt;{html.escape(recipient_clean)}&gt;<br>"
         f"<b>Sending Mailbox:</b> {html.escape(selected_mb.get('email', ''))}"
+        f"{bcc_badge_html}"
         f"</div>",
         unsafe_allow_html=True
     )
@@ -245,7 +248,8 @@ def render_compose_schedule_dialog(
                     recipient=recipient_clean,
                     status="Approved",
                     scheduled_time=get_engine_now_str(),
-                    target_timezone=lead_tz
+                    target_timezone=lead_tz,
+                    bcc_email=bcc_email
                 )
                 try:
                     ok = dispatch_email_hostinger({
@@ -254,7 +258,8 @@ def render_compose_schedule_dialog(
                         "subject": final_subj,
                         "email_html": email_html,
                         "smtp_account_id": selected_mb["id"],
-                        "target_timezone": lead_tz
+                        "target_timezone": lead_tz,
+                        "bcc_email": bcc_email
                     })
                 except Exception as ex:
                     logger.error(f"Dispatch error in compose dialog: {ex}")
@@ -268,7 +273,8 @@ def render_compose_schedule_dialog(
                     recipient=recipient_clean,
                     status="Approved",
                     scheduled_time=sched_str,
-                    target_timezone=lead_tz
+                    target_timezone=lead_tz,
+                    bcc_email=bcc_email
                 )
                 ok = True
 
@@ -286,7 +292,8 @@ def render_compose_schedule_dialog(
                     recipient=recipient_clean,
                     status="Approved",
                     scheduled_time=fu_sched_str,
-                    target_timezone=lead_tz
+                    target_timezone=lead_tz,
+                    bcc_email=bcc_email
                 )
 
             st.session_state["compose_followups"] = []
@@ -371,10 +378,27 @@ def render_compose_tab(contacts=None, templates=None):
         with c_rcpt:
             st.markdown('<span class="lbl">To (lead or type an address)</span>', unsafe_allow_html=True)
             custom_mode = st.session_state["compose_custom_mode"]
-            btn_label   = "📋 Pick from CRM" if custom_mode else "✏️ Custom address"
-            if st.button(btn_label, key="comp_custom_toggle", use_container_width=True):
-                st.session_state["compose_custom_mode"] = not custom_mode
-                st.rerun()
+            btn_label   = "📋 Pick CRM" if custom_mode else "✏️ Custom"
+
+            global_bcc = get_config("bcc_email", "") or ""
+            if "compose_show_bcc" not in st.session_state:
+                st.session_state["compose_show_bcc"] = bool(global_bcc.strip())
+            if "compose_bcc_email" not in st.session_state:
+                st.session_state["compose_bcc_email"] = global_bcc
+
+            show_bcc = st.session_state["compose_show_bcc"]
+            active_bcc = st.session_state.get("compose_bcc_email", "").strip()
+            bcc_btn_label = "📬 BCC (Active)" if (show_bcc and active_bcc) else ("− Hide BCC" if show_bcc else "+ Add BCC")
+
+            col_rcpt_b1, col_rcpt_b2 = st.columns([1.1, 0.9])
+            with col_rcpt_b1:
+                if st.button(btn_label, key="comp_custom_toggle", use_container_width=True):
+                    st.session_state["compose_custom_mode"] = not custom_mode
+                    st.rerun()
+            with col_rcpt_b2:
+                if st.button(bcc_btn_label, key="comp_bcc_toggle", use_container_width=True):
+                    st.session_state["compose_show_bcc"] = not show_bcc
+                    st.rerun()
 
         # Build lead list + either dropdown or custom input
         lead_choices: Dict[str, Any] = {}
@@ -410,6 +434,22 @@ def render_compose_tab(contacts=None, templates=None):
             )
             chosen_lead_obj = lead_choices.get(sel_lead_label)
             custom_email    = chosen_lead_obj.get("email", "") if chosen_lead_obj else ""
+
+        if st.session_state.get("compose_show_bcc"):
+            st.markdown(
+                '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; margin-bottom:2px;">'
+                '<span class="lbl" style="font-size:12px; font-weight:600; color:#083731;">📬 BCC (comma-separated — 2 or more addresses supported)</span>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            comp_bcc_val = st.text_input(
+                "BCC recipients",
+                value=st.session_state.get("compose_bcc_email", ""),
+                placeholder="e.g. audit@sellomize.com, crm-sync@hubspot.com",
+                label_visibility="collapsed",
+                key="comp_bcc_input_field"
+            )
+            st.session_state["compose_bcc_email"] = comp_bcc_val
 
         # Resolve active recipient
         if custom_email.strip():
@@ -628,7 +668,8 @@ def render_compose_tab(contacts=None, templates=None):
                         selected_mb=selected_mb,
                         final_subj=final_subj,
                         final_body=final_body,
-                        followup_steps=st.session_state.get("compose_followups", [])
+                        followup_steps=st.session_state.get("compose_followups", []),
+                        bcc_email=st.session_state.get("compose_bcc_email", "").strip()
                     )
 
         with c_act2:
@@ -646,7 +687,8 @@ def render_compose_tab(contacts=None, templates=None):
                         selected_mb=selected_mb,
                         final_subj=final_subj,
                         final_body=final_body,
-                        followup_steps=st.session_state.get("compose_followups", [])
+                        followup_steps=st.session_state.get("compose_followups", []),
+                        bcc_email=st.session_state.get("compose_bcc_email", "").strip()
                     )
 
         with c_act3:
@@ -657,7 +699,8 @@ def render_compose_tab(contacts=None, templates=None):
                     recipient=current_lead.get("email", "").strip(),
                     status="Pending",
                     scheduled_time=get_engine_now_str(),
-                    target_timezone="LOCAL"
+                    target_timezone="LOCAL",
+                    bcc_email=st.session_state.get("compose_bcc_email", "").strip()
                 )
                 trigger_toast("Draft saved to Outbox.", icon="💾")
 
@@ -706,11 +749,19 @@ def render_compose_tab(contacts=None, templates=None):
             preview_subj = final_subj
             preview_body = final_body
 
+        bcc_active_str = st.session_state.get("compose_bcc_email", "").strip() if st.session_state.get("compose_show_bcc") else ""
+        bcc_preview_html = (
+            f'<div style="font-size:11px; color:#475569; margin-bottom:8px; padding-bottom:4px; border-bottom:1px dashed #CBD5E1;">'
+            f'📬 <b>BCC:</b> <span style="font-family:monospace; color:#083731;">{html.escape(bcc_active_str)}</span>'
+            f'</div>'
+        ) if bcc_active_str else ''
+
         preview_box_html = (
             '<div class="preview">'
             f'<div style="font-weight:700; color:#083731; margin-bottom:8px; font-size:13px; border-bottom:1px solid #E2E8F0; padding-bottom:6px;">'
             f'Subject: {html.escape(preview_subj)}'
             f'</div>'
+            f'{bcc_preview_html}'
             f'{preview_body}'
             f'<div class="sig">{signature_html}</div>'
             '</div>'

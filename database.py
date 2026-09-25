@@ -303,7 +303,8 @@ def init_db(db_path: str = DB_FILE):
         ("scheduled_time_utc", "TEXT DEFAULT ''"),
         ("lead_local_time", "TEXT DEFAULT ''"),
         ("thread_refs", "TEXT DEFAULT ''"),
-        ("sequence_group", "TEXT DEFAULT ''")
+        ("sequence_group", "TEXT DEFAULT ''"),
+        ("bcc_email", "TEXT DEFAULT ''")
     ]
     for col_name, col_def in email_migrations:
         try:
@@ -1831,7 +1832,9 @@ def create_email(
     message_id: str = "",
     in_reply_to: str = "",
     thread_id: str = "",
-    db_path: str = DB_FILE
+    bcc_email: str = "",
+    db_path: str = DB_FILE,
+    **kwargs
 ) -> int:
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(db_path)
@@ -1841,15 +1844,15 @@ def create_email(
             subject, recipient, email_html, status, scheduled_time,
             variation_num, revision_notes, sequence_step, sequence_id,
             target_timezone, target_country, market_key,
-            message_id, in_reply_to, thread_id,
+            message_id, in_reply_to, thread_id, bcc_email,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         subject, recipient, email_html, status, scheduled_time,
         variation_num, revision_notes, sequence_step, sequence_id,
         target_timezone.strip(), target_country.strip(), market_key.strip(),
-        message_id.strip(), in_reply_to.strip(), thread_id.strip(),
+        message_id.strip(), in_reply_to.strip(), thread_id.strip(), bcc_email.strip(),
         now_iso, now_iso
     ))
     email_id = cursor.lastrowid
@@ -2093,7 +2096,7 @@ def get_system_excluded_emails(db_path: str = DB_FILE) -> Set[str]:
     excluded: Set[str] = set()
     try:
         bcc_raw = get_config("bcc_email", default="", db_path=db_path) or ""
-        for item in bcc_raw.split(","):
+        for item in re.split(r'[,;]+', bcc_raw):
             cleaned = item.strip().lower()
             if cleaned and "@" in cleaned:
                 excluded.add(cleaned)

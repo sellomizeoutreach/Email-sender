@@ -75,6 +75,8 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
             chosen_mb_id = current_mb_id
 
     new_subj = st.text_input("Subject Line", value=current_subj, key=f"edit_subj_{eid}")
+    current_bcc = email_record.get("bcc_email") or ""
+    new_bcc = st.text_input("BCC (optional, comma-separated — 2 or more supported)", value=current_bcc, key=f"edit_bcc_{eid}")
 
     c_date, c_time = st.columns(2)
     with c_date:
@@ -100,7 +102,8 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
                 subject=new_subj.strip(),
                 email_html=new_body,
                 scheduled_time=sched_str,
-                smtp_account_id=chosen_mb_id
+                smtp_account_id=chosen_mb_id,
+                bcc_email=new_bcc.strip()
             )
             trigger_toast(f"Email #OUT-{eid:04d} updated!", icon="💾")
             st.rerun()
@@ -115,8 +118,10 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
                 subject=new_subj.strip(),
                 email_html=new_body,
                 scheduled_time=sched_str,
-                smtp_account_id=chosen_mb_id
+                smtp_account_id=chosen_mb_id,
+                bcc_email=new_bcc.strip()
             )
+            updated_rec = get_email_by_id(eid)
             with st.spinner("Dispatching via Hostinger..."):
                 try:
                     ok = dispatch_email_hostinger(updated_rec)
