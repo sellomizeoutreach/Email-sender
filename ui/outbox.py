@@ -249,12 +249,17 @@ def render_outbox_tab():
                 with btn_col2:
                     if st.button("🚀 Send now", key=f"outbox_send_{eid}", use_container_width=True, type="primary"):
                         with st.spinner("Dispatching via Hostinger..."):
-                            ok = dispatch_email_hostinger(e)
-                            if ok:
-                                trigger_toast(f"Dispatched email to {recipient}!", icon="🚀")
-                            else:
-                                st.error("Dispatch failed. Check mailbox connection in Settings.")
-                        st.rerun()
+                            try:
+                                ok = dispatch_email_hostinger(e)
+                                if ok:
+                                    trigger_toast(f"Dispatched email to {recipient}!", icon="🚀")
+                                    st.rerun()
+                                else:
+                                    updated_e = get_email_by_id(eid)
+                                    err_reason = (updated_e.get("error_message") if updated_e else "") or "Unknown error"
+                                    st.error(f"Dispatch failed: {err_reason}. Check mailbox connection in Settings.")
+                            except Exception as ex:
+                                st.error(f"Dispatch exception: {ex}")
                 with btn_col3:
                     if st.button("⏸️ Pause", key=f"outbox_pause_{eid}", use_container_width=True):
                         update_email(email_id=eid, status="Paused")

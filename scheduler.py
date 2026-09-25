@@ -575,22 +575,30 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         message_id_out=msg_id_tracker
     )
 
-    if success:
-        sent_msg_id = msg_id_tracker[0] if msg_id_tracker else ""
-        mark_email_sent(email_id, message_id=sent_msg_id, db_path=db_path)
-        increment_smtp_sent(smtp_account["id"], db_path=db_path)
-        update_email(
-            email_id=email_id,
-            sent_via=f"Hostinger ({smtp_account['email']})",
-            smtp_account_id=smtp_account["id"],
-            db_path=db_path
-        )
-        # Advance contact outreach status, date, and next follow-up
-        advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
-        logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
-        return True
-    else:
-        mark_email_error(email_id, status="Error", error_message=msg, db_path=db_path)
+    try:
+        if success:
+            sent_msg_id = msg_id_tracker[0] if msg_id_tracker else ""
+            mark_email_sent(email_id, message_id=sent_msg_id, db_path=db_path)
+            increment_smtp_sent(smtp_account["id"], db_path=db_path)
+            try:
+                update_email(
+                    email_id=email_id,
+                    sent_via=f"Hostinger ({smtp_account['email']})",
+                    smtp_account_id=smtp_account["id"],
+                    db_path=db_path
+                )
+            except Exception as upd_err:
+                logger.warning(f"Could not update sent_via for email #{email_id}: {upd_err}")
+
+            advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
+            logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
+            return True
+        else:
+            mark_email_error(email_id, status="Error", error_message=msg, db_path=db_path)
+            return False
+    except Exception as dispatch_err:
+        logger.error(f"Error during post-dispatch processing for Email ID #{email_id}: {dispatch_err}")
+        mark_email_error(email_id, status="Error", error_message=str(dispatch_err), db_path=db_path)
         return False
 
 def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE):
