@@ -1,10 +1,16 @@
 """
 ui/editor.py - Reusable Dual-Mode Email Editor Component for Sellomize Reach.
 
-Key fix: Variable / formatting buttons now correctly INSERT into the visible
-editor by writing to both the body state key AND the text area widget key
-before rerun. Previously the cached text area state was overwriting the
-button-appended content on every rerun.
+Features:
+- Visual mode: Displays clean, human-readable email copy (no raw <p>, <br>, or style tags).
+  Paragraphs are separated by simple line breaks, exactly as a human writes an email.
+- Automatic conversion: Transparently converts incoming HTML paragraphs (<p style='...'>, <br>)
+  into clean editable text in Visual Mode, and converts them back to structured HTML for dispatch.
+- Source mode: Accessible via '</> HTML Source' for power users who want to edit raw HTML code directly.
+- Formatting toolbar: Bold, Italic, Underline, Link, Image (Clipboard/Upload/URL), List.
+- Variable chips: [Name], [Company], and Variables popover insert tokens immediately into both
+  state and widget cache, bypassing Streamlit's widget cache bug.
+- Embedded image gallery: Shows thumbnails and [Image 1] tokens without cluttering the text area.
 """
 
 import os
@@ -87,6 +93,8 @@ def extract_images_to_placeholders(html_text: str) -> Tuple[str, Dict[str, str]]
     Replaces raw <img> tags with human-friendly placeholders like [Image 1]
     so the visual text area stays clean and readable.
     """
+    if not html_text:
+        return "", {}
     img_pattern = re.compile(r'<img\s+[^>]*?>', re.IGNORECASE)
     tags = img_pattern.findall(html_text)
     img_map = {}
@@ -100,10 +108,82 @@ def extract_images_to_placeholders(html_text: str) -> Tuple[str, Dict[str, str]]
 
 def restore_images_from_placeholders(text: str, img_map: Dict[str, str]) -> str:
     """Restores [Image X] placeholders back to their full <img> tags."""
+    if not text:
+        return ""
     restored = text
     for ph, tag in img_map.items():
         restored = restored.replace(ph, tag)
     return restored
+
+
+def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
+    """
+    Converts email HTML into clean, human-readable text for the visual editor:
+    - Extracts <img> tags to [Image 1] placeholders.
+    - Converts <p style='...'>...</p> tags into double newlines (\n\n).
+    - Converts <br> tags into single newlines (\n).
+    - Strips <div> tags while preserving line breaks.
+    - Decodes HTML entities (&nbsp; -> space, etc.).
+    Returns (clean_visual_text, img_map).
+    """
+    if not html_content:
+        return "", {}
+
+    # 1. Extract images first
+    text, img_map = extract_images_to_placeholders(html_content)
+
+    # 2. Check for HTML structure tags
+    has_html = any(tag in text.lower() for tag in ["<p", "<br", "<div"])
+    if has_html:
+        # Convert paragraph transitions </p><p...> to double newline
+        text = re.sub(r'</p>\s*<p[^>]*>', '\n\n', text, flags=re.IGNORECASE)
+        # Remove opening <p...> at start and closing </p> at end
+        text = re.sub(r'^\s*<p[^>]*>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'</p>\s*$', '', text, flags=re.IGNORECASE)
+        # Any remaining <p...> to newline
+        text = re.sub(r'<p[^>]*>', '\n\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</p>', '', text, flags=re.IGNORECASE)
+        # Convert <br...> to newline
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+        # Convert <div> to newline
+        text = re.sub(r'</div>\s*<div[^>]*>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</?div[^>]*>', '\n', text, flags=re.IGNORECASE)
+        # Unescape HTML entities
+        text = html.unescape(text)
+        # Clean up excess blank lines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = text.strip()
+
+    return text, img_map
+
+
+def visual_text_to_html(visual_text: str, img_map: Dict[str, str]) -> str:
+    """
+    Converts clean visual text back into structured HTML for email sending and live preview:
+    - Restores [Image X] placeholders back to <img> tags.
+    - If the visual text contains complex block HTML (table, style, etc.), preserves it.
+    - Converts double newlines into clean <p style='margin: 0 0 1em 0;'>...</p> paragraphs.
+    - Converts single newlines inside paragraphs into <br>.
+    """
+    if not visual_text or not visual_text.strip():
+        return ""
+
+    text = visual_text.strip()
+
+    # If the text already has full block structure, don't double-wrap
+    has_block = any(tag in text.lower() for tag in ["<p", "<div", "<table", "<ul", "<ol", "<h1", "<h2", "<h3"])
+    if has_block:
+        return restore_images_from_placeholders(text, img_map)
+
+    # Split into paragraphs by double newlines
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    html_paragraphs = []
+    for p in paragraphs:
+        p_html = p.replace("\n", "<br>")
+        html_paragraphs.append(f"<p style='margin: 0 0 1em 0;'>{p_html}</p>")
+
+    full_html = "".join(html_paragraphs)
+    return restore_images_from_placeholders(full_html, img_map)
 
 
 def render_dual_mode_editor(
@@ -114,13 +194,8 @@ def render_dual_mode_editor(
 ) -> str:
     """
     Renders a dual-mode rich email editor:
-    - Visual mode: formatting toolbar + personalization chips + textarea
-    - Source mode: raw HTML textarea
-
-    FIX: Variable / formatting buttons correctly appear in the editor by
-    writing to BOTH the body state key AND the text area widget key before
-    rerun. This bypasses Streamlit's cached widget state which was
-    silently overwriting the appended token on every rerun.
+    - Visual mode: clean editable copy (NO raw HTML tags), toolbar, variable chips, image gallery.
+    - Source mode: raw HTML textarea for power users.
     """
     state_key    = f"{key_prefix}_body_html"
     mode_key     = f"{key_prefix}_editor_mode"
@@ -138,48 +213,43 @@ def render_dual_mode_editor(
     # VISUAL MODE
     # =========================================================================
     if is_visual:
+        # Pre-compute clean visual text from stored HTML
+        visual_text, img_map = html_to_visual_text(current_body)
 
-        # ------------------------------------------------------------------
-        # Pre-compute visual text + image map BEFORE toolbar so insert
-        # helpers can work with current live state.
-        # ------------------------------------------------------------------
-        visual_text, img_map = extract_images_to_placeholders(current_body)
-
-        # Read the LIVE text area value (captures any user typing since last
-        # render, even if the widget re-used its cached state).
+        # Read the live text area value
         live_visual = st.session_state.get(textarea_key, visual_text)
 
         # Helper: append a token to whatever the user has typed so far,
         # then sync BOTH state keys so rerun shows the token in the editor.
         def _insert(token: str):
-            new_visual   = live_visual + token
-            new_restored = restore_images_from_placeholders(new_visual, img_map)
-            st.session_state[state_key]    = new_restored   # persistent body
-            st.session_state[textarea_key] = new_visual     # textarea widget state
+            new_visual = live_visual + token
+            new_html   = visual_text_to_html(new_visual, img_map)
+            st.session_state[state_key]    = new_html      # persistent HTML
+            st.session_state[textarea_key] = new_visual    # clean visual text
             st.rerun()
 
         def _insert_html(html_tag: str):
-            """Insert raw HTML (e.g. <strong>) — stored in restored form."""
-            new_restored = restore_images_from_placeholders(live_visual, img_map) + html_tag
-            new_visual   = extract_images_to_placeholders(new_restored)[0]
-            st.session_state[state_key]    = new_restored
+            """Insert formatted text or HTML token."""
+            new_visual = live_visual + html_tag
+            new_html   = visual_text_to_html(new_visual, img_map)
+            st.session_state[state_key]    = new_html
             st.session_state[textarea_key] = new_visual
             st.rerun()
 
         # ------------------------------------------------------------------
         # Row 1: Formatting toolbar
         # ------------------------------------------------------------------
-        tb_cols = st.columns([0.75, 0.75, 0.75, 0.85, 0.85, 0.85, 1.0, 2.3])
+        tb_cols = st.columns([0.7, 0.7, 0.7, 1.1, 1.2, 1.1, 1.8])
 
         with tb_cols[0]:
             if st.button("**B**", key=f"{key_prefix}_btn_bold",
                          help="Bold", use_container_width=True):
-                _insert_html(" <strong>bold text</strong>")
+                _insert_html(" **bold text**")
 
         with tb_cols[1]:
             if st.button("*I*", key=f"{key_prefix}_btn_italic",
                          help="Italic", use_container_width=True):
-                _insert_html(" <em>italic text</em>")
+                _insert_html(" *italic text*")
 
         with tb_cols[2]:
             if st.button("U̲", key=f"{key_prefix}_btn_underline",
@@ -187,7 +257,7 @@ def render_dual_mode_editor(
                 _insert_html(" <u>underlined text</u>")
 
         with tb_cols[3]:
-            with st.popover("🔗", help="Insert Hyperlink", use_container_width=True):
+            with st.popover("🔗 Link", help="Insert Hyperlink", use_container_width=True):
                 st.markdown("**Insert Hyperlink**")
                 l_url = st.text_input("Link URL", value="https://", key=f"{key_prefix}_pop_url")
                 l_txt = st.text_input("Link Text", value="click here", key=f"{key_prefix}_pop_txt")
@@ -199,7 +269,7 @@ def render_dual_mode_editor(
                     _insert_html(f" {tag}")
 
         with tb_cols[4]:
-            with st.popover("🖼️", help="Insert or Paste Image", use_container_width=True):
+            with st.popover("🖼️ Image", help="Insert or Paste Image", use_container_width=True):
                 st.markdown("**Insert or Paste Image**")
                 img_method = st.radio(
                     "Method",
@@ -267,32 +337,28 @@ def render_dual_mode_editor(
                             trigger_toast("Image inserted!", icon="🖼️")
 
         with tb_cols[5]:
-            with st.popover("📋", help="Insert Bullet or Numbered List", use_container_width=True):
+            with st.popover("📋 List", help="Insert Bullet or Numbered List", use_container_width=True):
                 st.markdown("**Insert List**")
                 if st.button("• Bulleted List", key=f"{key_prefix}_btn_ul", use_container_width=True):
-                    _insert_html("\n<ul>\n  <li>Point one</li>\n  <li>Point two</li>\n</ul>")
+                    _insert("\n- Point one\n- Point two\n")
                 if st.button("1. Numbered List", key=f"{key_prefix}_btn_ol", use_container_width=True):
-                    _insert_html("\n<ol>\n  <li>First step</li>\n  <li>Second step</li>\n</ol>")
+                    _insert("\n1. First step\n2. Second step\n")
 
         with tb_cols[6]:
-            st.empty()
-
-        with tb_cols[7]:
             if st.button("</> HTML Source", key=f"{key_prefix}_btn_to_source",
                          help="Switch to raw HTML source code", use_container_width=True):
+                st.session_state[state_key] = visual_text_to_html(live_visual, img_map)
                 st.session_state[mode_key] = "source"
                 st.rerun()
 
         # ------------------------------------------------------------------
         # Row 2: Personalization chips
-        # All _insert() calls write the token into both state_key AND the
-        # textarea widget key, so it appears immediately in the editor.
         # ------------------------------------------------------------------
-        chip_cols = st.columns([1, 1.2, 1.2, 1.5])
+        chip_cols = st.columns([1.1, 1.3, 1.3, 1.5])
 
         with chip_cols[0]:
             if st.button("👤 [Name]", key=f"{key_prefix}_chip_name",
-                         help="Insert [Name] token — resolves to recipient's first name",
+                         help="Insert [Name] token — resolves to recipient's name",
                          use_container_width=True):
                 _insert(" [Name]")
 
@@ -303,10 +369,10 @@ def render_dual_mode_editor(
                 _insert(" [Company]")
 
         with chip_cols[2]:
-            with st.popover("➕ Variables", help="Insert additional personalization tokens",
+            with st.popover("➕ Variables", help="Insert personalization tokens",
                             use_container_width=True):
                 st.markdown("**Personalization Tokens**")
-                st.caption("Click any token to insert it at the current cursor position.")
+                st.caption("Click any token to insert it into your email body.")
                 v1, v2 = st.columns(2)
                 with v1:
                     if st.button("{first_name}", key=f"{key_prefix}_var_fn", use_container_width=True):
@@ -324,22 +390,14 @@ def render_dual_mode_editor(
                         _insert(" [Tags]")
 
         with chip_cols[3]:
-            if st.button("🖋️ Append Signature", key=f"{key_prefix}_chip_sig",
+            if st.button("🖋️ Signature", key=f"{key_prefix}_chip_sig",
                          help="Append saved corporate signature",
                          use_container_width=True):
-                saved_sig = (get_config("signature_html", "")
-                             or "<p>Best regards,<br><strong>Outreach Team</strong></p>")
-                _insert_html(f"\n<br>\n{saved_sig}")
+                sig = get_config("signature_html", "") or "Best regards,\nOutreach Team"
+                _insert(f"\n\n{sig}")
 
         # ------------------------------------------------------------------
-        # Complex HTML warning
-        # ------------------------------------------------------------------
-        is_complex = any(tag in current_body.lower() for tag in ["<table", "<style", "<script", "<svg", "<iframe"])
-        if is_complex:
-            st.caption("⚠️ Complex HTML detected (tables/styles). Switch to **</> HTML Source** to preserve exact code structure.")
-
-        # ------------------------------------------------------------------
-        # Image gallery (visual thumbnails for any embedded images)
+        # Image gallery (visual thumbnails for embedded images)
         # ------------------------------------------------------------------
         if img_map:
             st.markdown(
@@ -348,14 +406,14 @@ def render_dual_mode_editor(
                 unsafe_allow_html=True
             )
             for ph, img_tag in img_map.items():
-                src_match = re.search(r'src=[\'"]([^\'"]+)[\'"]', img_tag, re.IGNORECASE)
-                src_val   = src_match.group(1) if src_match else ""
-                if src_val:
-                    c_img, c_lbl = st.columns([1, 4], vertical_alignment="center")
-                    with c_img:
+                with st.container(border=True):
+                    c_thumb, c_lbl = st.columns([1, 4], vertical_alignment="center")
+                    with c_thumb:
+                        src_match = re.search(r'src=["\']([^"\']+)["\']', img_tag)
+                        img_src = src_match.group(1) if src_match else ""
                         st.markdown(
-                            f'<div style="border:1px solid #CBD5E1; border-radius:6px; padding:3px; background:#FFF; display:inline-block; max-height:80px; overflow:hidden;">'
-                            f'<img src="{src_val}" style="max-height:74px; max-width:100%; object-fit:contain; border-radius:4px; display:block;" /></div>',
+                            f'<img src="{img_src}" style="max-height:48px; max-width:80px; '
+                            f'border-radius:4px; object-fit:cover; border:1px solid #CBD5E1;" />',
                             unsafe_allow_html=True
                         )
                     with c_lbl:
@@ -370,36 +428,39 @@ def render_dual_mode_editor(
                             st.rerun()
 
         # ------------------------------------------------------------------
-        # Main text area — uses textarea_key so _insert() can pre-load it
-        # before rerun by setting st.session_state[textarea_key] directly.
+        # Main visual text area — displays clean readable email text
         # ------------------------------------------------------------------
         edited_val = st.text_area(
             "Visual Content Editor",
-            value=visual_text,   # default (used only on first render or key change)
+            value=visual_text,
             height=height,
             key=textarea_key,
             label_visibility="collapsed",
-            help="Type or paste your email body here. Use the toolbar buttons above to insert formatting and variables."
+            help="Type or paste your email body here. Use the toolbar buttons above to format or insert variables."
         )
 
-        # Persist user's manual typing back to the body state key.
-        st.session_state[state_key] = restore_images_from_placeholders(edited_val, img_map)
+        # Convert clean visual text back to structured HTML for dispatch & preview
+        st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
 
     # =========================================================================
     # SOURCE MODE (raw HTML)
     # =========================================================================
     else:
-        src_c1, src_c2 = st.columns([3.5, 1.5])
+        src_c1, src_c2 = st.columns([3.5, 1.5], vertical_alignment="center")
         with src_c1:
             st.markdown(
-                "<div style='font-size:12px; color:#64748B; padding:6px 0;'>"
-                "<b>Source View (Raw HTML)</b> — Direct HTML editing. Styling and tags preserved exactly.</div>",
+                "<div style='font-size:12px; color:#64748B; padding:4px 0;'>"
+                "<b>Source View (Raw HTML)</b> — Direct HTML editing. Tags and attributes preserved exactly.</div>",
                 unsafe_allow_html=True
             )
         with src_c2:
             if st.button("👁️ Visual Editor", key=f"{key_prefix}_btn_to_visual",
-                         help="Switch back to visual toolbar editor", use_container_width=True):
-                st.session_state[mode_key] = "visual"
+                         help="Switch back to visual editor", use_container_width=True):
+                raw_val = st.session_state.get(f"{key_prefix}_source_textarea", st.session_state[state_key])
+                clean_vis, _ = html_to_visual_text(raw_val)
+                st.session_state[state_key]    = raw_val
+                st.session_state[textarea_key] = clean_vis
+                st.session_state[mode_key]     = "visual"
                 st.rerun()
 
         raw_source_val = st.text_area(
