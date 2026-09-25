@@ -432,13 +432,30 @@ def highlight_spam_triggers(body_html: str, triggers: List[str]) -> str:
 
 def format_email_html(raw_body: str) -> str:
     """
-    Ensure the email body is formatted in clean HTML paragraphs.
-    If the text already contains block HTML tags (<p, <div, <table, <br, etc.),
-    it is returned as-is. Otherwise, double newlines are converted to <p>...</p>.
+    Ensure the email body is formatted in clean HTML paragraphs and inline markdown rules are applied:
+    - **bold** -> <strong style="font-weight:700;">bold</strong>
+    - *italic* -> <em>italic</em>
+    - ~~strike~~ -> <del>strike</del>
+    - [text](url) -> <a href="url"...>text</a>
     """
     if not raw_body or not raw_body.strip():
         return ""
     text = raw_body.strip()
+
+    # Apply inline markdown formatting if present
+    if "**" in text:
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong style="font-weight:700;">\1</strong>', text)
+    if "*" in text:
+        text = re.sub(r'(?<!\*)\*([^\*\n]+?)\*(?!\*)', r'<em>\1</em>', text)
+    if "~~" in text:
+        text = re.sub(r'~~(.+?)~~', r'<del>\1</del>', text)
+    if "](" in text:
+        def link_repl(match):
+            label = match.group(1)
+            url = match.group(2).strip()
+            return f'<a href="{url}" style="color:#083731; font-weight:600; text-decoration:underline;">{label}</a>'
+        text = re.sub(r'\[([^\]]+)\]\((https?://[^\s\)]+|mailto:[^\s\)]+|[^\s\)]+)\)', link_repl, text)
+
     has_block_tags = any(tag in text.lower() for tag in ["<p", "<div", "<table", "<br", "<h1", "<h2", "<h3", "<h4", "<ul", "<ol"])
     if has_block_tags:
         return text

@@ -116,13 +116,59 @@ def restore_images_from_placeholders(text: str, img_map: Dict[str, str]) -> str:
     return restored
 
 
+def markdown_inline_to_html(text: str) -> str:
+    """Converts inline markdown formatting (**bold**, *italic*, [link](url), ~~strike~~) into clean HTML."""
+    if not text:
+        return ""
+    # 1. Bold: **text** -> <strong style="font-weight:700;">text</strong>
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong style="font-weight:700;">\1</strong>', text)
+    # 2. Italic: *text* (when not surrounded by asterisks) -> <em>text</em>
+    text = re.sub(r'(?<!\*)\*([^\*\n]+?)\*(?!\*)', r'<em>\1</em>', text)
+    # 3. Strikethrough: ~~text~~ -> <del>text</del>
+    text = re.sub(r'~~(.+?)~~', r'<del>\1</del>', text)
+    # 4. Links: [text](url) -> <a href="url" style="...">text</a>
+    # Note: Does NOT match [Name] or [Company] because no (url) follows.
+    def link_repl(match):
+        label = match.group(1)
+        url = match.group(2).strip()
+        return f'<a href="{url}" style="color:#083731; font-weight:600; text-decoration:underline;">{label}</a>'
+    text = re.sub(r'\[([^\]]+)\]\((https?://[^\s\)]+|mailto:[^\s\)]+|[^\s\)]+)\)', link_repl, text)
+    return text
+
+
+def html_inline_to_markdown(text: str) -> str:
+    """Converts HTML inline tags (<b>, <strong>, <i>, <em>, <a href="...">, <del>) into clean markdown."""
+    if not text:
+        return ""
+    # 1. Bold: <strong...>...</strong> or <b...>...</b> -> **...**
+    text = re.sub(r'<(?:strong|b)\b[^>]*>(.*?)</(?:strong|b)>', r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
+    # 2. Italic: <em...>...</em> or <i...>...</i> -> *...*
+    text = re.sub(r'<(?:em|i)\b[^>]*>(.*?)</(?:em|i)>', r'*\1*', text, flags=re.IGNORECASE | re.DOTALL)
+    # 3. Strikethrough: <del...>...</del> or <s...>...</s> -> ~~...~~
+    text = re.sub(r'<(?:del|s)\b[^>]*>(.*?)</(?:del|s)>', r'~~\1~~', text, flags=re.IGNORECASE | re.DOTALL)
+    # 4. Links: <a href="url"...>label</a> -> [label](url)
+    def a_repl(match):
+        attrs = match.group(1)
+        label = match.group(2)
+        m_href = re.search(r'href=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+        url = m_href.group(1) if m_href else ""
+        if url and label:
+            return f"[{label}]({url})"
+        return label
+    text = re.sub(r'<a\b([^>]*)>(.*?)</a>', a_repl, text, flags=re.IGNORECASE | re.DOTALL)
+    return text
+
+
 def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
     """
     Converts email HTML into clean, human-readable text for the visual editor:
     - Extracts <img> tags to [Image 1] placeholders.
+    - Converts <ul> and <ol> lists into clean bulleted and numbered lines.
+    - Converts <strong>/<b> into **bold** and <em>/<i> into *italic*.
+    - Converts <a href="...">text</a> into [text](url).
     - Converts <p style='...'>...</p> tags into double newlines (\n\n).
     - Converts <br> tags into single newlines (\n).
-    - Strips <div> tags while preserving line breaks.
+    - Strips <div> and <span> tags while preserving line breaks.
     - Decodes HTML entities (&nbsp; -> space, etc.).
     Returns (clean_visual_text, img_map).
     """
@@ -131,6 +177,28 @@ def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
 
     # 1. Extract images first
     text, img_map = extract_images_to_placeholders(html_content)
+
+    # Convert <ul> lists to bullet points
+    def ul_repl(match):
+        ul_content = match.group(1)
+        li_matches = re.findall(r'<li[^>]*>(.*?)</li>', ul_content, flags=re.IGNORECASE | re.DOTALL)
+        lines = [f"- {html_inline_to_markdown(li.strip())}" for li in li_matches if li.strip()]
+        return "\n" + "\n".join(lines) + "\n"
+    text = re.sub(r'<ul[^>]*>(.*?)</ul>', ul_repl, text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Convert <ol> lists to numbered points
+    def ol_repl(match):
+        ol_content = match.group(1)
+        li_matches = re.findall(r'<li[^>]*>(.*?)</li>', ol_content, flags=re.IGNORECASE | re.DOTALL)
+        lines = [f"{i+1}. {html_inline_to_markdown(li.strip())}" for i, li in enumerate(li_matches) if li.strip()]
+        return "\n" + "\n".join(lines) + "\n"
+    text = re.sub(r'<ol[^>]*>(.*?)</ol>', ol_repl, text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Convert inline tags to markdown
+    text = html_inline_to_markdown(text)
+
+    # Strip spans
+    text = re.sub(r'<span[^>]*>(.*?)</span>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
 
     # 2. Check for HTML structure tags
     has_html = any(tag in text.lower() for tag in ["<p", "<br", "<div"])
@@ -148,11 +216,12 @@ def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
         # Convert <div> to newline
         text = re.sub(r'</div>\s*<div[^>]*>', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'</?div[^>]*>', '\n', text, flags=re.IGNORECASE)
-        # Unescape HTML entities
-        text = html.unescape(text)
-        # Clean up excess blank lines
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        text = text.strip()
+
+    # Unescape HTML entities
+    text = html.unescape(text)
+    # Clean up excess blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
 
     return text, img_map
 
@@ -161,6 +230,8 @@ def visual_text_to_html(visual_text: str, img_map: Dict[str, str]) -> str:
     """
     Converts clean visual text back into structured HTML for email sending and live preview:
     - Restores [Image X] placeholders back to <img> tags.
+    - Converts markdown formatting (**bold**, *italic*, [link](url), ~~strike~~) into styled HTML tags.
+    - Converts bullet lists (- Item) and numbered lists (1. Item) into clean <ul>/<ol> HTML blocks.
     - If the visual text contains complex block HTML (table, style, etc.), preserves it.
     - Converts double newlines into clean <p style='margin: 0 0 1em 0;'>...</p> paragraphs.
     - Converts single newlines inside paragraphs into <br>.
@@ -170,19 +241,46 @@ def visual_text_to_html(visual_text: str, img_map: Dict[str, str]) -> str:
 
     text = visual_text.strip()
 
-    # If the text already has full block structure, don't double-wrap
-    has_block = any(tag in text.lower() for tag in ["<p", "<div", "<table", "<ul", "<ol", "<h1", "<h2", "<h3"])
-    if has_block:
+    # If the text already has full custom block structure (table, style, etc.), don't double-wrap
+    has_custom_block = any(tag in text.lower() for tag in ["<table", "<style", "<h1", "<h2", "<h3"])
+    if has_custom_block:
         return restore_images_from_placeholders(text, img_map)
 
     # Split into paragraphs by double newlines
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    html_paragraphs = []
-    for p in paragraphs:
-        p_html = p.replace("\n", "<br>")
-        html_paragraphs.append(f"<p style='margin: 0 0 1em 0;'>{p_html}</p>")
+    html_parts = []
 
-    full_html = "".join(html_paragraphs)
+    for p in paragraphs:
+        lines = p.split("\n")
+        # Check if entire block is a bullet list
+        if all(re.match(r'^\s*[-*•]\s+', line) for line in lines):
+            items = []
+            for line in lines:
+                item_content = re.sub(r'^\s*[-*•]\s+', '', line).strip()
+                item_html = markdown_inline_to_html(item_content)
+                items.append(f'<li style="margin-bottom: 4px;">{item_html}</li>')
+            html_parts.append(f'<ul style="margin: 0 0 1em 1.5em; padding: 0;">{"".join(items)}</ul>')
+        # Check if entire block is a numbered list
+        elif all(re.match(r'^\s*\d+[\.\)]\s+', line) for line in lines):
+            items = []
+            for line in lines:
+                item_content = re.sub(r'^\s*\d+[\.\)]\s+', '', line).strip()
+                item_html = markdown_inline_to_html(item_content)
+                items.append(f'<li style="margin-bottom: 4px;">{item_html}</li>')
+            html_parts.append(f'<ol style="margin: 0 0 1em 1.5em; padding: 0;">{"".join(items)}</ol>')
+        else:
+            # Regular paragraph with potential inline markdown
+            p_html_lines = []
+            for line in lines:
+                if re.match(r'^\s*[-*•]\s+', line):
+                    item_content = re.sub(r'^\s*[-*•]\s+', '', line).strip()
+                    p_html_lines.append(f'• {markdown_inline_to_html(item_content)}')
+                else:
+                    p_html_lines.append(markdown_inline_to_html(line))
+            p_html = "<br>".join(p_html_lines)
+            html_parts.append(f"<p style='margin: 0 0 1em 0;'>{p_html}</p>")
+
+    full_html = "".join(html_parts)
     return restore_images_from_placeholders(full_html, img_map)
 
 
@@ -263,10 +361,7 @@ def render_dual_mode_editor(
                 l_txt = st.text_input("Link Text", value="click here", key=f"{key_prefix}_pop_txt")
                 if st.button("Insert Link", type="primary",
                              key=f"{key_prefix}_pop_ins_link", use_container_width=True):
-                    tag = (f'<a href="{html.escape(l_url)}" '
-                           f'style="color:#083731; font-weight:600; text-decoration:underline;">'
-                           f'{html.escape(l_txt)}</a>')
-                    _insert_html(f" {tag}")
+                    _insert_html(f" [{l_txt}]({l_url})")
 
         with tb_cols[4]:
             with st.popover("🖼️ Image", help="Insert or Paste Image", use_container_width=True):
