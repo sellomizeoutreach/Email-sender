@@ -13,6 +13,7 @@ Matches sellomize_reference.html:
 import streamlit as st
 import html
 from datetime import datetime, timezone
+import json
 from typing import List, Dict, Any, Optional
 
 from database import (
@@ -27,6 +28,9 @@ from database import (
     delete_smtp_account,
     get_warmup_info,
     get_effective_daily_limit,
+    export_backup_data,
+    import_backup_data,
+    auto_save_backup,
     WEEKDAY_NAMES,
     DB_FILE,
 )
@@ -437,3 +441,62 @@ def render_settings_tab():
             st.metric("Poll Interval", f"{WORKER_POLL_INTERVAL_SECONDS} seconds")
 
         st.caption("To start the background daemon, run `run_scheduler.bat` or `python scheduler.py` in the terminal.")
+
+    # =========================================================================
+    # SECTION 4: DATA PERSISTENCE & CRM BACKUP / RESTORE
+    # =========================================================================
+    st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:16px 0;'>", unsafe_allow_html=True)
+    with st.expander("💾 Data Persistence & CRM Backup / Restore", expanded=True):
+        st.markdown("""
+        <div style="font-size:13px; color:#475569; margin-bottom:12px;">
+            <b>Permanent Data Protection:</b> All your connected mailboxes, custom signatures, email templates, and CRM contacts are automatically protected with snapshots so cloud container reboots never erase your outreach configuration.
+        </div>
+        """, unsafe_allow_html=True)
+
+        backup_dict = export_backup_data()
+        mb_cnt = len(backup_dict.get("smtp_accounts", []))
+        tpl_cnt = len(backup_dict.get("templates", []))
+        c_cnt = len(backup_dict.get("contacts", []))
+        has_sig = bool((backup_dict.get("system_config", {}).get("signature_html") or "").strip())
+
+        s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+        with s_col1:
+            st.metric("Connected Mailboxes", f"{mb_cnt}")
+        with s_col2:
+            st.metric("Saved Templates", f"{tpl_cnt}")
+        with s_col3:
+            st.metric("CRM Contacts", f"{c_cnt}")
+        with s_col4:
+            st.metric("Signature", "✅ Configured" if has_sig else "⚠️ Default")
+
+        b_c1, b_c2 = st.columns([1.2, 1.2])
+        with b_c1:
+            backup_json_str = json.dumps(backup_dict, indent=2)
+            st.download_button(
+                "📥 Download Backup File (JSON)",
+                data=backup_json_str,
+                file_name=f"sellomize_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                mime="application/json",
+                use_container_width=True,
+                help="Download a portable snapshot of all your settings, mailboxes, templates, and leads"
+            )
+        with b_c2:
+            if st.button("🔄 Sync & Save Auto-Backup Now", key="btn_manual_sync_backup", use_container_width=True):
+                auto_save_backup()
+                trigger_toast("Auto-backup snapshot saved successfully!", icon="💾")
+
+        st.markdown("<div style='font-size:12px; font-weight:600; color:#083731; margin-top:14px;'>Upload Backup to Restore:</div>", unsafe_allow_html=True)
+        up_backup = st.file_uploader("Restore from JSON backup file", type=["json"], key="up_backup_json", label_visibility="collapsed")
+        if up_backup:
+            if st.button("🚀 Restore Data from File", key="btn_apply_restore_file", type="primary", use_container_width=True):
+                try:
+                    loaded_data = json.load(up_backup)
+                    ok, msg = import_backup_data(loaded_data)
+                    if ok:
+                        auto_save_backup()
+                        trigger_toast(f"Restore complete! {msg}", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error(f"Restore failed: {msg}")
+                except Exception as e:
+                    st.error(f"Invalid backup file format: {e}")

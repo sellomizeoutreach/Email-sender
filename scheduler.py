@@ -524,7 +524,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         err_msg = "Recipient email address is missing or empty."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
         mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
-        return
+        return False
 
     # Pre-flight MX record and domain sanity check
     enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"
@@ -535,7 +535,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
             logger.warning(f"Email ID #{email_id}: Intercepting dead domain dispatch for '{recipient}'. Reason: {bounce_err}")
             mark_email_error(email_id, status="Bounced", error_message=bounce_err, db_path=db_path)
             record_email_bounce(recipient_email=recipient, bounce_reason=bounce_err, db_path=db_path)
-            return
+            return False
 
     # Fetch next active Hostinger account in rotation
     smtp_account = get_next_available_smtp_account(db_path=db_path)
@@ -543,7 +543,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         err_msg = "No active Hostinger SMTP account available (or all configured accounts have reached their daily sending limit)."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
         mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
-        return
+        return False
 
     # Prepare signature, tracking pixel, and payload
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
@@ -561,7 +561,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
         mark_email_sent(email_id, db_path=db_path)
         advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
-        return
+        return True
 
     in_reply_to_header = email_record.get("in_reply_to") or None
     msg_id_tracker = []
@@ -588,8 +588,10 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         # Advance contact outreach status, date, and next follow-up
         advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
+        return True
     else:
         mark_email_error(email_id, status="Error", error_message=msg, db_path=db_path)
+        return False
 
 def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE):
     """

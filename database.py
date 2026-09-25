@@ -525,6 +525,208 @@ def init_db(db_path: str = DB_FILE):
     conn.commit()
     conn.close()
 
+    # Automatically restore user data if this is a fresh container / instance
+    try:
+        auto_restore_backup_if_needed(db_path)
+    except Exception:
+        pass
+
+# ------------------------------------------------------------------------------
+# BACKUP & RESTORE UTILITIES (Data Persistence Protection)
+# ------------------------------------------------------------------------------
+
+def get_backup_filepaths() -> List[str]:
+    """Returns candidate backup file locations in priority order."""
+    paths = []
+    local_dir = os.path.dirname(os.path.abspath(__file__))
+    paths.append(os.path.join(local_dir, "sellomize_backup.json"))
+    home_dir = os.path.expanduser("~")
+    paths.append(os.path.join(home_dir, ".sellomize_backup.json"))
+    return paths
+
+def export_backup_data(db_path: str = DB_FILE) -> Dict[str, Any]:
+    """Extracts all mailboxes, settings, templates, and contacts as a serializable dict."""
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+
+    cur.execute("SELECT key, value FROM system_config")
+    configs = {row["key"]: row["value"] for row in cur.fetchall()}
+
+    cur.execute("SELECT * FROM smtp_accounts")
+    mailboxes = [dict(row) for row in cur.fetchall()]
+
+    cur.execute("SELECT * FROM templates")
+    templates = [dict(row) for row in cur.fetchall()]
+
+    cur.execute("SELECT * FROM contacts")
+    contacts = [dict(row) for row in cur.fetchall()]
+
+    conn.close()
+    return {
+        "version": "1.0",
+        "exported_at": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"),
+        "system_config": configs,
+        "smtp_accounts": mailboxes,
+        "templates": templates,
+        "contacts": contacts
+    }
+
+def import_backup_data(backup_data: Dict[str, Any], db_path: str = DB_FILE) -> Tuple[bool, str]:
+    """Restores all mailboxes, configs, templates, and contacts from a backup dict."""
+    try:
+        conn = get_connection(db_path)
+        cur = conn.cursor()
+
+        # 1. System Configs (signature, schedule, etc.)
+        configs = backup_data.get("system_config", {})
+        for k, v in configs.items():
+            cur.execute("""
+                INSERT INTO system_config (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (k, str(v)))
+
+        # 2. SMTP Accounts / Mailboxes
+        mailboxes = backup_data.get("smtp_accounts", [])
+        for m in mailboxes:
+            m_email = m.get("email", "").strip()
+            if not m_email:
+                continue
+            cur.execute("SELECT id FROM smtp_accounts WHERE email = ?", (m_email,))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("""
+                    UPDATE smtp_accounts SET
+                        sender_name = ?, smtp_host = ?, smtp_port = ?, password = ?,
+                        daily_limit = ?, is_active = ?, warmup_enabled = ?, warmup_start_date = ?,
+                        warmup_starting_limit = ?, warmup_daily_increment = ?, warmup_target_limit = ?
+                    WHERE id = ?
+                """, (
+                    m.get("sender_name", ""), m.get("smtp_host", "smtp.hostinger.com"),
+                    m.get("smtp_port", 465), m.get("password", ""), m.get("daily_limit", 80),
+                    m.get("is_active", 1), m.get("warmup_enabled", 0), m.get("warmup_start_date", ""),
+                    m.get("warmup_starting_limit", 10), m.get("warmup_daily_increment", 5),
+                    m.get("warmup_target_limit", 50), existing["id"]
+                ))
+            else:
+                cur.execute("""
+                    INSERT INTO smtp_accounts (
+                        sender_name, email, smtp_host, smtp_port, password, daily_limit,
+                        sent_today, last_reset_date, is_active, warmup_enabled, warmup_start_date,
+                        warmup_starting_limit, warmup_daily_increment, warmup_target_limit, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    m.get("sender_name", ""), m_email, m.get("smtp_host", "smtp.hostinger.com"),
+                    m.get("smtp_port", 465), m.get("password", ""), m.get("daily_limit", 80),
+                    m.get("sent_today", 0), m.get("last_reset_date", ""), m.get("is_active", 1),
+                    m.get("warmup_enabled", 0), m.get("warmup_start_date", ""),
+                    m.get("warmup_starting_limit", 10), m.get("warmup_daily_increment", 5),
+                    m.get("warmup_target_limit", 50), m.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                ))
+
+        # 3. Templates
+        templates = backup_data.get("templates", [])
+        for t in templates:
+            tname = t.get("name") or t.get("template_name") or "Template"
+            cur.execute("SELECT id FROM templates WHERE template_name = ? OR name = ?", (tname, tname))
+            existing = cur.fetchone()
+            body = t.get("body_html") or t.get("body_content") or ""
+            subj = t.get("subject", "")
+            if existing:
+                cur.execute("""
+                    UPDATE templates SET name = ?, template_name = ?, subject = ?, body_html = ?, body_content = ?
+                    WHERE id = ?
+                """, (tname, tname, subj, body, body, existing["id"]))
+            else:
+                cur.execute("""
+                    INSERT INTO templates (name, template_name, subject, body_html, body_content, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (tname, tname, subj, body, body, t.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))))
+
+        # 4. Contacts / CRM
+        contacts = backup_data.get("contacts", [])
+        for c in contacts:
+            c_email = c.get("email", "").strip()
+            if not c_email:
+                continue
+            cur.execute("SELECT id FROM contacts WHERE LOWER(email) = LOWER(?)", (c_email,))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("""
+                    UPDATE contacts SET
+                        name = ?, company = ?, tags = ?, custom_variables = ?, status = ?,
+                        lead_source = ?, priority = ?, contacted = ?, owner = ?, notes = ?,
+                        country_or_timezone = ?
+                    WHERE id = ?
+                """, (
+                    c.get("name", ""), c.get("company", ""), c.get("tags", ""),
+                    c.get("custom_variables", "{}"), c.get("status", "New"),
+                    c.get("lead_source", "Other"), c.get("priority", "Medium"),
+                    c.get("contacted", "No"), c.get("owner", ""), c.get("notes", ""),
+                    c.get("country_or_timezone", ""), existing["id"]
+                ))
+            else:
+                cur.execute("""
+                    INSERT INTO contacts (
+                        name, email, company, tags, custom_variables, status,
+                        lead_source, priority, contacted, owner, notes, country_or_timezone, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    c.get("name", ""), c_email, c.get("company", ""), c.get("tags", ""),
+                    c.get("custom_variables", "{}"), c.get("status", "New"),
+                    c.get("lead_source", "Other"), c.get("priority", "Medium"),
+                    c.get("contacted", "No"), c.get("owner", ""), c.get("notes", ""),
+                    c.get("country_or_timezone", ""), c.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                ))
+
+        conn.commit()
+        conn.close()
+        return True, f"Restored {len(mailboxes)} mailboxes, {len(templates)} templates, and {len(contacts)} contacts."
+    except Exception as e:
+        logger.error(f"Error importing backup: {e}")
+        return False, str(e)
+
+def auto_save_backup(db_path: str = DB_FILE):
+    """Silently saves a backup snapshot to persistent paths so restarts never lose data."""
+    try:
+        data = export_backup_data(db_path)
+        # Only save if there's actual data worth persisting
+        if not (data.get("smtp_accounts") or data.get("templates") or data.get("contacts") or data.get("system_config", {}).get("signature_html")):
+            return
+        payload = json.dumps(data, indent=2)
+        for p in get_backup_filepaths():
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(payload)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"auto_save_backup failed: {e}")
+
+def auto_restore_backup_if_needed(db_path: str = DB_FILE):
+    """If database has no user mailboxes, auto-restores from backup file if present."""
+    try:
+        conn = get_connection(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) as count FROM smtp_accounts")
+        mailbox_count = cur.fetchone()["count"]
+        conn.close()
+
+        if mailbox_count == 0:
+            for p in get_backup_filepaths():
+                if os.path.exists(p):
+                    try:
+                        with open(p, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if data and (data.get("smtp_accounts") or data.get("templates") or data.get("system_config", {}).get("signature_html")):
+                            import_backup_data(data, db_path)
+                            logger.info(f"Auto-restored database from backup file '{p}'.")
+                            break
+                    except Exception as err:
+                        logger.warning(f"Could not load backup from {p}: {err}")
+    except Exception as e:
+        logger.warning(f"auto_restore_backup_if_needed failed: {e}")
+
 # ------------------------------------------------------------------------------
 # SYSTEM CONFIGURATION HELPERS
 # ------------------------------------------------------------------------------
@@ -546,6 +748,7 @@ def set_config(key: str, value: str, db_path: str = DB_FILE):
     """, (key, value))
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
 
 def get_all_configs(db_path: str = DB_FILE) -> Dict[str, str]:
     conn = get_connection(db_path)
@@ -565,6 +768,7 @@ def save_all_configs(config_dict: Dict[str, str], db_path: str = DB_FILE):
         """, (key, value))
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
 
 # ------------------------------------------------------------------------------
 # CAMPAIGN SCHEDULE & SENDING WINDOW HELPERS
@@ -1449,6 +1653,7 @@ def create_template(
     tpl_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
     return tpl_id
 
 def get_templates(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
@@ -1490,6 +1695,7 @@ def update_template(
     """, (final_name, final_name, final_body, final_body, final_subj, now_str, template_id))
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
 
 def delete_template(template_id: int, db_path: str = DB_FILE):
     conn = get_connection(db_path)
@@ -1497,6 +1703,7 @@ def delete_template(template_id: int, db_path: str = DB_FILE):
     cursor.execute("DELETE FROM templates WHERE id = ?", (template_id,))
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
 
 # ------------------------------------------------------------------------------
 # PROOF / CLIENT STORY LIBRARY HELPERS (Phase 2)
@@ -1683,7 +1890,9 @@ def update_email(
     thread_id: Any = _FIELD_UNSET,
     smtp_account_id: Any = _FIELD_UNSET,
     target_timezone: Any = _FIELD_UNSET,
-    db_path: str = DB_FILE
+    sent_via: Any = _FIELD_UNSET,
+    db_path: str = DB_FILE,
+    **kwargs
 ):
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -1734,6 +1943,19 @@ def update_email(
     if target_timezone is not _FIELD_UNSET:
         fields.append("target_timezone = ?")
         values.append(target_timezone)
+    if sent_via is not _FIELD_UNSET:
+        fields.append("sent_via = ?")
+        values.append(sent_via)
+
+    for k, v in kwargs.items():
+        if k in [
+            "opened_at", "open_count", "is_bounced", "bounce_reason",
+            "clicked_at", "click_count", "last_clicked_url", "target_country",
+            "market_key", "lead_id", "mailbox_id", "body_html_resolved",
+            "scheduled_time_utc", "lead_local_time", "thread_refs", "sequence_group"
+        ]:
+            fields.append(f"{k} = ?")
+            values.append(v)
 
     values.append(email_id)
     query = f"UPDATE emails SET {', '.join(fields)} WHERE id = ?"
@@ -2690,6 +2912,7 @@ def add_smtp_account(
     account_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
     return account_id
 
 create_smtp_account = add_smtp_account
@@ -2809,6 +3032,7 @@ def update_smtp_account(
         cursor.execute(query, tuple(values))
         conn.commit()
     conn.close()
+    auto_save_backup(db_path)
 
 def delete_smtp_account(account_id: int, db_path: str = DB_FILE):
     conn = get_connection(db_path)
@@ -2816,6 +3040,7 @@ def delete_smtp_account(account_id: int, db_path: str = DB_FILE):
     cursor.execute("DELETE FROM smtp_accounts WHERE id = ?", (account_id,))
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
 
 def get_next_available_smtp_account(db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
     """
