@@ -45,8 +45,9 @@ from ui.components import trigger_toast
 # Dialog: Confirm Batch Schedule & Sequence Timing (UTC+5)
 # ---------------------------------------------------------------------------
 
-@st.dialog("🚀 Confirm Batch Schedule & Sequence Timing (UTC+5)")
+@st.dialog("🚀 Confirm Batch Outreach & Timing (UTC+5)")
 def render_bulk_schedule_dialog(
+    mode: str,
     selected_leads: List[Dict[str, Any]],
     selected_subject: str,
     current_body: str,
@@ -75,13 +76,31 @@ def render_bulk_schedule_dialog(
     st.markdown("##### 📧 Initial Outreach Batch")
     st.markdown(f"**Subject:** *{html.escape(selected_subject)}*")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        batch_date = st.date_input("Start Date (UTC+5)", value=default_date, min_value=now_engine.date(), key="bulk_dlg_init_d")
-    with c2:
-        batch_time = st.time_input("Start Time (UTC+5)", value=default_time, key="bulk_dlg_init_t")
+    if mode == "send_now":
+        init_choice = st.radio(
+            "Initial Batch Dispatch",
+            ["🚀 Start dispatch immediately right now", "🕒 Set custom start date & time (UTC+5)"],
+            horizontal=True,
+            key="bulk_dlg_init_choice"
+        )
+        if init_choice.startswith("🕒"):
+            c1, c2 = st.columns(2)
+            with c1:
+                batch_date = st.date_input("Start Date (UTC+5)", value=default_date, min_value=now_engine.date(), key="bulk_dlg_init_d")
+            with c2:
+                batch_time = st.time_input("Start Time (UTC+5)", value=default_time, key="bulk_dlg_init_t")
+            init_start_dt = datetime.combine(batch_date, batch_time)
+        else:
+            init_start_dt = now_engine
+    else:
+        st.markdown("<span class='lbl'>Scheduled Start Date &amp; Time (UTC+5)</span>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            batch_date = st.date_input("Start Date (UTC+5)", value=default_date, min_value=now_engine.date(), key="bulk_dlg_init_d", label_visibility="collapsed")
+        with c2:
+            batch_time = st.time_input("Start Time (UTC+5)", value=default_time, key="bulk_dlg_init_t", label_visibility="collapsed")
+        init_start_dt = datetime.combine(batch_date, batch_time)
 
-    init_start_dt = datetime.combine(batch_date, batch_time)
     st.caption(f"📅 Initial emails will pace evenly from **{init_start_dt.strftime('%a %b %d, %H:%M')}** across **{spread_hours} hours**.")
 
     # ── Section 2: Follow-up Sequences (Set each date and time separately) ──
@@ -750,38 +769,84 @@ def render_bulk_tab():
                 unsafe_allow_html=True
             )
 
-        # ── Schedule batch CTA Button ─────────────────────────────────────
-        if st.button("🚀 Schedule batch", type="primary", use_container_width=True, key="bulk_schedule_cta"):
-            if not selected_leads:
-                st.error("Please select at least one recipient lead.")
-                return
-            if not selected_subject.strip():
-                st.error("Please specify a subject line.")
-                return
-            if not current_body.strip():
-                st.error("Please provide email body content.")
-                return
+        # ── Send Now & Schedule Batch Action Buttons ──────────────────────
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            send_now_label = "🚀 Send batch now"
+            if st.session_state["bulk_followup_steps"]:
+                send_now_label += f" (+{len(st.session_state['bulk_followup_steps'])} FU)"
+            if st.button(send_now_label, type="primary", use_container_width=True, key="bulk_send_now_cta"):
+                if not selected_leads:
+                    st.error("Please select at least one recipient lead.")
+                    return
+                if not selected_subject.strip():
+                    st.error("Please specify a subject line.")
+                    return
+                if not current_body.strip():
+                    st.error("Please provide email body content.")
+                    return
 
-            # Token check on initial email
-            unfilled_sample = []
-            for lead in selected_leads[:5]:
-                resolved_text = (
-                    f"{inject_variables(parse_spintax(selected_subject), lead)} "
-                    f"{resolve_template(current_body, lead)}"
+                # Token check on initial email
+                unfilled_sample = []
+                for lead in selected_leads[:5]:
+                    resolved_text = (
+                        f"{inject_variables(parse_spintax(selected_subject), lead)} "
+                        f"{resolve_template(current_body, lead)}"
+                    )
+                    unfilled_sample.extend(_missing_tokens(resolved_text))
+                if unfilled_sample:
+                    st.error(f"Unfilled variables: {', '.join(set(unfilled_sample))}. Fill or use fallbacks.")
+                    return
+
+                render_bulk_schedule_dialog(
+                    mode="send_now",
+                    selected_leads=selected_leads,
+                    selected_subject=selected_subject,
+                    current_body=current_body,
+                    all_mailboxes=all_mailboxes,
+                    default_date=chosen_date,
+                    default_time=chosen_time,
+                    spread_hours=spread_hours,
+                    total_fleet_cap=total_fleet_cap,
+                    followup_steps=st.session_state.get("bulk_followup_steps", [])
                 )
-                unfilled_sample.extend(_missing_tokens(resolved_text))
-            if unfilled_sample:
-                st.error(f"Unfilled variables: {', '.join(set(unfilled_sample))}. Fill or use fallbacks.")
-                return
 
-            render_bulk_schedule_dialog(
-                selected_leads=selected_leads,
-                selected_subject=selected_subject,
-                current_body=current_body,
-                all_mailboxes=all_mailboxes,
-                default_date=chosen_date,
-                default_time=chosen_time,
-                spread_hours=spread_hours,
-                total_fleet_cap=total_fleet_cap,
-                followup_steps=st.session_state.get("bulk_followup_steps", [])
-            )
+        with col_act2:
+            sched_label = "🕒 Schedule batch"
+            if st.session_state["bulk_followup_steps"]:
+                sched_label += f" (+{len(st.session_state['bulk_followup_steps'])} FU)"
+            if st.button(sched_label, use_container_width=True, key="bulk_schedule_cta"):
+                if not selected_leads:
+                    st.error("Please select at least one recipient lead.")
+                    return
+                if not selected_subject.strip():
+                    st.error("Please specify a subject line.")
+                    return
+                if not current_body.strip():
+                    st.error("Please provide email body content.")
+                    return
+
+                # Token check on initial email
+                unfilled_sample = []
+                for lead in selected_leads[:5]:
+                    resolved_text = (
+                        f"{inject_variables(parse_spintax(selected_subject), lead)} "
+                        f"{resolve_template(current_body, lead)}"
+                    )
+                    unfilled_sample.extend(_missing_tokens(resolved_text))
+                if unfilled_sample:
+                    st.error(f"Unfilled variables: {', '.join(set(unfilled_sample))}. Fill or use fallbacks.")
+                    return
+
+                render_bulk_schedule_dialog(
+                    mode="schedule",
+                    selected_leads=selected_leads,
+                    selected_subject=selected_subject,
+                    current_body=current_body,
+                    all_mailboxes=all_mailboxes,
+                    default_date=chosen_date,
+                    default_time=chosen_time,
+                    spread_hours=spread_hours,
+                    total_fleet_cap=total_fleet_cap,
+                    followup_steps=st.session_state.get("bulk_followup_steps", [])
+                )
