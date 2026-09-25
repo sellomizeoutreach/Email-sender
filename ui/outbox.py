@@ -117,14 +117,18 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
                 scheduled_time=sched_str,
                 smtp_account_id=chosen_mb_id
             )
-            updated_rec = get_email_by_id(eid)
             with st.spinner("Dispatching via Hostinger..."):
-                ok = dispatch_email_hostinger(updated_rec)
-                if ok:
-                    trigger_toast(f"Sent email to {new_recip.strip()}!", icon="🚀")
-                else:
-                    st.error("Dispatch failed. Check mailbox settings.")
-            st.rerun()
+                try:
+                    ok = dispatch_email_hostinger(updated_rec)
+                    if ok:
+                        trigger_toast(f"Sent email to {new_recip.strip()}!", icon="🚀")
+                        st.rerun()
+                    else:
+                        updated_e = get_email_by_id(eid)
+                        err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox settings."
+                        st.error(f"Dispatch failed: {err_reason}")
+                except Exception as ex:
+                    st.error(f"Dispatch exception: {ex}")
 
 
 def render_outbox_tab():
@@ -283,12 +287,17 @@ def render_outbox_tab():
                 with btn_col3:
                     if st.button("🔄 Retry", key=f"outbox_retry_{eid}", use_container_width=True):
                         with st.spinner("Retrying dispatch..."):
-                            ok = dispatch_email_hostinger(e)
-                            if ok:
-                                trigger_toast(f"Email #{eid} sent successfully!", icon="✅")
-                            else:
-                                st.error("Retry failed. Check mailbox credentials.")
-                        st.rerun()
+                            try:
+                                ok = dispatch_email_hostinger(e)
+                                if ok:
+                                    trigger_toast(f"Email #{eid} sent successfully!", icon="✅")
+                                    st.rerun()
+                                else:
+                                    updated_e = get_email_by_id(eid)
+                                    err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox credentials."
+                                    st.error(f"Retry failed: {err_reason}")
+                            except Exception as ex:
+                                st.error(f"Retry exception: {ex}")
                 with btn_col4:
                     if st.button("🗑️ Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
                         delete_email(eid)

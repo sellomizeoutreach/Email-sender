@@ -14,8 +14,11 @@ Features:
 import streamlit as st
 import html
 import re
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from database import (
     get_contacts,
@@ -29,6 +32,7 @@ from database import (
     upsert_contact_by_email,
     create_template,
     update_template,
+    mark_email_error,
     DB_FILE,
 )
 from template_engine import (
@@ -243,14 +247,19 @@ def render_compose_schedule_dialog(
                     scheduled_time=get_engine_now_str(),
                     target_timezone=lead_tz
                 )
-                ok = dispatch_email_hostinger({
-                    "id": email_id,
-                    "recipient": recipient_clean,
-                    "subject": final_subj,
-                    "email_html": email_html,
-                    "smtp_account_id": selected_mb["id"],
-                    "target_timezone": lead_tz
-                })
+                try:
+                    ok = dispatch_email_hostinger({
+                        "id": email_id,
+                        "recipient": recipient_clean,
+                        "subject": final_subj,
+                        "email_html": email_html,
+                        "smtp_account_id": selected_mb["id"],
+                        "target_timezone": lead_tz
+                    })
+                except Exception as ex:
+                    logger.error(f"Dispatch error in compose dialog: {ex}")
+                    mark_email_error(email_id, status="Error", error_message=str(ex))
+                    ok = False
             else:
                 sched_str = init_dt.strftime("%Y-%m-%d %H:%M:%S")
                 create_email(
@@ -282,14 +291,18 @@ def render_compose_schedule_dialog(
 
             st.session_state["compose_followups"] = []
             if init_dt is None:
-                msg = f"Sent initial email to {recipient_clean}!"
-                if followup_steps:
-                    msg += f" Scheduled {len(followup_steps)} follow-up(s) with custom timing."
+                if ok:
+                    msg = f"Sent initial email to {recipient_clean}!"
+                    if followup_steps:
+                        msg += f" Scheduled {len(followup_steps)} follow-up(s) with custom timing."
+                    trigger_toast(msg, icon="🚀")
+                else:
+                    trigger_toast(f"Email #{email_id} queued to Outbox with send error. Check mailbox connection in Settings.", icon="⚠️")
             else:
                 msg = f"Scheduled initial email for {init_dt.strftime('%b %d at %H:%M')}!"
                 if followup_steps:
                     msg += f" Along with {len(followup_steps)} follow-up(s)."
-            trigger_toast(msg, icon="🚀")
+                trigger_toast(msg, icon="🚀")
             st.session_state["active_screen"] = "outbox"
             st.session_state["main_app_tabs"] = "📥 Outbox"
             st.rerun()

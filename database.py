@@ -688,6 +688,8 @@ def import_backup_data(backup_data: Dict[str, Any], db_path: str = DB_FILE) -> T
 def auto_save_backup(db_path: str = DB_FILE):
     """Silently saves a backup snapshot to persistent paths so restarts never lose data."""
     try:
+        if os.path.abspath(db_path) != os.path.abspath(DB_FILE):
+            return
         data = export_backup_data(db_path)
         # Only save if there's actual data worth persisting
         if not (data.get("smtp_accounts") or data.get("templates") or data.get("contacts") or data.get("system_config", {}).get("signature_html")):
@@ -706,6 +708,8 @@ def auto_save_backup(db_path: str = DB_FILE):
 def auto_restore_backup_if_needed(db_path: str = DB_FILE):
     """If database has no user mailboxes, auto-restores from backup file if present."""
     try:
+        if os.path.abspath(db_path) != os.path.abspath(DB_FILE):
+            return
         conn = get_connection(db_path)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) as count FROM smtp_accounts")
