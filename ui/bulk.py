@@ -37,7 +37,7 @@ from template_engine import (
     _missing_tokens,
 )
 from timezone_helper import get_next_valid_market_datetime, get_engine_now
-from ui.editor import render_dual_mode_editor
+from ui.editor import render_dual_mode_editor, html_to_visual_text
 from ui.components import trigger_toast
 
 
@@ -326,8 +326,15 @@ def render_bulk_tab():
                 for t in all_templates:
                     if str(t["id"]) == str(preselected_id):
                         st.session_state["bulk_tpl_id"]   = t["id"]
-                        st.session_state["bulk_subject"]   = t.get("subject") or ""
-                        st.session_state["bulk_body_html"] = t.get("body_content") or t.get("body_html") or ""
+                        t_subj = t.get("subject") or ""
+                        t_body = t.get("body_content") or t.get("body_html") or ""
+                        st.session_state["bulk_subject"]   = t_subj
+                        st.session_state["bulk_subj_input"] = t_subj
+                        st.session_state["bulk_body_html"] = t_body
+                        st.session_state["bulk_tpl_editor_body_html"] = t_body
+                        clean_v, _ = html_to_visual_text(t_body)
+                        st.session_state["bulk_tpl_editor_visual_textarea"] = clean_v
+                        st.session_state["bulk_tpl_editor_last_synced_html"] = t_body
                         break
 
             if st.session_state["bulk_mode"] == "template":
@@ -346,6 +353,18 @@ def render_bulk_tab():
                             if t["id"] == st.session_state["bulk_tpl_id"]:
                                 current_sel_idx = idx
                                 break
+                    else:
+                        first_tpl = list(tpl_choices.values())[0]
+                        st.session_state["bulk_tpl_id"] = first_tpl["id"]
+                        first_subj = first_tpl.get("subject") or ""
+                        first_body = first_tpl.get("body_content") or first_tpl.get("body_html") or ""
+                        st.session_state["bulk_subject"] = first_subj
+                        st.session_state["bulk_subj_input"] = first_subj
+                        st.session_state["bulk_body_html"] = first_body
+                        st.session_state["bulk_tpl_editor_body_html"] = first_body
+                        clean_v, _ = html_to_visual_text(first_body)
+                        st.session_state["bulk_tpl_editor_visual_textarea"] = clean_v
+                        st.session_state["bulk_tpl_editor_last_synced_html"] = first_body
 
                     col_tpl_sel, col_tpl_subj = st.columns([1.4, 2.6])
                     with col_tpl_sel:
@@ -358,10 +377,16 @@ def render_bulk_tab():
                         chosen_tpl = tpl_choices[sel_tpl_label]
                         if st.session_state.get("bulk_tpl_id") != chosen_tpl["id"]:
                             st.session_state["bulk_tpl_id"]   = chosen_tpl["id"]
-                            st.session_state["bulk_subject"]   = chosen_tpl.get("subject") or ""
-                            st.session_state["bulk_body_html"] = (
-                                chosen_tpl.get("body_content") or chosen_tpl.get("body_html") or ""
-                            )
+                            new_subj = chosen_tpl.get("subject") or ""
+                            new_body = chosen_tpl.get("body_content") or chosen_tpl.get("body_html") or ""
+                            st.session_state["bulk_subject"]   = new_subj
+                            st.session_state["bulk_subj_input"] = new_subj
+                            st.session_state["bulk_body_html"] = new_body
+                            st.session_state["bulk_tpl_editor_body_html"] = new_body
+                            clean_v, _ = html_to_visual_text(new_body)
+                            st.session_state["bulk_tpl_editor_visual_textarea"] = clean_v
+                            st.session_state["bulk_tpl_editor_last_synced_html"] = new_body
+                            st.rerun()
 
                     with col_tpl_subj:
                         st.markdown("<span class='lbl'>Subject (supports [Name], [Company])</span>", unsafe_allow_html=True)

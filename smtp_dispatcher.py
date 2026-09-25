@@ -12,9 +12,12 @@ except ImportError:
 import email
 import ssl
 import re
+import base64
+import uuid
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from email.utils import formataddr, formatdate, make_msgid
 from typing import Dict, Any, Tuple, Optional, List
 
@@ -151,14 +154,60 @@ def send_smtp_email(
     elif references and str(references).strip():
         msg["References"] = sanitize_header(str(references).strip())
 
+    # -------------------------------------------------------------------------
+    # Inline image handling: Convert base64 data URIs into CID attachments.
+    # Gmail clips messages when the HTML payload exceeds 102 KB (base64 is huge).
+    # Using multipart/related with Content-ID (cid:...) keeps HTML < 5 KB so
+    # Gmail NEVER clips the message, and images display crisp and inline.
+    # -------------------------------------------------------------------------
+    inline_images: List[Tuple[str, bytes, str]] = []  # (cid, binary_data, subtype)
+    data_uri_pattern = re.compile(r'data:image/([a-zA-Z0-9\+\-]+);base64,([A-Za-z0-9+/=\s]+)', re.IGNORECASE)
+
+    def _cid_replacer(match):
+        raw_subtype = match.group(1).lower()
+        subtype = "jpeg" if raw_subtype in ["jpg", "jpeg"] else ("png" if raw_subtype == "png" else raw_subtype)
+        b64_str = re.sub(r'\s+', '', match.group(2))
+        try:
+            img_bytes = base64.b64decode(b64_str)
+            cid = f"img_{uuid.uuid4().hex[:12]}@{domain}"
+            inline_images.append((cid, img_bytes, subtype))
+            return f"cid:{cid}"
+        except Exception as b64_err:
+            logger.warning(f"Could not decode base64 inline image: {b64_err}")
+            return match.group(0)
+
+    final_html = data_uri_pattern.sub(_cid_replacer, html_content)
+
     # Attach plain text version
-    plain_text = html_to_plain_text(html_content)
+    plain_text = html_to_plain_text(final_html)
     part_text = MIMEText(plain_text, "plain", "utf-8")
-    msg.attach(part_text)
 
     # Attach HTML version
-    part_html = MIMEText(html_content, "html", "utf-8")
-    msg.attach(part_html)
+    part_html = MIMEText(final_html, "html", "utf-8")
+
+    if inline_images:
+        # Re-initialize msg as multipart/related so images are embedded inline
+        headers_dict = dict(msg.items())
+        msg = MIMEMultipart("related")
+        for h_key, h_val in headers_dict.items():
+            msg[h_key] = h_val
+
+        alt_part = MIMEMultipart("alternative")
+        alt_part.attach(part_text)
+        alt_part.attach(part_html)
+        msg.attach(alt_part)
+
+        for idx, (cid, img_bytes, subtype) in enumerate(inline_images):
+            try:
+                img_part = MIMEImage(img_bytes, _subtype=subtype)
+                img_part.add_header("Content-ID", f"<{cid}>")
+                img_part.add_header("Content-Disposition", "inline", filename=f"image_{idx+1}.{subtype}")
+                msg.attach(img_part)
+            except Exception as img_err:
+                logger.warning(f"Error attaching MIME inline image {cid}: {img_err}")
+    else:
+        msg.attach(part_text)
+        msg.attach(part_html)
 
     # Build recipient list including optional BCC (supports 1, 2, or more comma- or semicolon-separated addresses)
     destinations = [target_recipient]

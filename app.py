@@ -18,6 +18,8 @@ if current_script_dir not in sys.path:
 
 import streamlit as st
 
+import threading
+
 from database import (
     init_db,
     get_contacts,
@@ -41,6 +43,25 @@ try:
     start_tracking_server(port=8502)
 except Exception:
     pass
+
+# Ensure background scheduler thread is running on Streamlit Cloud & local server
+def ensure_background_scheduler():
+    for t in threading.enumerate():
+        if t.name == "SellomizeSchedulerThread" and t.is_alive():
+            return
+    try:
+        from scheduler import start_scheduler_loop
+        t = threading.Thread(
+            target=start_scheduler_loop,
+            kwargs={"interval": 15},
+            name="SellomizeSchedulerThread",
+            daemon=True
+        )
+        t.start()
+    except Exception:
+        pass
+
+ensure_background_scheduler()
 
 st.set_page_config(
     page_title="Sellomize Reach | Agency Email Automation",

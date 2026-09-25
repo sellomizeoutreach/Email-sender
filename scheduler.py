@@ -173,9 +173,9 @@ def get_next_valid_sending_datetime(
     and daily working hours. If outside hours or on a weekend/pause day, advances
     to the next allowed day at start_time.
     """
-    dt = base_dt or datetime.now().astimezone()
+    dt = base_dt or get_engine_now()
     if dt.tzinfo is None:
-        dt = dt.astimezone()
+        dt = dt.replace(tzinfo=get_engine_now().tzinfo)
 
     if delay_minutes > 0:
         dt = dt + timedelta(minutes=delay_minutes)
@@ -258,9 +258,9 @@ def calculate_staggered_schedule(
     import random
     rng = random.Random(jitter_seed) if jitter_seed is not None else random
 
-    dt = base_dt or datetime.now().astimezone()
+    dt = base_dt or get_engine_now()
     if dt.tzinfo is None:
-        dt = dt.astimezone()
+        dt = dt.replace(tzinfo=get_engine_now().tzinfo)
 
     normalized_mode = (stagger_mode or "fixed_interval").strip().lower()
 
@@ -377,7 +377,7 @@ def analyze_schedule_overflow(
     overflow_count = len(overflow_contacts)
     fits_today = (overflow_count == 0)
 
-    ref = reference_dt or datetime.now().astimezone()
+    ref = reference_dt or get_engine_now()
     if ref.tzinfo is None and first_dt.tzinfo is not None:
         ref = ref.replace(tzinfo=first_dt.tzinfo)
 
