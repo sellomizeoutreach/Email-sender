@@ -121,14 +121,11 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                     st.error("Please enter a template name.")
                 else:
                     if is_new:
+                        # subject param supported — save everything in one call
                         new_id = create_template(
                             template_name=tpl_name_val.strip(),
-                            body_content=current_body.strip()
-                        )
-                        update_template(
-                            template_id=new_id,
-                            name=tpl_name_val.strip(),
                             subject=tpl_subj_val.strip(),
+                            body_content=current_body.strip(),
                             body_html=current_body.strip()
                         )
                         st.session_state["editing_template_id"] = new_id
@@ -203,23 +200,31 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
         for j, t in enumerate(row_templates):
             with cols[j]:
                 with st.container(border=True):
-                    tid = t["id"]
+                    tid   = t["id"]
                     tname = t.get("template_name") or t.get("name") or f"Template #{tid}"
-                    tsubj = t.get("subject") or "No Subject"
+                    # tsubj_raw: actual stored value (may be empty)
+                    tsubj_raw = t.get("subject") or ""
+                    # tsubj_display: fallback only for the card label
+                    tsubj_display = tsubj_raw if tsubj_raw else "No Subject"
                     tbody = t.get("body_content") or t.get("body_html") or ""
 
                     st.markdown(f"""
                     <div style="font-weight:700; font-size:14px; color:#083731; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{html.escape(tname)}</div>
-                    <div style="font-size:12px; color:#64748B; margin:3px 0 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Subject: {html.escape(tsubj)}</div>
+                    <div style="font-size:12px; color:#64748B; margin:3px 0 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Subject: {html.escape(tsubj_display)}</div>
                     """, unsafe_allow_html=True)
 
                     c1, c2, c3, c4 = st.columns([1.1, 1.2, 1.1, 0.6])
                     with c1:
                         if st.button("📥 Load", key=f"tpl_load_{tid}", use_container_width=True):
-                            st.session_state["compose_subject"] = tsubj
+                            # Load raw subject into Compose (empty string if none stored)
+                            st.session_state["compose_subject"]  = tsubj_raw
                             st.session_state["compose_body_html"] = tbody
-                            st.session_state["active_screen"] = "compose"
-                            st.session_state["main_app_tabs"] = "✍️ Compose"
+                            # Clear editor state so new content takes over
+                            st.session_state.pop("compose_body_html", None)
+                            st.session_state["compose_body_html"] = tbody
+                            st.session_state.pop("compose_visual_textarea", None)
+                            st.session_state["active_screen"]    = "compose"
+                            st.session_state["main_app_tabs"]    = "✍️ Compose"
                             trigger_toast(f"Loaded '{tname}' into Compose!", icon="✍️")
                             st.rerun()
 
@@ -234,9 +239,12 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                     with c3:
                         if st.button("✏️ Edit", key=f"tpl_grid_edit_{tid}", use_container_width=True):
                             st.session_state["editing_template_id"] = tid
-                            st.session_state["tpl_name"] = tname
-                            st.session_state["tpl_subject"] = tsubj
-                            st.session_state["tpl_body_html"] = tbody
+                            st.session_state["tpl_name"]            = tname
+                            st.session_state["tpl_subject"]         = tsubj_raw
+                            st.session_state["tpl_body_html"]       = tbody
+                            # Clear editor cache so the loaded body renders fresh
+                            st.session_state.pop("tpl_editor_body_html", None)
+                            st.session_state.pop("tpl_editor_visual_textarea", None)
                             st.rerun()
 
                     with c4:
