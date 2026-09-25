@@ -140,279 +140,8 @@ def _get_default_copy(touch_step, sample_contact, is_single_recipient):
 
 
 # ---------------------------------------------------------------------------
-# Main compose tab
+# Dialog: Confirm Outreach & Schedule Sequence (UTC+5)
 # ---------------------------------------------------------------------------
-
-def render_compose_tab(contacts=None, templates=None):
-    """Render the Compose screen matching sellomize_reference.html."""
-    if contacts is None:
-        contacts = get_contacts()
-    if templates is None:
-        templates = get_templates()
-
-    smtp_accounts = get_smtp_accounts(active_only=True)
-
-    # Prefill from Leads tab
-    prefill_lead_id = st.session_state.pop("prefill_compose_lead_id", None)
-    if prefill_lead_id:
-        st.session_state["compose_selected_lead_id"] = prefill_lead_id
-
-    # Default body / subject
-    if "compose_body_html" not in st.session_state:
-        st.session_state["compose_body_html"] = (
-            "Hi [Name],\n\n"
-            "We haven't been properly introduced, but I was looking through [Company] on Amazon and noticed a number of listings showing currently unavailable.\n\n"
-            "When a customer searches and finds it unavailable, the sale simply stops there. I'd be glad to take a look together."
-        )
-    if "compose_subject" not in st.session_state:
-        st.session_state["compose_subject"] = "[Company] + Amazon"
-
-    # Custom-address mode flag
-    if "compose_custom_mode" not in st.session_state:
-        st.session_state["compose_custom_mode"] = False
-
-    # Follow-up sequence state in Compose (same row tabs)
-    if "compose_followups" not in st.session_state:
-        st.session_state["compose_followups"] = []
-
-    col_editor, col_preview = st.columns([1.1, 0.9], gap="large")
-
-    with col_editor:
-        # =====================================================================
-        # ROW 1 — Mailbox + Recipient + Custom-address toggle
-        # =====================================================================
-        c_mb, c_rcpt = st.columns(2)
-
-        with c_mb:
-            st.markdown('<span class="lbl">Sending mailbox</span>', unsafe_allow_html=True)
-            if not smtp_accounts:
-                st.warning("No active Hostinger mailboxes. Configure in Settings.")
-                selected_mb = None
-            else:
-                mb_choices = {
-                    f"{a.get('sender_name') or 'Mailbox'} <{a['email']}>": a
-                    for a in smtp_accounts
-                }
-                sel_mb_label = st.selectbox(
-                    "Mailbox", list(mb_choices.keys()),
-                    label_visibility="collapsed", key="comp_mb_pick"
-                )
-                selected_mb = mb_choices[sel_mb_label]
-
-        with c_rcpt:
-            st.markdown('<span class="lbl">To (lead or type an address)</span>', unsafe_allow_html=True)
-            custom_mode = st.session_state["compose_custom_mode"]
-            btn_label   = "📋 Pick from CRM" if custom_mode else "✏️ Custom address"
-            if st.button(btn_label, key="comp_custom_toggle", use_container_width=True):
-                st.session_state["compose_custom_mode"] = not custom_mode
-                st.rerun()
-
-        # Build lead list + either dropdown or custom input
-        lead_choices: Dict[str, Any] = {}
-        for c in contacts:
-            label = (
-                f"{c.get('name') or 'Lead'} <{c.get('email')}>"
-                + (f" — {c.get('company')}" if c.get("company") else "")
-            )
-            lead_choices[label] = c
-
-        if st.session_state["compose_custom_mode"]:
-            custom_email = st.text_input(
-                "Custom recipient email",
-                placeholder="e.g. partner@example.com or Jane Doe <jane@example.com>",
-                label_visibility="collapsed",
-                key="comp_custom_email_in"
-            )
-            chosen_lead_obj = None
-        else:
-            preselected_idx = 0
-            target_prefill_id = st.session_state.get("compose_selected_lead_id")
-            if target_prefill_id:
-                for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
-                    if l_obj and l_obj.get("id") == target_prefill_id:
-                        preselected_idx = idx
-                        break
-
-            sel_lead_label = st.selectbox(
-                "To", list(lead_choices.keys()),
-                index=preselected_idx,
-                label_visibility="collapsed",
-                key="comp_lead_pick"
-            )
-            chosen_lead_obj = lead_choices.get(sel_lead_label)
-            custom_email    = chosen_lead_obj.get("email", "") if chosen_lead_obj else ""
-
-        # Resolve active recipient
-        if custom_email.strip():
-            matched = get_contact_by_email(custom_email.strip())
-            if matched:
-                current_lead = matched
-            else:
-                current_lead = {
-                    "id":                   None,
-                    "name":                 custom_email.split("@")[0].capitalize(),
-                    "email":                custom_email.strip(),
-                    "company":              "",
-                    "country_or_timezone":  "LOCAL",
-                }
-        elif chosen_lead_obj:
-            current_lead = chosen_lead_obj
-        else:
-            current_lead = {
-                "name":    "Danessa Myricks",
-                "email":   "danessa@dmbeauty.com",
-                "company": "DM Beauty",
-                "country_or_timezone": "LOCAL",
-            }
-
-        # =====================================================================
-        # SEQUENCE TABS: Initial Email + Follow-ups in the SAME ROW
-        # =====================================================================
-        st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:14px 0 10px;'>", unsafe_allow_html=True)
-        seq_hdr1, seq_hdr2 = st.columns([3.2, 1.8], vertical_alignment="center")
-        with seq_hdr1:
-            st.markdown("<span class='lbl' style='font-size:13px; font-weight:700;'>Message &amp; Sequence</span>", unsafe_allow_html=True)
-        with seq_hdr2:
-            num_fu = len(st.session_state["compose_followups"])
-            can_add_fu = num_fu < 3
-            if st.button(
-                f"➕ Add follow-up{'' if can_add_fu else ' (max 3)'}",
-                key="comp_add_fu_btn",
-                use_container_width=True,
-                disabled=not can_add_fu,
-                help="Adds a follow-up tab in this row — each editable separately"
-            ):
-                fu_step_num = num_fu + 1
-                default_delay = fu_step_num * 3
-                curr_subj = st.session_state.get("compose_subject", "[Company] + Amazon")
-                re_subj = f"Re: {curr_subj}" if not curr_subj.startswith("Re:") else curr_subj
-                st.session_state["compose_followups"].append({
-                    "delay_days": default_delay,
-                    "subject": re_subj,
-                    "body": "Hi [Name],\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
-                })
-                st.rerun()
-
-        # Build tabs
-        tab_titles = ["📧 Initial Email"] + [
-            f"↩️ Follow-up #{i+1} (+{fu['delay_days']}d)"
-            for i, fu in enumerate(st.session_state["compose_followups"])
-        ]
-        tabs = st.tabs(tab_titles)
-
-        # --- Tab 0: Initial Email ---
-        with tabs[0]:
-            st.markdown('<span class="lbl">Subject</span>', unsafe_allow_html=True)
-            subj_val = st.text_input(
-                "Subject",
-                value=st.session_state.get("compose_subject", ""),
-                label_visibility="collapsed",
-                key="comp_subj_in"
-            )
-            st.session_state["compose_subject"] = subj_val
-
-            st.markdown('<span class="lbl">Body</span>', unsafe_allow_html=True)
-            current_body = render_dual_mode_editor(
-                key_prefix="compose",
-                initial_content=st.session_state.get("compose_body_html", ""),
-                height=180
-            )
-            st.session_state["compose_body_html"] = current_body
-
-        # --- Tab 1+: Follow-up steps ---
-        for idx, fu in enumerate(st.session_state["compose_followups"]):
-            with tabs[idx + 1]:
-                fu_top1, fu_top2 = st.columns([3.5, 1.5], vertical_alignment="center")
-                with fu_top1:
-                    fu["delay_days"] = st.slider(
-                        f"Send follow-up #{idx+1} days after initial email:",
-                        min_value=1,
-                        max_value=30,
-                        value=fu["delay_days"],
-                        key=f"comp_fu_{idx}_delay_slider"
-                    )
-                with fu_top2:
-                    if st.button("🗑️ Remove", key=f"comp_fu_del_{idx}", use_container_width=True):
-                        st.session_state["compose_followups"].pop(idx)
-                        st.rerun()
-
-                st.markdown('<span class="lbl">Follow-up Subject</span>', unsafe_allow_html=True)
-                fu["subject"] = st.text_input(
-                    "Follow-up Subject",
-                    value=fu["subject"],
-                    key=f"comp_fu_{idx}_subj_in",
-                    label_visibility="collapsed"
-                )
-
-                st.markdown('<span class="lbl">Follow-up Body</span>', unsafe_allow_html=True)
-                fu["body"] = st.text_area(
-                    "Follow-up Body",
-                    value=fu["body"],
-                    height=140,
-                    key=f"comp_fu_{idx}_body_in",
-                    label_visibility="collapsed"
-                )
-
-                # Quick token insertion buttons for follow-up
-                c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3])
-                with c_tok1:
-                    if st.button("👤 [Name]", key=f"comp_fu_tok_name_{idx}", use_container_width=True):
-                        fu["body"] = fu["body"] + " [Name]"
-                        st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
-                        st.rerun()
-                with c_tok2:
-                    if st.button("🏢 [Company]", key=f"comp_fu_tok_comp_{idx}", use_container_width=True):
-                        fu["body"] = fu["body"] + " [Company]"
-                        st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
-                        st.rerun()
-                with c_tok3:
-                    if st.button("🖋️ Signature", key=f"comp_fu_tok_sig_{idx}", use_container_width=True):
-                        sig = get_config("signature_html", "") or "Best regards,\nOutreach Team"
-                        fu["body"] = fu["body"] + f"\n\n{sig}"
-                        st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
-                        st.rerun()
-
-                st.caption(f"📅 Follow-up #{idx+1} will queue to send **{fu['delay_days']} days** after the initial email.")
-
-        # =====================================================================
-        # Safety & Deliverability check (on initial email)
-        # =====================================================================
-        final_subj = inject_variables(parse_spintax(subj_val), current_lead)
-        final_body = resolve_template(current_body, current_lead)
-
-        missing_tokens = sorted(list(set(_missing_tokens(final_subj) + _missing_tokens(final_body))))
-        neg_keywords   = get_config("negative_keywords", "")
-        audit          = audit_email_deliverability(body_html=final_body, subject=final_subj, custom_negative_keywords=neg_keywords)
-        triggers       = audit.get("detected_spam_words", [])
-
-        if triggers:
-            trig_names = ", ".join(f'"{t.get("word")}"' for t in triggers[:2])
-            st.markdown(
-                f'<div class="spam"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
-                f'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
-                f' {len(triggers)} spam trigger: <b>&nbsp;{trig_names}</b> &nbsp;·&nbsp; edit to enable send</div>',
-                unsafe_allow_html=True
-            )
-            can_send = False
-        else:
-            can_send = bool((current_lead.get("email") or "").strip())
-
-        if missing_tokens:
-            toks_str = ", ".join(missing_tokens)
-            st.markdown(
-                f'<div class="spam" style="color:#DC2626;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
-                f'<path d="M18 6 6 18M6 6l12 12"/></svg>'
-                f' Unfilled tokens: <b>{toks_str}</b> — fill before send</div>',
-                unsafe_allow_html=True
-            )
-            can_send = False
-        else:
-            st.markdown(
-                '<div class="guard"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
-                '<path d="M20 6 9 17l-5-5"/></svg>'
-                ' No unfilled tokens — send guard clear</div>',
-                unsafe_allow_html=True
-            )
 
 @st.dialog("🚀 Confirm Outreach & Schedule Sequence (UTC+5)")
 def render_compose_schedule_dialog(
@@ -565,6 +294,306 @@ def render_compose_schedule_dialog(
             st.session_state["main_app_tabs"] = "📥 Outbox"
             st.rerun()
 
+
+# ---------------------------------------------------------------------------
+# Main compose tab
+# ---------------------------------------------------------------------------
+
+def render_compose_tab(contacts=None, templates=None):
+    """Render the Compose screen matching sellomize_reference.html."""
+    if contacts is None:
+        contacts = get_contacts()
+    if templates is None:
+        templates = get_templates()
+
+    smtp_accounts = get_smtp_accounts(active_only=True)
+
+    # Prefill from Leads tab
+    prefill_lead_id = st.session_state.pop("prefill_compose_lead_id", None)
+    if prefill_lead_id:
+        st.session_state["compose_selected_lead_id"] = prefill_lead_id
+
+    # Default body / subject
+    if "compose_body_html" not in st.session_state:
+        st.session_state["compose_body_html"] = (
+            "Hi [Name],\n\n"
+            "We haven't been properly introduced, but I was looking through [Company] on Amazon and noticed a number of listings showing currently unavailable.\n\n"
+            "When a customer searches and finds it unavailable, the sale simply stops there. I'd be glad to take a look together."
+        )
+    if "compose_subject" not in st.session_state:
+        st.session_state["compose_subject"] = "[Company] + Amazon"
+
+    # Custom-address mode flag
+    if "compose_custom_mode" not in st.session_state:
+        st.session_state["compose_custom_mode"] = False
+
+    # Follow-up sequence state in Compose (same row tabs)
+    if "compose_followups" not in st.session_state:
+        st.session_state["compose_followups"] = []
+
+    col_editor, col_preview = st.columns([1.1, 0.9], gap="large")
+
+    with col_editor:
+        # =====================================================================
+        # ROW 1 — Mailbox + Recipient + Custom-address toggle
+        # =====================================================================
+        c_mb, c_rcpt = st.columns(2)
+
+        with c_mb:
+            st.markdown('<span class="lbl">Sending mailbox</span>', unsafe_allow_html=True)
+            if not smtp_accounts:
+                st.warning("No active Hostinger mailboxes. Configure in Settings.")
+                selected_mb = None
+            else:
+                mb_choices = {
+                    f"{a.get('sender_name') or 'Mailbox'} <{a['email']}>": a
+                    for a in smtp_accounts
+                }
+                sel_mb_label = st.selectbox(
+                    "Mailbox", list(mb_choices.keys()),
+                    label_visibility="collapsed", key="comp_mb_pick"
+                )
+                selected_mb = mb_choices[sel_mb_label]
+
+        with c_rcpt:
+            st.markdown('<span class="lbl">To (lead or type an address)</span>', unsafe_allow_html=True)
+            custom_mode = st.session_state["compose_custom_mode"]
+            btn_label   = "📋 Pick from CRM" if custom_mode else "✏️ Custom address"
+            if st.button(btn_label, key="comp_custom_toggle", use_container_width=True):
+                st.session_state["compose_custom_mode"] = not custom_mode
+                st.rerun()
+
+        # Build lead list + either dropdown or custom input
+        lead_choices: Dict[str, Any] = {}
+        for c in contacts:
+            label = (
+                f"{c.get('name') or 'Lead'} <{c.get('email')}>"
+                + (f" — {c.get('company')}" if c.get("company") else "")
+            )
+            lead_choices[label] = c
+
+        if st.session_state["compose_custom_mode"]:
+            custom_email = st.text_input(
+                "Custom recipient email",
+                placeholder="e.g. partner@example.com or Jane Doe <jane@example.com>",
+                label_visibility="collapsed",
+                key="comp_custom_email_in"
+            )
+            chosen_lead_obj = None
+        else:
+            preselected_idx = 0
+            target_prefill_id = st.session_state.get("compose_selected_lead_id")
+            if target_prefill_id:
+                for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
+                    if l_obj and l_obj.get("id") == target_prefill_id:
+                        preselected_idx = idx
+                        break
+
+            sel_lead_label = st.selectbox(
+                "To", list(lead_choices.keys()),
+                index=preselected_idx,
+                label_visibility="collapsed",
+                key="comp_lead_pick"
+            )
+            chosen_lead_obj = lead_choices.get(sel_lead_label)
+            custom_email    = chosen_lead_obj.get("email", "") if chosen_lead_obj else ""
+
+        # Resolve active recipient
+        if custom_email.strip():
+            matched = get_contact_by_email(custom_email.strip())
+            if matched:
+                current_lead = matched
+            else:
+                current_lead = {
+                    "id":                   None,
+                    "name":                 custom_email.split("@")[0].capitalize(),
+                    "email":                custom_email.strip(),
+                    "company":              "",
+                    "country_or_timezone":  "LOCAL",
+                }
+        elif chosen_lead_obj:
+            current_lead = chosen_lead_obj
+        else:
+            current_lead = {
+                "name":    "Danessa Myricks",
+                "email":   "danessa@dmbeauty.com",
+                "company": "DM Beauty",
+                "country_or_timezone": "LOCAL",
+            }
+
+        # =====================================================================
+        # SEQUENCE TABS: Initial Email + Follow-ups in the SAME ROW
+        # =====================================================================
+        st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:14px 0 10px;'>", unsafe_allow_html=True)
+        num_fu = len(st.session_state["compose_followups"])
+        can_add_fu = num_fu < 3
+        if num_fu > 0:
+            seq_hdr1, seq_hdr2, seq_hdr3 = st.columns([2.0, 1.8, 1.2], vertical_alignment="center")
+            with seq_hdr1:
+                st.markdown("<span class='lbl' style='font-size:13px; font-weight:700;'>Message &amp; Sequence</span>", unsafe_allow_html=True)
+            with seq_hdr2:
+                if st.button(
+                    f"➕ Add follow-up ({num_fu}/3)",
+                    key="comp_add_fu_btn",
+                    use_container_width=True,
+                    disabled=not can_add_fu,
+                    help="Adds another follow-up tab in this sequence"
+                ):
+                    fu_step_num = num_fu + 1
+                    default_delay = fu_step_num * 3
+                    curr_subj = st.session_state.get("compose_subject", "[Company] + Amazon")
+                    re_subj = f"Re: {curr_subj}" if not curr_subj.startswith("Re:") else curr_subj
+                    st.session_state["compose_followups"].append({
+                        "delay_days": default_delay,
+                        "subject": re_subj,
+                        "body": "Hi [Name],\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
+                    })
+                    st.rerun()
+            with seq_hdr3:
+                if st.button("↩️ Undo", key="comp_undo_fu_btn", use_container_width=True, help="Undo / remove last added follow-up"):
+                    st.session_state["compose_followups"].pop()
+                    st.rerun()
+        else:
+            seq_hdr1, seq_hdr2 = st.columns([3.2, 1.8], vertical_alignment="center")
+            with seq_hdr1:
+                st.markdown("<span class='lbl' style='font-size:13px; font-weight:700;'>Message &amp; Sequence</span>", unsafe_allow_html=True)
+            with seq_hdr2:
+                if st.button(
+                    "➕ Add follow-up",
+                    key="comp_add_fu_btn",
+                    use_container_width=True,
+                    help="Adds a follow-up tab in this row — each editable separately"
+                ):
+                    default_delay = 3
+                    curr_subj = st.session_state.get("compose_subject", "[Company] + Amazon")
+                    re_subj = f"Re: {curr_subj}" if not curr_subj.startswith("Re:") else curr_subj
+                    st.session_state["compose_followups"].append({
+                        "delay_days": default_delay,
+                        "subject": re_subj,
+                        "body": "Hi [Name],\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
+                    })
+                    st.rerun()
+
+        # Build tabs
+        tab_titles = ["📧 Initial Email"] + [
+            f"↩️ Follow-up #{i+1} (+{fu['delay_days']}d)"
+            for i, fu in enumerate(st.session_state["compose_followups"])
+        ]
+        tabs = st.tabs(tab_titles)
+
+        # --- Tab 0: Initial Email ---
+        with tabs[0]:
+            st.markdown('<span class="lbl">Subject</span>', unsafe_allow_html=True)
+            subj_val = st.text_input(
+                "Subject",
+                value=st.session_state.get("compose_subject", ""),
+                label_visibility="collapsed",
+                key="comp_subj_in"
+            )
+            st.session_state["compose_subject"] = subj_val
+
+            st.markdown('<span class="lbl">Body</span>', unsafe_allow_html=True)
+            current_body = render_dual_mode_editor(
+                key_prefix="compose",
+                initial_content=st.session_state.get("compose_body_html", ""),
+                height=180
+            )
+            st.session_state["compose_body_html"] = current_body
+
+        # --- Tab 1+: Follow-up steps ---
+        for idx, fu in enumerate(st.session_state["compose_followups"]):
+            with tabs[idx + 1]:
+                fu_top1, fu_top2 = st.columns([3.0, 2.0], vertical_alignment="center")
+                with fu_top1:
+                    fu["delay_days"] = st.slider(
+                        f"Send follow-up #{idx+1} days after initial email:",
+                        min_value=1,
+                        max_value=30,
+                        value=fu["delay_days"],
+                        key=f"comp_fu_{idx}_delay_slider"
+                    )
+                with fu_top2:
+                    if st.button("🗑️ Remove follow-up", key=f"comp_fu_del_{idx}", use_container_width=True):
+                        st.session_state["compose_followups"].pop(idx)
+                        st.rerun()
+
+                st.markdown('<span class="lbl">Follow-up Subject</span>', unsafe_allow_html=True)
+                fu["subject"] = st.text_input(
+                    "Follow-up Subject",
+                    value=fu["subject"],
+                    key=f"comp_fu_{idx}_subj_in",
+                    label_visibility="collapsed"
+                )
+
+                st.markdown('<span class="lbl">Follow-up Body</span>', unsafe_allow_html=True)
+                fu["body"] = st.text_area(
+                    "Follow-up Body",
+                    value=fu["body"],
+                    height=140,
+                    key=f"comp_fu_{idx}_body_in",
+                    label_visibility="collapsed"
+                )
+
+                # Quick token insertion buttons for follow-up
+                c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3])
+                with c_tok1:
+                    if st.button("👤 [Name]", key=f"comp_fu_tok_name_{idx}", use_container_width=True):
+                        fu["body"] = fu["body"] + " [Name]"
+                        st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
+                        st.rerun()
+                with c_tok2:
+                    if st.button("🏢 [Company]", key=f"comp_fu_tok_comp_{idx}", use_container_width=True):
+                        fu["body"] = fu["body"] + " [Company]"
+                        st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
+                        st.rerun()
+                with c_tok3:
+                    if st.button("🖋️ Signature", key=f"comp_fu_tok_sig_{idx}", use_container_width=True):
+                        sig = get_config("signature_html", "") or "Best regards,\nOutreach Team"
+                        fu["body"] = fu["body"] + f"\n\n{sig}"
+                        st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
+                        st.rerun()
+
+                st.caption(f"📅 Follow-up #{idx+1} will queue to send **{fu['delay_days']} days** after the initial email.")
+
+        # =====================================================================
+        # Safety & Deliverability check (on initial email)
+        # =====================================================================
+        final_subj = inject_variables(parse_spintax(subj_val), current_lead)
+        final_body = resolve_template(current_body, current_lead)
+
+        missing_tokens = sorted(list(set(_missing_tokens(final_subj) + _missing_tokens(final_body))))
+        neg_keywords   = get_config("negative_keywords", "")
+        audit          = audit_email_deliverability(body_html=final_body, subject=final_subj, custom_negative_keywords=neg_keywords)
+        triggers       = audit.get("detected_spam_words", [])
+
+        if triggers:
+            trig_names = ", ".join(f'"{t.get("word")}"' for t in triggers[:2])
+            st.markdown(
+                f'<div class="spam"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
+                f'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
+                f' {len(triggers)} spam trigger: <b>&nbsp;{trig_names}</b> &nbsp;·&nbsp; edit to enable send</div>',
+                unsafe_allow_html=True
+            )
+            can_send = False
+        else:
+            can_send = bool((current_lead.get("email") or "").strip())
+
+        if missing_tokens:
+            toks_str = ", ".join(missing_tokens)
+            st.markdown(
+                f'<div class="spam" style="color:#DC2626;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
+                f'<path d="M18 6 6 18M6 6l12 12"/></svg>'
+                f' Unfilled tokens: <b>{toks_str}</b> — fill before send</div>',
+                unsafe_allow_html=True
+            )
+            can_send = False
+        else:
+            st.markdown(
+                '<div class="guard"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
+                '<path d="M20 6 9 17l-5-5"/></svg>'
+                ' No unfilled tokens — send guard clear</div>',
+                unsafe_allow_html=True
+            )
 
         # =====================================================================
         # ACTION BUTTONS (Send now, Schedule, Save draft, Save template)
