@@ -144,8 +144,11 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
             if st.button("✍️ Load in Compose", use_container_width=True, key="btn_load_comp"):
                 st.session_state["compose_subject"] = tpl_subj_val.strip()
                 st.session_state["compose_body_html"] = current_body.strip()
+                st.session_state.pop("compose_visual_textarea", None)
+                st.session_state["compose_last_synced_html"] = current_body.strip()
                 st.session_state["active_screen"] = "compose"
                 st.session_state["main_app_tabs"] = "✍️ Compose"
+                trigger_toast("Loaded template into Compose!", icon="✍️")
                 st.rerun()
 
         with btn_bulk:

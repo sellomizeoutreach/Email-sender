@@ -95,7 +95,7 @@ def extract_images_to_placeholders(html_text: str) -> Tuple[str, Dict[str, str]]
     """
     if not html_text:
         return "", {}
-    img_pattern = re.compile(r'<img\s+[^>]*?>', re.IGNORECASE)
+    img_pattern = re.compile(r'<img[\s/][^>]*?>', re.IGNORECASE)
     tags = img_pattern.findall(html_text)
     img_map = {}
     clean_text = html_text
@@ -114,6 +114,90 @@ def restore_images_from_placeholders(text: str, img_map: Dict[str, str]) -> str:
     for ph, tag in img_map.items():
         restored = restored.replace(ph, tag)
     return restored
+
+
+def sanitize_visual_text(text: str, img_map: Dict[str, str]) -> Tuple[str, Dict[str, str], bool]:
+    """
+    Sanitizes visual editor text to ensure NO raw HTML tags, data URIs, or base64 junk
+    can ever contaminate the human-readable text area.
+    
+    Detects and converts:
+    1. Full <img ...> tags -> [Image X]
+    2. data:image/... URIs -> [Image X]
+    3. Contiguous base64 blocks (>= 80 chars of [A-Za-z0-9+/=]) -> [Image X]
+    
+    Returns (cleaned_text, updated_img_map, did_clean).
+    """
+    if not text:
+        return text, img_map, False
+
+    modified = False
+    clean_text = text
+    updated_map = dict(img_map)
+
+    def _next_placeholder() -> str:
+        existing_nums = [
+            int(m.group(1)) for m in re.finditer(r'\[Image\s+(\d+)\]', clean_text, re.IGNORECASE)
+        ]
+        next_num = (max(existing_nums) + 1) if existing_nums else (len(updated_map) + 1)
+        return f"[Image {next_num}]"
+
+    # 1. Full <img> tags: <img ...>
+    img_tag_pattern = re.compile(r'<img[\s/][^>]*?>', re.IGNORECASE)
+    for match in img_tag_pattern.finditer(clean_text):
+        tag = match.group(0)
+        existing_ph = None
+        for ph, mapped_tag in updated_map.items():
+            if mapped_tag == tag:
+                existing_ph = ph
+                break
+        if not existing_ph:
+            existing_ph = _next_placeholder()
+            updated_map[existing_ph] = tag
+
+        clean_text = clean_text.replace(tag, existing_ph, 1)
+        modified = True
+
+    # 2. Raw data:image/... URIs (e.g. data:image/png;base64,...)
+    data_uri_pattern = re.compile(r'data:image/([a-zA-Z0-9\+\-]+);base64,([A-Za-z0-9+/=\s]+)', re.IGNORECASE)
+    for match in data_uri_pattern.finditer(clean_text):
+        full_uri = match.group(0).strip()
+        tag = (f'<img src="{full_uri}" alt="Screenshot" '
+               f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+        ph = _next_placeholder()
+        updated_map[ph] = tag
+        clean_text = clean_text.replace(full_uri, ph, 1)
+        modified = True
+
+    # 3. Contiguous base64 strings of >= 80 chars
+    b64_pattern = re.compile(r'(?<![A-Za-z0-9+/=:\.])[A-Za-z0-9+/=]{80,}(?![A-Za-z0-9+/=])')
+    b64_matches = list(b64_pattern.finditer(clean_text))
+    if b64_matches:
+        for match in b64_matches:
+            b64_str = match.group(0)
+            ph = None
+            for existing_ph, existing_tag in updated_map.items():
+                if existing_ph not in clean_text and b64_str in existing_tag:
+                    ph = existing_ph
+                    break
+            if not ph:
+                for existing_ph in updated_map.keys():
+                    if existing_ph not in clean_text:
+                        ph = existing_ph
+                        break
+            if not ph:
+                ph = _next_placeholder()
+                tag = (f'<img src="data:image/png;base64,{b64_str}" alt="Screenshot" '
+                       f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                updated_map[ph] = tag
+
+            clean_text = clean_text.replace(b64_str, ph, 1)
+            modified = True
+
+    if modified:
+        clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
+
+    return clean_text, updated_map, modified
 
 
 def markdown_inline_to_html(text: str) -> str:
@@ -295,9 +379,10 @@ def render_dual_mode_editor(
     - Visual mode: clean editable copy (NO raw HTML tags), toolbar, variable chips, image gallery.
     - Source mode: raw HTML textarea for power users.
     """
-    state_key    = f"{key_prefix}_body_html"
-    mode_key     = f"{key_prefix}_editor_mode"
-    textarea_key = f"{key_prefix}_visual_textarea"
+    state_key        = f"{key_prefix}_body_html"
+    mode_key         = f"{key_prefix}_editor_mode"
+    textarea_key     = f"{key_prefix}_visual_textarea"
+    last_synced_html = f"{key_prefix}_last_synced_html"
 
     if state_key not in st.session_state:
         st.session_state[state_key] = initial_content
@@ -314,24 +399,43 @@ def render_dual_mode_editor(
         # Pre-compute clean visual text from stored HTML
         visual_text, img_map = html_to_visual_text(current_body)
 
+        # External state sync: if state_key was changed externally (e.g. template loaded)
+        prev_html = st.session_state.get(last_synced_html)
+        if prev_html is not None and prev_html != current_body:
+            st.session_state[textarea_key] = visual_text
+            st.session_state[last_synced_html] = current_body
+
         # Read the live text area value
         live_visual = st.session_state.get(textarea_key, visual_text)
+
+        # Automatic sanitization safeguard:
+        # Clean any raw <img tags, data URIs, or base64 blocks from the visual editor
+        cleaned_live, updated_img_map, did_clean = sanitize_visual_text(live_visual, img_map)
+        if did_clean:
+            live_visual = cleaned_live
+            img_map = updated_img_map
+            st.session_state[textarea_key] = live_visual
+            st.session_state[state_key] = visual_text_to_html(live_visual, img_map)
+            st.session_state[last_synced_html] = st.session_state[state_key]
+            st.rerun()
 
         # Helper: append a token to whatever the user has typed so far,
         # then sync BOTH state keys so rerun shows the token in the editor.
         def _insert(token: str):
             new_visual = live_visual + token
             new_html   = visual_text_to_html(new_visual, img_map)
-            st.session_state[state_key]    = new_html      # persistent HTML
-            st.session_state[textarea_key] = new_visual    # clean visual text
+            st.session_state[state_key]        = new_html      # persistent HTML
+            st.session_state[textarea_key]     = new_visual    # clean visual text
+            st.session_state[last_synced_html] = new_html
             st.rerun()
 
         def _insert_html(html_tag: str):
             """Insert formatted text or HTML token."""
             new_visual = live_visual + html_tag
             new_html   = visual_text_to_html(new_visual, img_map)
-            st.session_state[state_key]    = new_html
-            st.session_state[textarea_key] = new_visual
+            st.session_state[state_key]        = new_html
+            st.session_state[textarea_key]     = new_visual
+            st.session_state[last_synced_html] = new_html
             st.rerun()
 
         def _insert_image(img_tag: str):
@@ -347,15 +451,10 @@ def render_dual_mode_editor(
             new_visual = f"{live_visual}{sep}{placeholder}\n\n"
 
             new_html = visual_text_to_html(new_visual, img_map)
-            st.session_state[state_key] = new_html
-            st.session_state[textarea_key] = new_visual
+            st.session_state[state_key]        = new_html
+            st.session_state[textarea_key]     = new_visual
+            st.session_state[last_synced_html] = new_html
             st.rerun()
-
-        # Safeguard: if live_visual contains any raw <img tags, extract them to clean placeholders
-        if "<img" in live_visual.lower():
-            live_visual, extracted_imgs = extract_images_to_placeholders(live_visual)
-            img_map.update(extracted_imgs)
-            st.session_state[textarea_key] = live_visual
 
         # ------------------------------------------------------------------
         # Row 1: Formatting toolbar
@@ -471,9 +570,9 @@ def render_dual_mode_editor(
                 st.rerun()
 
         # ------------------------------------------------------------------
-        # Row 2: Personalization chips
+        # Row 2: Personalization chips + Clean button
         # ------------------------------------------------------------------
-        chip_cols = st.columns([1.1, 1.3, 1.3, 1.5])
+        chip_cols = st.columns([1.0, 1.1, 1.2, 1.2, 0.9])
 
         with chip_cols[0]:
             if st.button("👤 [Name]", key=f"{key_prefix}_chip_name",
@@ -515,6 +614,18 @@ def render_dual_mode_editor(
                 sig = get_config("signature_html", "") or "Best regards,\nOutreach Team"
                 _insert(f"\n\n{sig}")
 
+        with chip_cols[4]:
+            if st.button("🧹 Clean", key=f"{key_prefix}_chip_clean",
+                         help="Clean up raw code, fix formatting, and ensure images are clean [Image] tokens",
+                         use_container_width=True):
+                cur = st.session_state.get(textarea_key, live_visual)
+                cleaned, new_img_map, _ = sanitize_visual_text(cur, img_map)
+                st.session_state[textarea_key] = cleaned
+                st.session_state[state_key] = visual_text_to_html(cleaned, new_img_map)
+                st.session_state[last_synced_html] = st.session_state[state_key]
+                trigger_toast("Editor cleaned!", icon="🧹")
+                st.rerun()
+
         # ------------------------------------------------------------------
         # Image gallery (visual thumbnails for embedded images)
         # ------------------------------------------------------------------
@@ -547,6 +658,7 @@ def render_dual_mode_editor(
                             img_map.pop(ph, None)
                             st.session_state[textarea_key] = cur_vis
                             st.session_state[state_key] = visual_text_to_html(cur_vis, img_map)
+                            st.session_state[last_synced_html] = st.session_state[state_key]
                             trigger_toast(f"Removed {ph}.", icon="🗑️")
                             st.rerun()
 
@@ -555,7 +667,7 @@ def render_dual_mode_editor(
         # ------------------------------------------------------------------
         edited_val = st.text_area(
             "Visual Content Editor",
-            value=visual_text,
+            value=live_visual,
             height=height,
             key=textarea_key,
             label_visibility="collapsed",
@@ -564,6 +676,7 @@ def render_dual_mode_editor(
 
         # Convert clean visual text back to structured HTML for dispatch & preview
         st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
+        st.session_state[last_synced_html] = st.session_state[state_key]
 
     # =========================================================================
     # SOURCE MODE (raw HTML)
