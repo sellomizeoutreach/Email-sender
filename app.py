@@ -30,6 +30,7 @@ from tracker import start_tracking_server
 from ui.shell import render_app_shell
 from ui.compose import render_compose_tab
 from ui.templates import render_templates_tab
+from ui.ai_studio import render_ai_studio_tab
 from ui.leads import render_leads_tab
 from ui.bulk import render_bulk_tab
 from ui.outbox import render_outbox_tab
@@ -74,6 +75,7 @@ st.set_page_config(
 TAB_TO_SCREEN = {
     "✍️ Compose": "compose",
     "📄 Templates": "templates",
+    "✨ AI Studio": "ai_studio",
     "👥 Leads": "leads",
     "🚀 Bulk Send": "bulk",
     "📥 Outbox": "outbox",
@@ -110,12 +112,14 @@ all_contacts = get_contacts()
 all_templates = get_templates()
 
 # ==============================================================================
-# RENDER ACTIVE SCREEN (Exactly 6 destinations)
+# RENDER ACTIVE SCREEN
 # ==============================================================================
 if screen_key == "compose":
     render_compose_tab(all_contacts, all_templates)
 elif screen_key == "templates":
     render_templates_tab(all_templates)
+elif screen_key == "ai_studio":
+    render_ai_studio_tab(all_contacts)
 elif screen_key == "leads":
     render_leads_tab(all_contacts)
 elif screen_key == "bulk":

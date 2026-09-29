@@ -76,6 +76,7 @@ def render_sidebar_nav() -> str:
         screens = [
             ("compose", "✍️  Compose"),
             ("templates", "📄  Templates"),
+            ("ai_studio", "✨  AI Studio"),
             ("leads", "👥  Leads"),
             ("bulk", "🚀  Bulk Send"),
             ("outbox", "📥  Outbox"),
@@ -110,6 +111,7 @@ def render_topbar(screen_key: str):
     screen_meta = {
         "compose": ("Compose", "Write, style and send one email — Hostinger direct."),
         "templates": ("Templates", "Reusable emails. Load into Compose, or use in bulk."),
+        "ai_studio": ("AI Studio", "Train your AI assistant, analyze Amazon listing images, and generate tailored pitches."),
         "leads": ("Leads", "Your cherry-picked prospects. Import CSV, full CRM columns."),
         "bulk": ("Bulk Send", "One template to a group, spread over time per timezone."),
         "outbox": ("Outbox", "Scheduled, sent and failed — cancel a follow-up before it fires."),
