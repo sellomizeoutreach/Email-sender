@@ -570,38 +570,44 @@ def render_bulk_tab():
                     all_tags.add(clean)
         tag_list = sorted(list(all_tags))
 
-        # Filter by Tag Pills
+        # Filter by Tag Pills (Horizontal Scroll showing ALL tags)
         if tag_list:
             st.markdown("<div style='font-size:12px; color:#64748B; margin-bottom:4px;'>Filter by tag:</div>", unsafe_allow_html=True)
             if "bulk_tag_filter" not in st.session_state:
                 st.session_state["bulk_tag_filter"] = "all"
 
-            tag_cols = st.columns(min(len(tag_list) + 1, 5))
-            with tag_cols[0]:
+            try:
+                tag_box = st.container(horizontal=True, wrap=False)
+            except TypeError:
+                tag_box = st.container()
+
+            with tag_box:
                 if st.button("All tags", key="tag_pill_all",
                              type="primary" if st.session_state["bulk_tag_filter"] == "all" else "secondary"):
                     st.session_state["bulk_tag_filter"] = "all"
                     st.rerun()
-            for idx, tag in enumerate(tag_list[:4]):
-                with tag_cols[idx + 1]:
+                for tag in tag_list:
                     if st.button(tag, key=f"tag_pill_{tag}",
                                  type="primary" if st.session_state["bulk_tag_filter"] == tag else "secondary"):
                         st.session_state["bulk_tag_filter"] = tag
                         st.rerun()
 
-        # Filter by Status Pills
+        # Filter by Status Pills (Horizontal Scroll)
         st.markdown("<div style='font-size:12px; color:#64748B; margin:8px 0 4px;'>Filter by status / stage:</div>", unsafe_allow_html=True)
         if "bulk_status_filter" not in st.session_state:
             st.session_state["bulk_status_filter"] = "New"
 
-        st_cols = st.columns(len(LEAD_STATUSES) + 1)
-        with st_cols[0]:
+        try:
+            st_box = st.container(horizontal=True, wrap=False)
+        except TypeError:
+            st_box = st.container()
+
+        with st_box:
             if st.button("All", key="st_pill_all",
                          type="primary" if st.session_state["bulk_status_filter"] == "all" else "secondary"):
                 st.session_state["bulk_status_filter"] = "all"
                 st.rerun()
-        for idx, st_name in enumerate(LEAD_STATUSES):
-            with st_cols[idx + 1]:
+            for st_name in LEAD_STATUSES:
                 if st.button(st_name, key=f"st_pill_{st_name}",
                              type="primary" if st.session_state["bulk_status_filter"] == st_name else "secondary"):
                     st.session_state["bulk_status_filter"] = st_name

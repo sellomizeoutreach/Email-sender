@@ -248,6 +248,29 @@ SELLOMIZE_THEME_CSS = """<style>
         background: rgba(8, 55, 49, 0.25);
         border-radius: 8px;
     }
+
+    /* Horizontal scroll containers for tags and pills */
+    div[data-testid="stHorizontalBlock"] {
+        overflow-x: auto !important;
+        scrollbar-width: thin !important;
+        scrollbar-color: rgba(8, 55, 49, 0.3) transparent !important;
+        padding-bottom: 6px !important;
+    }
+    div[data-testid="stHorizontalBlock"]::-webkit-scrollbar {
+        height: 6px !important;
+    }
+    div[data-testid="stHorizontalBlock"]::-webkit-scrollbar-track {
+        background: #F8FAF9 !important;
+        border-radius: 4px !important;
+    }
+    div[data-testid="stHorizontalBlock"]::-webkit-scrollbar-thumb {
+        background: rgba(8, 55, 49, 0.3) !important;
+        border-radius: 4px !important;
+    }
+    div[data-testid="stHorizontalBlock"] button {
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+    }
     ::-webkit-scrollbar-thumb:hover {
         background: #083731;
     }
