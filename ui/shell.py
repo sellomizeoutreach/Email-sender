@@ -125,9 +125,9 @@ def render_topbar(screen_key: str):
 
     with col_title:
         st.markdown(f"""
-        <div style="margin: 0; padding: 2px 0;">
-            <h1 style="margin:0; font-size:22px; font-weight:800; color:#083731; line-height:1.2;">{title}</h1>
-            <div style="font-size:13px; color:#64748B; margin-top:2px;">{subtitle}</div>
+        <div style="margin: 0; padding: 4px 0 6px 0;">
+            <div style="margin: 0 0 4px 0; font-size: 22px; font-weight: 800; color: #083731; line-height: 1.25;">{title}</div>
+            <div style="font-size: 13px; color: #64748B; line-height: 1.45; margin: 0; padding-bottom: 4px;">{subtitle}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -141,7 +141,7 @@ def render_topbar(screen_key: str):
     with col_bell:
         render_notification_bell()
 
-    st.markdown("<div style='height:1px; background:#E2E8F0; margin-bottom:18px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 1px; background: #E2E8F0; margin-top: 14px; margin-bottom: 20px; clear: both;'></div>", unsafe_allow_html=True)
 
 
 def render_app_shell():

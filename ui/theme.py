@@ -267,9 +267,25 @@ SELLOMIZE_THEME_CSS = """<style>
         background: rgba(8, 55, 49, 0.3) !important;
         border-radius: 4px !important;
     }
-    div[data-testid="stHorizontalBlock"] button {
+    /* Prevent ellipsis text truncation on buttons & popovers */
+    div[data-testid="stHorizontalBlock"] button,
+    div[data-testid="stPopover"] > button,
+    div[data-testid="stPopover"] button,
+    .stButton > button {
         white-space: nowrap !important;
+        text-overflow: clip !important;
+        overflow: visible !important;
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+        min-width: 0 !important;
         flex-shrink: 0 !important;
+    }
+    div[data-testid="stPopover"] > button p,
+    div[data-testid="stPopover"] button p,
+    .stButton > button p {
+        overflow: visible !important;
+        text-overflow: clip !important;
+        white-space: nowrap !important;
     }
     ::-webkit-scrollbar-thumb:hover {
         background: #083731;

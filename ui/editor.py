@@ -534,23 +534,23 @@ def render_dual_mode_editor(
             st.rerun()
 
         # ------------------------------------------------------------------
-        # Row 1: Formatting toolbar
+        # Row 1: Formatting toolbar (Proportional widths, zero truncation)
         # ------------------------------------------------------------------
-        tb_cols = st.columns([0.7, 0.7, 0.7, 1.1, 1.2, 1.1, 1.8])
+        tb_cols = st.columns([0.5, 0.5, 0.5, 1.3, 1.4, 1.3, 1.5])
 
         with tb_cols[0]:
             if st.button("**B**", key=f"{key_prefix}_btn_bold",
-                         help="Bold", use_container_width=True):
+                         help="Bold text (**bold**)", use_container_width=True):
                 _insert_html(" **bold text**")
 
         with tb_cols[1]:
             if st.button("*I*", key=f"{key_prefix}_btn_italic",
-                         help="Italic", use_container_width=True):
+                         help="Italic text (*italic*)", use_container_width=True):
                 _insert_html(" *italic text*")
 
         with tb_cols[2]:
             if st.button("U̲", key=f"{key_prefix}_btn_underline",
-                         help="Underline", use_container_width=True):
+                         help="Underline (<u>text</u>)", use_container_width=True):
                 _insert_html(" <u>underlined text</u>")
 
         with tb_cols[3]:
@@ -640,26 +640,26 @@ def render_dual_mode_editor(
                     _insert("\n1. First step\n2. Second step\n")
 
         with tb_cols[6]:
-            if st.button("</> HTML Source", key=f"{key_prefix}_btn_to_source",
-                         help="Switch to raw HTML source code", use_container_width=True):
+            if st.button("‹/› HTML", key=f"{key_prefix}_btn_to_source",
+                         help="Switch to raw HTML source code mode", use_container_width=True):
                 st.session_state[state_key] = visual_text_to_html(live_visual, img_map)
                 st.session_state[mode_key] = "source"
                 st.rerun()
 
         # ------------------------------------------------------------------
-        # Row 2: Personalization chips + Clean button
+        # Row 2: Personalization chips + Clean button (Wider columns, no ellipsis)
         # ------------------------------------------------------------------
-        chip_cols = st.columns([1.0, 1.1, 1.2, 1.2, 0.9])
+        chip_cols = st.columns([1.3, 1.5, 1.6, 1.5, 1.1])
 
         with chip_cols[0]:
-            if st.button("👤 [Name]", key=f"{key_prefix}_chip_name",
-                         help="Insert [Name] token — resolves to recipient's name",
+            if st.button("👤 Name", key=f"{key_prefix}_chip_name",
+                         help="Insert [Name] token — automatically resolves to recipient's contact name",
                          use_container_width=True):
                 _insert(" [Name]")
 
         with chip_cols[1]:
-            if st.button("🏢 [Company]", key=f"{key_prefix}_chip_comp",
-                         help="Insert [Company] token — resolves to recipient's company",
+            if st.button("🏢 Company", key=f"{key_prefix}_chip_comp",
+                         help="Insert [Company] token — automatically resolves to recipient's brand/company",
                          use_container_width=True):
                 _insert(" [Company]")
 
@@ -686,7 +686,7 @@ def render_dual_mode_editor(
 
         with chip_cols[3]:
             if st.button("🖋️ Signature", key=f"{key_prefix}_chip_sig",
-                         help="Append saved corporate signature",
+                         help="Append saved corporate signature HTML",
                          use_container_width=True):
                 sig = get_config("signature_html", "") or "Best regards,\nOutreach Team"
                 _insert(f"\n\n{sig}")

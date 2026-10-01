@@ -60,6 +60,15 @@ from config import (
     DEFAULT_NEGATIVE_KEYWORD_ACTION,
 )
 
+def _safe_int(val: Any, default: int = 15) -> int:
+    """Safely parse integer config, handling floats (e.g. '0.01'), strings, and None."""
+    try:
+        if val is None or str(val).strip() == "":
+            return default
+        return int(float(str(val).strip()))
+    except (ValueError, TypeError):
+        return default
+
 DEFAULT_SIGNATURE_TEMPLATE = """<div>
 <table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif; max-width:650px; color:#083731;">
   <tbody>
@@ -308,13 +317,13 @@ def render_settings_tab():
     curr_days_str = get_config("sending_days", ",".join(DEFAULT_DAYS)) or ",".join(DEFAULT_DAYS)
     curr_days = [d.strip() for d in curr_days_str.split(",") if d.strip()]
     curr_tz = get_config("default_timezone", "Asia/Karachi") or "Asia/Karachi"
-    curr_min_j = int(get_config("jitter_min_seconds", str(DEFAULT_MIN_JITTER)) or DEFAULT_MIN_JITTER)
-    curr_max_j = int(get_config("jitter_max_seconds", str(DEFAULT_MAX_JITTER)) or DEFAULT_MAX_JITTER)
+    curr_min_j = _safe_int(get_config("jitter_min_seconds", str(DEFAULT_MIN_JITTER)), DEFAULT_MIN_JITTER)
+    curr_max_j = _safe_int(get_config("jitter_max_seconds", str(DEFAULT_MAX_JITTER)), DEFAULT_MAX_JITTER)
     curr_send_now_policy = get_config("send_now_policy", "immediate") or "immediate"
     saved_sig = get_config("signature_html", "") or DEFAULT_SIGNATURE_TEMPLATE
     saved_neg = get_config("negative_keywords", "guarantee, 100% free, act now, urgent, winner, make money, cash") or ""
     saved_action = get_config("negative_keywords_action", DEFAULT_NEGATIVE_KEYWORD_ACTION) or DEFAULT_NEGATIVE_KEYWORD_ACTION
-    saved_threshold = int(get_config("spam_score_threshold", str(DEFAULT_SPAM_SCORE_THRESHOLD)) or DEFAULT_SPAM_SCORE_THRESHOLD)
+    saved_threshold = _safe_int(get_config("spam_score_threshold", str(DEFAULT_SPAM_SCORE_THRESHOLD)), DEFAULT_SPAM_SCORE_THRESHOLD)
 
     enforce_win = (get_config("enforce_sending_window", "false") or "false").lower() in ["true", "1", "yes"]
     win_summary = "Anytime 24/7 (Window Cancelled) · Daily limit enforced" if not enforce_win else f"Restricted: {curr_start}–{curr_end} · {curr_tz}"
@@ -330,39 +339,45 @@ def render_settings_tab():
         </div>
         """, unsafe_allow_html=True)
         with st.expander("Configure Dispatch Window & Schedule Mode", expanded=False):
-            with st.form("form_sending_win"):
-                win_mode = st.radio(
-                    "Schedule Mode",
-                    ["24/7 Anytime (Window Cancelled — Recommended)", "Restricted Hours Window (e.g. 09:00 - 18:00)"],
-                    index=0 if not enforce_win else 1,
-                    help="When Window is cancelled, you can schedule and send outreach at any time within the day while strictly respecting mailbox daily limits."
-                )
+            win_mode = st.radio(
+                "Schedule Mode",
+                ["24/7 Anytime (Window Cancelled — Recommended)", "Restricted Hours Window (e.g. 09:00 - 18:00)"],
+                index=0 if not enforce_win else 1,
+                key="cfg_schedule_win_mode",
+                help="When Window is cancelled, you can schedule and send outreach at any time within the day while strictly respecting mailbox daily limits."
+            )
+            is_restricted = "Restricted" in win_mode
 
+            if is_restricted:
                 w_c1, w_c2 = st.columns(2)
                 with w_c1:
-                    start_time_val = st.text_input("Daily Start Time (HH:MM)", value=curr_start)
+                    start_time_val = st.text_input("Daily Start Time (HH:MM)", value=curr_start, key="cfg_start_time")
                 with w_c2:
-                    end_time_val = st.text_input("Daily End Time (HH:MM)", value=curr_end)
+                    end_time_val = st.text_input("Daily End Time (HH:MM)", value=curr_end, key="cfg_end_time")
+            else:
+                start_time_val = curr_start
+                end_time_val = curr_end
+                st.info("ℹ️ **24/7 Mode Active**: Outreach will be sent anytime without hourly restrictions. Mailbox daily limits remain strictly enforced.")
 
-                st.markdown("**Default Timezone:**")
-                tz_opts = ["Asia/Karachi", "UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Kolkata", "LOCAL"]
-                tz_idx = tz_opts.index(curr_tz) if curr_tz in tz_opts else 0
-                default_tz_val = st.selectbox(
-                    "Default Timezone",
-                    tz_opts,
-                    index=tz_idx,
-                    format_func=lambda x: "Asia/Karachi (UTC+5 — Engine Standard)" if x == "Asia/Karachi" else ("LOCAL (Host System Time)" if x == "LOCAL" else x)
-                )
+            st.markdown("**Default Timezone:**")
+            tz_opts = ["Asia/Karachi", "UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Kolkata", "LOCAL"]
+            tz_idx = tz_opts.index(curr_tz) if curr_tz in tz_opts else 0
+            default_tz_val = st.selectbox(
+                "Default Timezone",
+                tz_opts,
+                index=tz_idx,
+                key="cfg_default_tz",
+                format_func=lambda x: "Asia/Karachi (UTC+5 — Engine Standard)" if x == "Asia/Karachi" else ("LOCAL (Host System Time)" if x == "LOCAL" else x)
+            )
 
-                if st.form_submit_button("Save Dispatch Schedule", type="primary", use_container_width=True):
-                    is_enforce = "Restricted" in win_mode
-                    set_config("enforce_sending_window", "true" if is_enforce else "false")
-                    set_config("schedule_mode", "adaptive_multi_country" if is_enforce else "continuous")
-                    set_config("sending_start_time", start_time_val.strip())
-                    set_config("sending_end_time", end_time_val.strip())
-                    set_config("default_timezone", default_tz_val.strip())
-                    trigger_toast("Dispatch schedule updated!", icon="💾")
-                    st.rerun()
+            if st.button("Save Dispatch Schedule", type="primary", use_container_width=True, key="btn_save_dispatch_sched"):
+                set_config("enforce_sending_window", "true" if is_restricted else "false")
+                set_config("schedule_mode", "adaptive_multi_country" if is_restricted else "continuous")
+                set_config("sending_start_time", start_time_val.strip())
+                set_config("sending_end_time", end_time_val.strip())
+                set_config("default_timezone", default_tz_val.strip())
+                trigger_toast("Dispatch schedule updated!", icon="💾")
+                st.rerun()
 
         st.markdown(f"""
         <div class="card" style="margin-bottom:12px;">
@@ -470,8 +485,8 @@ def render_settings_tab():
                     trigger_toast("BCC configuration updated & saved!", icon="📬")
                     st.rerun()
 
-    curr_min_j = int(get_config("min_delay_seconds", str(DEFAULT_MIN_JITTER)) or DEFAULT_MIN_JITTER)
-    curr_max_j = int(get_config("max_delay_seconds", str(DEFAULT_MAX_JITTER)) or DEFAULT_MAX_JITTER)
+    curr_min_j = max(5, _safe_int(get_config("min_delay_seconds", str(DEFAULT_MIN_JITTER)), DEFAULT_MIN_JITTER))
+    curr_max_j = max(curr_min_j, _safe_int(get_config("max_delay_seconds", str(DEFAULT_MAX_JITTER)), DEFAULT_MAX_JITTER))
     jitter_summary = f"{curr_min_j}s – {curr_max_j}s random human delay between dispatches"
 
     with card_c4:

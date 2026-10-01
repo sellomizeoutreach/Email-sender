@@ -462,19 +462,19 @@ def render_bulk_tab():
                     label_visibility="collapsed"
                 )
 
-                chip_c = st.columns([1, 1.2, 1.3, 3])
+                chip_c = st.columns([1.2, 1.5, 1.6, 2.7])
                 with chip_c[0]:
-                    if st.button("👤 [Name]", key=f"bulk_fu_{i}_chip_name", use_container_width=True):
+                    if st.button("👤 Name", key=f"bulk_fu_{i}_chip_name", help="Insert [Name] token", use_container_width=True):
                         step["body"] = step["body"] + " [Name]"
                         st.session_state[f"bulk_fu_{i}_body"] = step["body"]
                         st.rerun()
                 with chip_c[1]:
-                    if st.button("🏢 [Company]", key=f"bulk_fu_{i}_chip_comp", use_container_width=True):
+                    if st.button("🏢 Company", key=f"bulk_fu_{i}_chip_comp", help="Insert [Company] token", use_container_width=True):
                         step["body"] = step["body"] + " [Company]"
                         st.session_state[f"bulk_fu_{i}_body"] = step["body"]
                         st.rerun()
                 with chip_c[2]:
-                    if st.button("🖋️ Signature", key=f"bulk_fu_{i}_chip_sig", use_container_width=True):
+                    if st.button("🖋️ Signature", key=f"bulk_fu_{i}_chip_sig", help="Append signature", use_container_width=True):
                         sig = get_config("signature_html", "") or "Best regards,\nOutreach Team"
                         step["body"] = step["body"] + f"\n\n{sig}"
                         st.session_state[f"bulk_fu_{i}_body"] = step["body"]
