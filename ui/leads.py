@@ -98,82 +98,6 @@ def render_add_lead_dialog():
             st.rerun()
 
 
-@st.dialog("✏️ Edit Lead")
-def render_edit_lead_dialog(lead: Dict[str, Any]):
-    lid = lead["id"]
-    with st.form(f"form_edit_{lid}"):
-        st.markdown(f"#### Edit Lead #SLM-{lid:04d}")
-        c1, c2 = st.columns(2)
-        with c1:
-            name    = st.text_input("Contact Name",    value=lead.get("name") or "")
-            email   = st.text_input("Email Address",   value=lead.get("email") or "", disabled=True)
-            company = st.text_input("Brand / Company", value=lead.get("company") or "")
-            owner   = st.text_input("Owner",           value=lead.get("owner") or "Jack Connor")
-        with c2:
-            curr_src = lead.get("lead_source") or SOURCE_OPTS[0]
-            lead_source = st.selectbox("Lead Source", SOURCE_OPTS,
-                index=SOURCE_OPTS.index(curr_src) if curr_src in SOURCE_OPTS else 0)
-            curr_p = lead.get("priority") or "Med"
-            priority = st.selectbox("Priority", PRIORITY_OPTS,
-                index=PRIORITY_OPTS.index(curr_p) if curr_p in PRIORITY_OPTS else 1)
-            curr_s = lead.get("status") or "New"
-            status = st.selectbox("Status", LEAD_STATUSES,
-                index=LEAD_STATUSES.index(curr_s) if curr_s in LEAD_STATUSES else 0)
-            tags = st.text_input("Tags", value=lead.get("tags") or "")
-        
-        d1, d2, d3 = st.columns(3)
-        with d1:
-            first_emailed = st.text_input("First Contacted (YYYY-MM-DD)", value=lead.get("date_first_emailed") or "")
-        with d2:
-            last_emailed = st.text_input("Last Contacted (YYYY-MM-DD)", value=lead.get("last_contact_date") or "")
-        with d3:
-            next_follow = st.text_input("Next Follow-Up (YYYY-MM-DD)", value=lead.get("next_follow_up") or "")
-
-        notes = st.text_area("Notes", value=lead.get("notes") or "")
-
-        col_save, col_del = st.columns([3, 1])
-        with col_save:
-            save_clicked = st.form_submit_button("💾 Update Lead", type="primary", use_container_width=True)
-        with col_del:
-            del_clicked  = st.form_submit_button("🗑️ Delete", use_container_width=True)
-
-    if save_clicked:
-        update_contact(
-            contact_id=lid, name=name.strip(), company=company.strip(),
-            status=status, lead_source=lead_source, priority=priority,
-            date_first_emailed=first_emailed.strip(),
-            last_contact_date=last_emailed.strip(),
-            next_follow_up=next_follow.strip(),
-            owner=owner.strip(), notes=notes.strip(), tags=tags.strip()
-        )
-        st.session_state.pop("crm_data_editor", None)
-        trigger_toast(f"Lead #SLM-{lid:04d} updated!", icon="✅")
-        st.rerun()
-    if del_clicked:
-        delete_contact(lid)
-        st.session_state.get("crm_selected_ids", set()).discard(lid)
-        st.session_state.pop("crm_data_editor", None)
-        trigger_toast("Lead deleted.", icon="🗑️")
-        st.rerun()
-
-
-@st.dialog("🗑️ Delete Lead")
-def render_delete_lead_dialog(lead: Dict[str, Any]):
-    lid = lead["id"]
-    name = lead.get("name") or lead.get("email") or f"#SLM-{lid:04d}"
-    st.error(f"⚠️ Permanently delete **{name}** (#SLM-{lid:04d})? This cannot be undone.")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🗑️ Yes, Delete Lead", type="primary", use_container_width=True):
-            delete_contact(lid)
-            st.session_state.get("crm_selected_ids", set()).discard(lid)
-            st.session_state.pop("crm_data_editor", None)
-            trigger_toast(f"Lead '{name}' deleted.", icon="🗑️")
-            st.rerun()
-    with c2:
-        if st.button("✖️ Cancel", use_container_width=True):
-            st.rerun()
-
 
 @st.dialog("✏️ Bulk Edit Selected Leads")
 def render_bulk_edit_dialog(selected_ids: List[int], count: int):
@@ -580,60 +504,16 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         st.rerun()
 
     # =========================================================================
-    # QUICK LEAD ACTIONS (Instant rendering, 0-lag)
-    # Replaces 1,300+ iterative buttons with a single swift action bar
-    # =========================================================================
-    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
-    with st.container():
-        lead_map = {
-            c["id"]: f"#SLM-{c['id']:04d} · {c.get('name') or 'Unnamed'} ({c.get('company') or 'No Company'}) — {c.get('email')}"
-            for c in filtered
-        }
-        default_ix = 0
-        selected_in_view = [lid for lid in id_list if lid in st.session_state["crm_selected_ids"]]
-        if selected_in_view:
-            try:
-                default_ix = id_list.index(selected_in_view[0])
-            except ValueError:
-                default_ix = 0
-
-        q_c1, q_c2, q_c3, q_c4 = st.columns([4, 1.4, 1.4, 1.4], vertical_alignment="center")
-        with q_c1:
-            sel_lid = st.selectbox(
-                "Lead Action Target",
-                options=id_list,
-                index=default_ix if default_ix < len(id_list) else 0,
-                format_func=lambda x: lead_map.get(x, f"#SLM-{x:04d}"),
-                label_visibility="collapsed",
-                key="crm_action_target_lead",
-                help="Choose a lead to compose an email, open full edit dialog, or delete",
-            )
-        target_c = next((c for c in filtered if c["id"] == sel_lid), None)
-        with q_c2:
-            if st.button("✍️ Compose", use_container_width=True, key="qa_btn_compose", help="Open Compose for this lead"):
-                if target_c:
-                    st.session_state["compose_selected_lead_id"] = target_c["id"]
-                    st.session_state["active_screen"] = "compose"
-                    st.rerun()
-        with q_c3:
-            if st.button("✏️ Full Edit", use_container_width=True, key="qa_btn_edit", help="Open complete edit dialog"):
-                if target_c:
-                    render_edit_lead_dialog(target_c)
-        with q_c4:
-            if st.button("🗑️ Delete", use_container_width=True, key="qa_btn_delete", help="Delete this lead"):
-                if target_c:
-                    render_delete_lead_dialog(target_c)
-
-    # =========================================================================
     # STATUS BAR
     # =========================================================================
     total_shown = len(filtered)
+    total_selected = len(st.session_state.get("crm_selected_ids", set()))
     st.markdown(
         f"<div style='display:flex;align-items:center;gap:10px;margin-top:8px;padding:7px 14px;"
         f"background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;font-size:12px;color:#64748B;'>"
         f"Showing <strong style='color:#083731;'>{total_shown}</strong> lead{'s' if total_shown != 1 else ''} · "
-        f"<strong style='color:#083731;'>{sel_count}</strong> selected · "
-        f"Click any cell to edit · Press Enter to save · Click column header to sort"
+        f"<strong style='color:#083731;'>{total_selected}</strong> selected · "
+        f"Click any cell to edit · Press Enter to save to database · Click column header to sort"
         f"</div>",
         unsafe_allow_html=True,
     )
