@@ -1445,6 +1445,17 @@ def advance_contact_followup(
     else:
         new_status = "Emailed"
 
+    cv_raw = row["custom_variables"] or "{}"
+    try:
+        cv = json.loads(cv_raw) if isinstance(cv_raw, str) else dict(cv_raw)
+    except Exception:
+        cv = {}
+    cv["date_first_emailed"] = curr_first
+    cv["last_contact_date"] = today_str
+    cv["follow_ups_sent"] = curr_sent
+    cv["next_follow_up"] = next_date_str
+    cv_str = json.dumps(cv)
+
     cursor.execute("""
         UPDATE contacts SET
             contacted = 'Yes',
@@ -1452,9 +1463,10 @@ def advance_contact_followup(
             last_contact_date = ?,
             follow_ups_sent = ?,
             next_follow_up = ?,
-            status = ?
+            status = ?,
+            custom_variables = ?
         WHERE id = ?
-    """, (curr_first, today_str, curr_sent, next_date_str, new_status, cid))
+    """, (curr_first, today_str, curr_sent, next_date_str, new_status, cv_str, cid))
 
     conn.commit()
     conn.close()
