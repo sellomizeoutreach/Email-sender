@@ -38,6 +38,7 @@ from template_engine import (
 )
 from timezone_helper import get_next_valid_market_datetime, get_engine_now
 from ui.editor import render_dual_mode_editor, html_to_visual_text
+from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
 from ui.components import trigger_toast
 
 
@@ -398,14 +399,23 @@ def render_bulk_tab():
                         st.session_state["bulk_subject"] = selected_subject
 
                     st.markdown("<span class='lbl'>Body</span>", unsafe_allow_html=True)
-                    current_body = render_dual_mode_editor(
-                        key_prefix="bulk_tpl_editor",
-                        initial_content=st.session_state.get(
-                            "bulk_body_html",
-                            chosen_tpl.get("body_content") or chosen_tpl.get("body_html") or ""
-                        ),
-                        height=160
+                    init_tpl_body = st.session_state.get(
+                        "bulk_body_html",
+                        chosen_tpl.get("body_content") or chosen_tpl.get("body_html") or ""
                     )
+                    if is_rich_editor_enabled():
+                        current_body = render_rich_editor(
+                            initial_html=init_tpl_body,
+                            key="bulk_tpl_rich_editor",
+                            height=180,
+                            owner_type="bulk"
+                        )
+                    else:
+                        current_body = render_dual_mode_editor(
+                            key_prefix="bulk_tpl_editor",
+                            initial_content=init_tpl_body,
+                            height=160
+                        )
                     st.session_state["bulk_body_html"] = current_body
             else:
                 # Custom compose
@@ -418,14 +428,23 @@ def render_bulk_tab():
                 st.session_state["bulk_subject"] = selected_subject
 
                 st.markdown("<span class='lbl'>Body</span>", unsafe_allow_html=True)
-                current_body = render_dual_mode_editor(
-                    key_prefix="bulk_custom_editor",
-                    initial_content=st.session_state.get(
-                        "bulk_body_html",
-                        "Hi [Name],\n\nI noticed [Company] and wanted to connect."
-                    ),
-                    height=160
+                init_cust_body = st.session_state.get(
+                    "bulk_body_html",
+                    "Hi [Name],\n\nI noticed [Company] and wanted to connect."
                 )
+                if is_rich_editor_enabled():
+                    current_body = render_rich_editor(
+                        initial_html=init_cust_body,
+                        key="bulk_custom_rich_editor",
+                        height=180,
+                        owner_type="bulk"
+                    )
+                else:
+                    current_body = render_dual_mode_editor(
+                        key_prefix="bulk_custom_editor",
+                        initial_content=init_cust_body,
+                        height=160
+                    )
                 st.session_state["bulk_body_html"] = current_body
 
         # --- Tab 1+: Follow-up steps ---

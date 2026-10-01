@@ -46,6 +46,7 @@ from template_engine import (
 from scheduler import dispatch_email_hostinger
 from timezone_helper import get_engine_now, get_engine_now_str
 from ui.editor import render_dual_mode_editor
+from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
 from ui.components import trigger_toast
 
 _TOKEN_RE = re.compile(r'\[([A-Za-z0-9_]+)\]|\{([A-Za-z0-9_]+)\}')
@@ -601,11 +602,19 @@ def render_compose_tab(contacts=None, templates=None):
             st.session_state["compose_subject"] = subj_val
 
             st.markdown('<span class="lbl">Body</span>', unsafe_allow_html=True)
-            current_body = render_dual_mode_editor(
-                key_prefix="compose",
-                initial_content=st.session_state.get("compose_body_html", ""),
-                height=180
-            )
+            if is_rich_editor_enabled():
+                current_body = render_rich_editor(
+                    initial_html=st.session_state.get("compose_body_html", ""),
+                    key="compose_rich_editor",
+                    height=200,
+                    owner_type="compose"
+                )
+            else:
+                current_body = render_dual_mode_editor(
+                    key_prefix="compose",
+                    initial_content=st.session_state.get("compose_body_html", ""),
+                    height=180
+                )
             st.session_state["compose_body_html"] = current_body
 
         # --- Tab 1+: Follow-up steps ---

@@ -28,6 +28,7 @@ from template_engine import (
     highlight_spam_triggers,
 )
 from ui.editor import render_dual_mode_editor
+from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
 from ui.components import trigger_toast
 
 
@@ -89,11 +90,20 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
             tpl_subj_val = st.text_input("Subject", value=st.session_state.get("tpl_subject", ""), label_visibility="collapsed", key="in_tpl_subj")
 
         st.markdown("<span class='lbl' style='margin-top:10px;'>Body</span>", unsafe_allow_html=True)
-        current_body = render_dual_mode_editor(
-            key_prefix="tpl_editor",
-            initial_content=st.session_state.get("tpl_body_html", ""),
-            height=200
-        )
+        if is_rich_editor_enabled():
+            current_body = render_rich_editor(
+                initial_html=st.session_state.get("tpl_body_html", ""),
+                key="tpl_rich_editor",
+                height=220,
+                owner_type="template",
+                owner_id=active_id if active_id != "new" else None
+            )
+        else:
+            current_body = render_dual_mode_editor(
+                key_prefix="tpl_editor",
+                initial_content=st.session_state.get("tpl_body_html", ""),
+                height=200
+            )
         st.session_state["tpl_body_html"] = current_body
 
         # Deliverability check
