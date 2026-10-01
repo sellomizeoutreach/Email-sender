@@ -40,7 +40,7 @@ from ui.components import trigger_toast
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-PRIORITY_OPTS  = ["High", "Med", "Low"]
+PRIORITY_OPTS  = ["High", "Medium", "Low"]
 CONTACTED_OPTS = ["Yes", "No"]
 SOURCE_OPTS    = ["Amazon scrape", "LinkedIn", "Referral", "Website", "Other"]
 
@@ -268,18 +268,16 @@ def _apply_filters(
     search_query: str,
 ) -> List[Dict[str, Any]]:
     f = list(contacts)
-    if active_filter == "Cold outreach":
+    if active_filter == "Not Contacted":
         f = [c for c in f if (c.get("status") or "New") == "New"]
-    elif active_filter == "Follow-up #1":
-        f = [c for c in f if int(c.get("follow_ups_sent") or 0) == 1]
-    elif active_filter == "Follow-up #2+":
-        f = [c for c in f if int(c.get("follow_ups_sent") or 0) >= 2]
+    elif active_filter == "Emailed":
+        f = [c for c in f if (c.get("status") or "").lower() == "emailed"]
     elif active_filter == "Opened":
-        f = [c for c in f if (c.get("contacted") or "").lower() == "yes"]
-    elif active_filter == "High intent":
-        f = [c for c in f if (c.get("priority") or "").lower() == "high"]
-    elif active_filter == "Due today":
-        f = [c for c in f if (c.get("status") or "New") in ["New", "Emailed"]]
+        f = [c for c in f if (c.get("status") or "").lower() == "opened" or (c.get("contacted") or "").lower() == "yes"]
+    elif active_filter == "Bounced":
+        f = [c for c in f if (c.get("status") or "").lower() == "bounced"]
+    elif active_filter == "High Priority":
+        f = [c for c in f if (c.get("priority") or "").lower() in ["high", "hi"]]
 
     if search_query.strip():
         q = search_query.strip().lower()
@@ -299,18 +297,15 @@ def _apply_filters(
 # ---------------------------------------------------------------------------
 
 def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
-    """Render the full CRM leads screen with Excel-like inline editing."""
+    """Render the full CRM leads screen with instant inline click-to-edit, master selection, and fast rendering."""
     if all_contacts is None:
         all_contacts = get_contacts()
 
     # Session state defaults
-    for key, default in [
-        ("crm_selected_ids", set()),
-        ("crm_edit_mode",    True),
-        ("lead_filter_pill", "All leads"),
-    ]:
-        if key not in st.session_state:
-            st.session_state[key] = default
+    if "crm_selected_ids" not in st.session_state:
+        st.session_state["crm_selected_ids"] = set()
+    if "lead_filter_pill" not in st.session_state:
+        st.session_state["lead_filter_pill"] = "All leads"
 
     # =========================================================================
     # TOP TOOLBAR
@@ -373,33 +368,33 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             key="crm_lead_search",
         )
 
-    # Edit-mode toggle
-    em_left, em_right, _ = st.columns([1.4, 1.4, 5], vertical_alignment="center")
-    with em_left:
-        is_edit = st.session_state["crm_edit_mode"]
-        if st.button(
-            "✏️ Edit Mode: ON" if is_edit else "👁️ View Mode",
-            type="primary" if is_edit else "secondary",
-            use_container_width=True,
-            help="Toggle inline cell editing on/off",
-        ):
-            st.session_state["crm_edit_mode"] = not is_edit
-            st.rerun()
+    # =========================================================================
+    # FUNNEL FILTER PILLS (Matching live database counts)
+    # =========================================================================
+    cnt_total = len(all_contacts)
+    cnt_not_contacted = sum(1 for c in all_contacts if (c.get("status") or "New") == "New")
+    cnt_emailed = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "emailed")
+    cnt_opened = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "opened" or (c.get("contacted") or "").lower() == "yes")
+    cnt_bounced = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "bounced")
 
-    # =========================================================================
-    # FUNNEL FILTER PILLS
-    # =========================================================================
-    filter_keys = ["All leads", "Cold outreach", "Follow-up #1", "Follow-up #2+", "Opened", "High intent", "Due today"]
-    pill_cols = st.columns([1, 1.2, 1.15, 1.15, 0.9, 1.1, 1], vertical_alignment="center")
-    for idx, f_name in enumerate(filter_keys):
+    filter_tabs = [
+        ("All leads", f"All leads ({cnt_total})"),
+        ("Not Contacted", f"Not Contacted ({cnt_not_contacted})"),
+        ("Emailed", f"Emailed ({cnt_emailed})"),
+        ("Opened", f"Opened ({cnt_opened})"),
+        ("Bounced", f"Bounced ({cnt_bounced})"),
+    ]
+
+    pill_cols = st.columns(len(filter_tabs), vertical_alignment="center")
+    for idx, (f_key, f_label) in enumerate(filter_tabs):
         with pill_cols[idx]:
-            is_active = st.session_state["lead_filter_pill"] == f_name
+            is_active = st.session_state["lead_filter_pill"] == f_key
             if st.button(
-                f_name, key=f"crm_pill_{idx}",
+                f_label, key=f"crm_pill_{idx}",
                 type="primary" if is_active else "secondary",
                 use_container_width=True,
             ):
-                st.session_state["lead_filter_pill"] = f_name
+                st.session_state["lead_filter_pill"] = f_key
                 st.rerun()
 
     # =========================================================================
@@ -411,25 +406,79 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         st.info("No leads match your criteria. Use **➕ Add lead** or **📥 Import CSV** above.")
         return
 
-    # =========================================================================
-    # BUILD DATAFRAME  —  first column is the native checkbox column
-    # =========================================================================
-    id_list: List[int] = []
-    rows: List[Dict[str, Any]] = []
+    # Visible contact IDs
+    id_list: List[int] = [c.get("id") or 0 for c in filtered]
+    visible_set = set(id_list)
+    selected_set = st.session_state["crm_selected_ids"]
+    selected_visible = visible_set.intersection(selected_set)
+    all_visible_selected = bool(visible_set and len(selected_visible) == len(visible_set))
 
+    # =========================================================================
+    # CONTEXTUAL SELECTION BAR & MASTER CHECKBOX
+    # =========================================================================
+    sel_count = len(selected_set)
+    if sel_count > 0:
+        bar_c1, bar_c2, bar_c3, bar_c4, bar_c5 = st.columns([2.5, 1.4, 1.3, 1.3, 1.1], vertical_alignment="center")
+        with bar_c1:
+            st.markdown(
+                f"<div style='font-size:13px;font-weight:600;color:#083731;padding:6px 0;'>"
+                f"⚡ <span style='background:#E1F5EE;color:#0F6E56;padding:2px 8px;border-radius:12px;font-weight:700;'>{sel_count}</span> "
+                f"lead{'s' if sel_count != 1 else ''} selected ({len(selected_visible)} visible)</div>",
+                unsafe_allow_html=True,
+            )
+        with bar_c2:
+            if st.button("✍️ Compose Batch", type="primary", use_container_width=True, key="bar_btn_compose_batch"):
+                st.session_state["bulk_target_leads"] = list(selected_set)
+                st.session_state["active_screen"] = "bulk"
+                st.rerun()
+        with bar_c3:
+            if st.button("✏️ Bulk Edit", use_container_width=True, key="bar_btn_bulk_edit"):
+                render_bulk_edit_dialog(list(selected_set), sel_count)
+        with bar_c4:
+            if st.button("🗑️ Bulk Delete", use_container_width=True, key="bar_btn_bulk_del"):
+                render_bulk_delete_dialog(list(selected_set), sel_count)
+        with bar_c5:
+            if st.button("✖ Clear", use_container_width=True, key="bar_btn_clear"):
+                st.session_state["crm_selected_ids"] = set()
+                st.session_state.pop("crm_data_editor", None)
+                st.rerun()
+
+    # Master Checkbox:
+    # Checked when all visible rows are selected; unchecked when none or only partial are selected.
+    m_col1, m_col2 = st.columns([2.8, 7.2], vertical_alignment="center")
+    with m_col1:
+        master_label = f"Select all visible ({len(id_list)})" if not all_visible_selected else f"Deselect all visible ({len(id_list)})"
+        master_toggled = st.checkbox(
+            master_label,
+            value=all_visible_selected,
+            key="crm_master_select_all",
+            help="Check to select all visible leads. Uncheck to deselect visible leads.",
+        )
+        if master_toggled != all_visible_selected:
+            if master_toggled:
+                st.session_state["crm_selected_ids"].update(visible_set)
+            else:
+                st.session_state["crm_selected_ids"].difference_update(visible_set)
+            st.session_state.pop("crm_data_editor", None)
+            st.rerun()
+    with m_col2:
+        st.caption("💡 **Click any cell to edit · Press Enter to save to database** · Click column headers to sort")
+
+    # =========================================================================
+    # BUILD DATAFRAME — Checkbox column first
+    # =========================================================================
+    rows: List[Dict[str, Any]] = []
     for c in filtered:
         lid = c.get("id") or 0
-        id_list.append(lid)
         rows.append({
-            # ☑ is a CheckboxColumn — its header checkbox = select / deselect all
-            "☑":               lid in st.session_state["crm_selected_ids"],
+            "☑":               lid in selected_set,
             "Lead ID":         f"#SLM-{lid:04d}",
             "Brand / Company": c.get("company") or "",
             "Contact Name":    c.get("name") or "",
             "Email":           c.get("email") or "",
             "MX":              "✓ ok" if _mx_ok(c.get("email") or "") else "✗ bad",
             "Lead Source":     c.get("lead_source") or "Amazon scrape",
-            "Priority":        c.get("priority") or "Med",
+            "Priority":        c.get("priority") or "Medium",
             "Contacted?":      c.get("contacted") or "No",
             "Status":          c.get("status") or "New",
             "Follow-Ups":      int(c.get("follow_ups_sent") or 0),
@@ -440,15 +489,10 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
 
     original_df = pd.DataFrame(rows)
 
-    # =========================================================================
-    # COLUMN CONFIG
-    # Checkbox first → native header "select all" behaviour built-in.
-    # All other data columns are sortable by clicking the header (data_editor default).
-    # =========================================================================
     col_cfg = {
         "☑": st.column_config.CheckboxColumn(
             "☑",
-            help="Tick to select · Click header to select/deselect ALL",
+            help="Tick to select contact",
             default=False,
             width="small",
         ),
@@ -467,42 +511,8 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         "Tags":            st.column_config.TextColumn("Tags",            width="medium"),
     }
 
-    # =========================================================================
-    # CONTEXTUAL SELECTION BAR (Prominently displayed when rows are checked)
-    # =========================================================================
-    sel_count = len(st.session_state["crm_selected_ids"])
-    if sel_count > 0:
-        bar_c1, bar_c2, bar_c3, bar_c4 = st.columns([3, 1.3, 1.3, 1.1], vertical_alignment="center")
-        with bar_c1:
-            st.markdown(
-                f"<div style='font-size:13px;font-weight:600;color:#083731;padding:6px 0;'>"
-                f"⚡ <span style='background:#E1F5EE;color:#0F6E56;padding:2px 8px;border-radius:12px;font-weight:700;'>{sel_count}</span> "
-                f"lead{'s' if sel_count != 1 else ''} selected</div>",
-                unsafe_allow_html=True,
-            )
-        with bar_c2:
-            if st.button("✏️ Bulk Edit", type="primary", use_container_width=True, key="bar_btn_bulk_edit"):
-                render_bulk_edit_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
-        with bar_c3:
-            if st.button("🗑️ Bulk Delete", use_container_width=True, key="bar_btn_bulk_del"):
-                render_bulk_delete_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
-        with bar_c4:
-            if st.button("✖ Clear", use_container_width=True, key="bar_btn_clear"):
-                st.session_state["crm_selected_ids"] = set()
-                st.session_state.pop("crm_data_editor", None)
-                st.rerun()
-
-    # =========================================================================
-    # RENDER DATA EDITOR
-    # Click column header → sort (ascending / descending, built-in)
-    # Click ☑ header   → select all / deselect all (built-in CheckboxColumn)
-    # Click any cell   → edit inline (when Edit Mode is ON)
-    # =========================================================================
-    edit_mode = st.session_state["crm_edit_mode"]
-
-    # Columns that must always remain read-only ("☑" is NOT disabled so selection always works)
-    always_disabled = ["Lead ID", "MX", "Follow-Ups"]
-    disabled_cols   = always_disabled if edit_mode else [c for c in original_df.columns if c != "☑"]
+    # Only computed/system columns are read-only; all lead details are click-to-edit!
+    disabled_cols = ["Lead ID", "MX", "Follow-Ups"]
 
     edited_df = st.data_editor(
         original_df,
@@ -515,93 +525,87 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     )
 
     # -------------------------------------------------------------------------
-    # 1. Sync checkbox column → crm_selected_ids
-    #    (The ☑ column is always editable regardless of edit_mode so selection works)
+    # 1. Sync row checkboxes -> crm_selected_ids
     # -------------------------------------------------------------------------
-    new_selected: set = set()
+    new_visible_selected = set()
     for i, val in enumerate(edited_df["☑"]):
         if val:
-            new_selected.add(id_list[i])
+            new_visible_selected.add(id_list[i])
 
-    if new_selected != st.session_state["crm_selected_ids"]:
-        st.session_state["crm_selected_ids"] = new_selected
+    outside_visible_selected = st.session_state["crm_selected_ids"] - visible_set
+    merged_selected = outside_visible_selected | new_visible_selected
+
+    if merged_selected != st.session_state["crm_selected_ids"]:
+        st.session_state["crm_selected_ids"] = merged_selected
         st.session_state.pop("crm_data_editor", None)
         st.rerun()
 
     # -------------------------------------------------------------------------
-    # 2. Save inline cell edits (manual edits have priority — written first)
+    # 2. Save inline cell edits (Click to edit, Enter to save directly to DB)
     # -------------------------------------------------------------------------
-    if edit_mode:
-        # Build a version of original_df excluding the ☑ and MX columns for comparison
-        edit_original = original_df.drop(columns=["☑", "MX"], errors="ignore")
-        edit_new      = edited_df.drop(columns=["☑", "MX"], errors="ignore")
-        saved_count   = _save_inline_edits(edit_new, edit_original, id_list)
-        if saved_count > 0:
-            st.session_state.pop("crm_data_editor", None)
-            trigger_toast(f"Saved {saved_count} inline change{'s' if saved_count != 1 else ''}.", icon="💾")
-            st.rerun()
+    edit_original = original_df.drop(columns=["☑", "MX"], errors="ignore")
+    edit_new      = edited_df.drop(columns=["☑", "MX"], errors="ignore")
+    saved_count   = _save_inline_edits(edit_new, edit_original, id_list)
+    if saved_count > 0:
+        st.session_state.pop("crm_data_editor", None)
+        trigger_toast(f"Saved {saved_count} inline change{'s' if saved_count != 1 else ''} to database.", icon="💾")
+        st.rerun()
 
     # =========================================================================
-    # PER-ROW ACTION BUTTONS  (✏️ full edit dialog  |  ✍️ compose  |  🗑️ delete)
-    # A slim row of buttons beneath the table aligned to each lead row.
+    # QUICK LEAD ACTIONS (Instant rendering, 0-lag)
+    # Replaces 1,300+ iterative buttons with a single swift action bar
     # =========================================================================
-    st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#64748B;letter-spacing:.05em;"
-        "text-transform:uppercase;padding:6px 0 2px;border-top:1px solid #E2E8F0;'>"
-        "Row Actions</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+    with st.container():
+        lead_map = {
+            c["id"]: f"#SLM-{c['id']:04d} · {c.get('name') or 'Unnamed'} ({c.get('company') or 'No Company'}) — {c.get('email')}"
+            for c in filtered
+        }
+        default_ix = 0
+        selected_in_view = [lid for lid in id_list if lid in st.session_state["crm_selected_ids"]]
+        if selected_in_view:
+            try:
+                default_ix = id_list.index(selected_in_view[0])
+            except ValueError:
+                default_ix = 0
 
-    for idx, c in enumerate(filtered):
-        lid  = c.get("id") or 0
-        name = c.get("name") or f"#SLM-{lid:04d}"
-
-        act_c = st.columns([0.8, 7.4, 1.8], vertical_alignment="center")
-        with act_c[0]:
-            st.markdown(
-                f"<span style='font-family:monospace;font-size:11px;color:#083731;"
-                f"font-weight:600;'>#SLM-{lid:04d}</span>",
-                unsafe_allow_html=True,
+        q_c1, q_c2, q_c3, q_c4 = st.columns([4, 1.4, 1.4, 1.4], vertical_alignment="center")
+        with q_c1:
+            sel_lid = st.selectbox(
+                "Lead Action Target",
+                options=id_list,
+                index=default_ix if default_ix < len(id_list) else 0,
+                format_func=lambda x: lead_map.get(x, f"#SLM-{x:04d}"),
+                label_visibility="collapsed",
+                key="crm_action_target_lead",
+                help="Choose a lead to compose an email, open full edit dialog, or delete",
             )
-        with act_c[1]:
-            st.markdown(
-                f"<span style='font-size:12px;color:#475569;'>{html_mod.escape(name)}</span>",
-                unsafe_allow_html=True,
-            )
-        with act_c[2]:
-            b1, b2, b3 = st.columns(3)
-            with b1:
-                if st.button("✏️", key=f"edit_lead_{lid}",
-                             help=f"Full edit — {name}", use_container_width=True):
-                    render_edit_lead_dialog(c)
-            with b2:
-                if st.button("✍️", key=f"compose_lead_{lid}",
-                             help=f"Compose email to {name}", use_container_width=True):
-                    st.session_state["compose_selected_lead_id"] = lid
+        target_c = next((c for c in filtered if c["id"] == sel_lid), None)
+        with q_c2:
+            if st.button("✍️ Compose", use_container_width=True, key="qa_btn_compose", help="Open Compose for this lead"):
+                if target_c:
+                    st.session_state["compose_selected_lead_id"] = target_c["id"]
                     st.session_state["active_screen"] = "compose"
                     st.rerun()
-            with b3:
-                if st.button("🗑️", key=f"del_lead_{lid}",
-                             help=f"Delete lead — {name}", use_container_width=True):
-                    render_delete_lead_dialog(c)
-
-        st.markdown(
-            "<div style='border-bottom:1px solid #F1F5F9;margin:1px 0;'></div>",
-            unsafe_allow_html=True,
-        )
+        with q_c3:
+            if st.button("✏️ Full Edit", use_container_width=True, key="qa_btn_edit", help="Open complete edit dialog"):
+                if target_c:
+                    render_edit_lead_dialog(target_c)
+        with q_c4:
+            if st.button("🗑️ Delete", use_container_width=True, key="qa_btn_delete", help="Delete this lead"):
+                if target_c:
+                    render_delete_lead_dialog(target_c)
 
     # =========================================================================
     # STATUS BAR
     # =========================================================================
-    sel_count   = len(st.session_state["crm_selected_ids"])
     total_shown = len(filtered)
-    edit_hint   = "Click any cell to edit · Click ☑ header to select all." if edit_mode else "Switch to ✏️ Edit Mode to edit cells."
-
     st.markdown(
         f"<div style='display:flex;align-items:center;gap:10px;margin-top:8px;padding:7px 14px;"
         f"background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;font-size:12px;color:#64748B;'>"
         f"Showing <strong style='color:#083731;'>{total_shown}</strong> lead{'s' if total_shown != 1 else ''} · "
-        f"<strong style='color:#083731;'>{sel_count}</strong> selected · {edit_hint}"
+        f"<strong style='color:#083731;'>{sel_count}</strong> selected · "
+        f"Click any cell to edit · Press Enter to save · Click column header to sort"
         f"</div>",
         unsafe_allow_html=True,
     )
