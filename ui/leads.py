@@ -72,7 +72,7 @@ def render_add_lead_dialog():
             name        = st.text_input("Contact Name *", placeholder="e.g. Danessa Myricks")
             email       = st.text_input("Email Address *", placeholder="e.g. danessa@dmbeauty.com")
             company     = st.text_input("Brand / Company", placeholder="e.g. DM Beauty")
-            owner       = st.text_input("Owner", value="Jack Conner")
+            owner       = st.text_input("Owner", value="Jack Connor")
         with c2:
             lead_source = st.selectbox("Lead Source", SOURCE_OPTS)
             priority    = st.selectbox("Priority", PRIORITY_OPTS, index=1)
@@ -103,7 +103,7 @@ def render_edit_lead_dialog(lead: Dict[str, Any]):
             name    = st.text_input("Contact Name",    value=lead.get("name") or "")
             email   = st.text_input("Email Address",   value=lead.get("email") or "", disabled=True)
             company = st.text_input("Brand / Company", value=lead.get("company") or "")
-            owner   = st.text_input("Owner",           value=lead.get("owner") or "Jack Conner")
+            owner   = st.text_input("Owner",           value=lead.get("owner") or "Jack Connor")
         with c2:
             curr_src = lead.get("lead_source") or SOURCE_OPTS[0]
             lead_source = st.selectbox("Lead Source", SOURCE_OPTS,
@@ -301,9 +301,13 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     if all_contacts is None:
         all_contacts = get_contacts()
 
-    # Session state defaults
+    # Session state defaults & synchronization
     if "crm_selected_ids" not in st.session_state:
         st.session_state["crm_selected_ids"] = set()
+    # Prune any deleted or stale lead IDs so counts always match 100% accurately
+    valid_id_set = {c["id"] for c in all_contacts if c.get("id")}
+    st.session_state["crm_selected_ids"] = {cid for cid in st.session_state["crm_selected_ids"] if cid in valid_id_set}
+
     if "lead_filter_pill" not in st.session_state:
         st.session_state["lead_filter_pill"] = "All leads"
 
@@ -313,7 +317,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     col_tools, col_search = st.columns([3.2, 1.8], vertical_alignment="center")
 
     with col_tools:
-        c1, c2, c3, c4 = st.columns(4, vertical_alignment="center")
+        c1, c2, c3 = st.columns(3, vertical_alignment="center")
         with c1:
             with st.popover("📥 Import CSV", use_container_width=True):
                 st.markdown("**Import Leads from CSV**")
@@ -339,26 +343,8 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                 use_container_width=True,
             )
         with c3:
-            if st.button("➕ Add lead", type="primary", use_container_width=True):
+            if st.button("➕ Add lead (Form)", type="primary", use_container_width=True, help="Open full lead creation form"):
                 render_add_lead_dialog()
-        with c4:
-            sel_count = len(st.session_state["crm_selected_ids"])
-            lbl = f"⚡ Bulk actions{f' ({sel_count})' if sel_count else ''}"
-            with st.popover(lbl, use_container_width=True):
-                st.markdown("**Bulk Operations**")
-                if sel_count == 0:
-                    st.caption("Tick rows using the ☑ column, then choose an action.")
-                else:
-                    st.markdown(f"**{sel_count} lead{'s' if sel_count != 1 else ''} selected**")
-                    if st.button("✏️ Bulk Edit Selected",   use_container_width=True, key="btn_bulk_edit"):
-                        render_bulk_edit_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
-                    if st.button("🗑️ Bulk Delete Selected", use_container_width=True, key="btn_bulk_delete"):
-                        render_bulk_delete_dialog(list(st.session_state["crm_selected_ids"]), sel_count)
-                st.divider()
-                if st.button("◻️ Clear All Selections", use_container_width=True):
-                    st.session_state["crm_selected_ids"] = set()
-                    st.session_state.pop("crm_data_editor", None)
-                    st.rerun()
 
     with col_search:
         search_query = st.text_input(
@@ -414,70 +400,92 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     all_visible_selected = bool(visible_set and len(selected_visible) == len(visible_set))
 
     # =========================================================================
-    # CONTEXTUAL SELECTION BAR & MASTER CHECKBOX
     # =========================================================================
-    sel_count = len(selected_set)
-    if sel_count > 0:
-        bar_c1, bar_c2, bar_c3, bar_c4, bar_c5 = st.columns([2.5, 1.4, 1.3, 1.3, 1.1], vertical_alignment="center")
-        with bar_c1:
-            st.markdown(
-                f"<div style='font-size:13px;font-weight:600;color:#083731;padding:6px 0;'>"
-                f"⚡ <span style='background:#E1F5EE;color:#0F6E56;padding:2px 8px;border-radius:12px;font-weight:700;'>{sel_count}</span> "
-                f"lead{'s' if sel_count != 1 else ''} selected ({len(selected_visible)} visible)</div>",
-                unsafe_allow_html=True,
-            )
-        with bar_c2:
-            if st.button("✍️ Compose Batch", type="primary", use_container_width=True, key="bar_btn_compose_batch"):
-                st.session_state["bulk_target_leads"] = list(selected_set)
-                st.session_state["active_screen"] = "bulk"
-                st.rerun()
-        with bar_c3:
-            if st.button("✏️ Bulk Edit", use_container_width=True, key="bar_btn_bulk_edit"):
-                render_bulk_edit_dialog(list(selected_set), sel_count)
-        with bar_c4:
-            if st.button("🗑️ Bulk Delete", use_container_width=True, key="bar_btn_bulk_del"):
-                render_bulk_delete_dialog(list(selected_set), sel_count)
-        with bar_c5:
-            if st.button("✖ Clear", use_container_width=True, key="bar_btn_clear"):
-                st.session_state["crm_selected_ids"] = set()
-                st.session_state.pop("crm_data_editor", None)
-                st.rerun()
+    # UNIFIED SELECTION & ACTION BAR (Single Cohesive Box)
+    # =========================================================================
+    vis_sel_count = len(selected_visible)
 
-    # Master Checkbox & Quick Add Row:
-    # Checked when all visible rows are selected; unchecked when none or only partial are selected.
-    m_col1, m_col2, m_col3 = st.columns([2.5, 1.8, 5.7], vertical_alignment="center")
-    with m_col1:
-        master_label = f"Select all visible ({len(id_list)})" if not all_visible_selected else f"Deselect all visible ({len(id_list)})"
-        master_toggled = st.checkbox(
-            master_label,
-            value=all_visible_selected,
-            key="crm_master_select_all",
-            help="Check to select all visible leads. Uncheck to deselect visible leads.",
-        )
-        if master_toggled != all_visible_selected:
-            if master_toggled:
-                st.session_state["crm_selected_ids"].update(visible_set)
-            else:
-                st.session_state["crm_selected_ids"].difference_update(visible_set)
-            st.session_state.pop("crm_data_editor", None)
-            st.rerun()
-    with m_col2:
-        if st.button("➕ Add Row", key="btn_quick_add_lead_row", help="Create a new lead with auto-generated ID to edit directly in the table", use_container_width=True):
-            new_lid = create_contact(
-                name="New Contact",
-                email=f"lead_{int(datetime.now().timestamp())}@brand.com",
-                company="New Brand",
-                status="New",
-                lead_source="Amazon scrape",
-                priority="Medium",
-                owner="Jack Conner",
-                notes=""
-            )
-            st.session_state.pop("crm_data_editor", None)
-            trigger_toast(f"Created Lead #SLM-{new_lid:04d}! Click any cell to edit details.", icon="✅")
-            st.rerun()
-    with m_col3:
-        st.caption("💡 **Click any cell to edit · Press Enter to save to database** · Click column headers to sort")
+    with st.container(border=True):
+        if vis_sel_count > 0:
+            u_c1, u_c2, u_c3, u_c4, u_c5, u_c6 = st.columns([2.6, 1.2, 1.5, 1.3, 1.3, 1.0], vertical_alignment="center")
+            with u_c1:
+                master_label = f"Deselect all visible ({len(id_list)})" if all_visible_selected else f"Select all visible ({len(id_list)})"
+                master_toggled = st.checkbox(
+                    f"**{master_label}** · ⚡ **{vis_sel_count} selected**",
+                    value=all_visible_selected,
+                    key="crm_master_select_all",
+                    help="Check to select all visible leads. Uncheck to deselect visible leads.",
+                )
+                if master_toggled != all_visible_selected:
+                    if master_toggled:
+                        st.session_state["crm_selected_ids"].update(visible_set)
+                    else:
+                        st.session_state["crm_selected_ids"].difference_update(visible_set)
+                    st.session_state.pop("crm_data_editor", None)
+                    st.rerun()
+            with u_c2:
+                if st.button("➕ Add Row", key="btn_quick_add_lead_row", help="Create a new lead with auto-generated ID to edit directly in the table", use_container_width=True):
+                    new_lid = create_contact(
+                        name="New Contact",
+                        email=f"lead_{int(datetime.now().timestamp())}@brand.com",
+                        company="New Brand",
+                        status="New",
+                        lead_source="Amazon scrape",
+                        priority="Medium",
+                        owner="Jack Connor",
+                        notes=""
+                    )
+                    st.session_state.pop("crm_data_editor", None)
+                    trigger_toast(f"Created Lead #SLM-{new_lid:04d}! Click any cell to edit details.", icon="✅")
+                    st.rerun()
+            with u_c3:
+                if st.button("✍️ Compose Batch", type="primary", use_container_width=True, key="bar_btn_compose_batch"):
+                    st.session_state["bulk_target_leads"] = list(selected_visible if selected_visible else selected_set)
+                    st.session_state["active_screen"] = "bulk"
+                    st.rerun()
+            with u_c4:
+                if st.button("✏️ Bulk Edit", use_container_width=True, key="bar_btn_bulk_edit"):
+                    target_ids = list(selected_visible if selected_visible else selected_set)
+                    render_bulk_edit_dialog(target_ids, len(target_ids))
+            with u_c5:
+                if st.button("🗑️ Bulk Delete", use_container_width=True, key="bar_btn_bulk_del"):
+                    target_ids = list(selected_visible if selected_visible else selected_set)
+                    render_bulk_delete_dialog(target_ids, len(target_ids))
+            with u_c6:
+                if st.button("✖ Clear", use_container_width=True, key="bar_btn_clear"):
+                    st.session_state["crm_selected_ids"] = set()
+                    st.session_state.pop("crm_data_editor", None)
+                    st.rerun()
+        else:
+            u_c1, u_c2, u_c3 = st.columns([2.5, 1.4, 6.1], vertical_alignment="center")
+            with u_c1:
+                master_toggled = st.checkbox(
+                    f"Select all visible ({len(id_list)})",
+                    value=False,
+                    key="crm_master_select_all",
+                    help="Check to select all visible leads in this view",
+                )
+                if master_toggled:
+                    st.session_state["crm_selected_ids"].update(visible_set)
+                    st.session_state.pop("crm_data_editor", None)
+                    st.rerun()
+            with u_c2:
+                if st.button("➕ Add Row", key="btn_quick_add_lead_row", help="Create a new lead with auto-generated ID to edit directly in the table", use_container_width=True):
+                    new_lid = create_contact(
+                        name="New Contact",
+                        email=f"lead_{int(datetime.now().timestamp())}@brand.com",
+                        company="New Brand",
+                        status="New",
+                        lead_source="Amazon scrape",
+                        priority="Medium",
+                        owner="Jack Connor",
+                        notes=""
+                    )
+                    st.session_state.pop("crm_data_editor", None)
+                    trigger_toast(f"Created Lead #SLM-{new_lid:04d}! Click any cell to edit details.", icon="✅")
+                    st.rerun()
+            with u_c3:
+                st.caption("💡 **Click any cell to edit · Press Enter to save to database** · Click column headers to sort")
 
     # =========================================================================
     # BUILD DATAFRAME — Checkbox column first
@@ -506,8 +514,8 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
 
     col_cfg = {
         "☑": st.column_config.CheckboxColumn(
-            "☑",
-            help="Tick to select contact",
+            "Select",
+            help="Check to select contact for batch outreach or bulk actions",
             default=False,
             width="small",
         ),

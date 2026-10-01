@@ -28,22 +28,22 @@ def generate_csv_template() -> str:
     writer.writerow([
         "#SLM-8491", "DM Beauty", "Danessa Myricks", "danessa@dmbeauty.com",
         "Amazon scrape", "High", "No", "New",
-        0, "Jack Conner", "Listings unavailable, weak A+", "beauty, amazon"
+        0, "Jack Connor", "Listings unavailable, weak A+", "beauty, amazon"
     ])
     writer.writerow([
         "#SLM-8492", "Wyndmere Naturals", "Cyndi Trachy", "cyndi@wyndmere.com",
         "Referral", "Med", "Yes", "Emailed",
-        1, "Jack Conner", "Weak A+, low SEO", "essential-oils"
+        1, "Jack Connor", "Weak A+, low SEO", "essential-oils"
     ])
     writer.writerow([
         "#SLM-8493", "Eva Naturals", "Daniel Crackower", "daniel@evanaturals.com",
         "Amazon scrape", "High", "Yes", "Replied",
-        1, "Jack Conner", "Reconciliation angle", "skincare"
+        1, "Jack Connor", "Reconciliation angle", "skincare"
     ])
     writer.writerow([
         "#SLM-8494", "Facile Skincare", "Danielle Nadick Levy", "danielle@facile.com",
         "LinkedIn", "Med", "No", "Bounced",
-        0, "Jack Conner", "PPC around organic", "skincare, ppc"
+        0, "Jack Connor", "PPC around organic", "skincare, ppc"
     ])
     return output.getvalue()
 
@@ -103,7 +103,7 @@ def export_contacts_to_csv(contacts: List[Dict[str, Any]]) -> str:
             c.get("contacted") or "No",
             c.get("status") or "New",
             c.get("follow_ups_sent") or 0,
-            c.get("owner") or "Jack Conner",
+            c.get("owner") or "Jack Connor",
             c.get("notes") or "",
             c.get("tags") or ""
         ]

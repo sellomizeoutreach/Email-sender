@@ -775,7 +775,7 @@ def render_compose_tab(contacts=None, templates=None):
             unsafe_allow_html=True
         )
 
-        signature_html = get_config("signature_html", "") or "Jack Conner · Sellomize · jack@sellomize.com"
+        signature_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
 
         # If follow-ups exist, allow selecting which email to preview
         if st.session_state["compose_followups"]:

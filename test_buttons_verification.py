@@ -171,7 +171,7 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
             status="New",
             lead_source="Amazon scrape",
             priority="High",
-            owner="Jack Conner",
+            owner="Jack Connor",
             notes="Listings unavailable",
             tags="beauty, cosmetics",
             db_path=db
@@ -189,7 +189,7 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
             status="Emailed",
             lead_source="Amazon scrape",
             priority="High",
-            owner="Jack Conner",
+            owner="Jack Connor",
             notes="Contacted on LinkedIn",
             tags="beauty, cosmetics, high-intent",
             db_path=db
@@ -310,7 +310,7 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
         db = self.test_db
         # 1. Connect Mailbox button
         mid = add_smtp_account(
-            name="Jack Conner",
+            name="Jack Connor",
             email="jack@sellomize.com",
             password="SecurePass2026!",
             smtp_host="smtp.hostinger.com",
@@ -331,7 +331,7 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
         # 2. Edit Mailbox button
         update_smtp_account(
             account_id=mid,
-            sender_name="Jack Conner | Sellomize",
+            sender_name="Jack Connor | Sellomize",
             email="jack@sellomize.com",
             smtp_host="smtp.hostinger.com",
             smtp_port=465,
@@ -346,14 +346,14 @@ class TestButtonsAndActionHandlers(unittest.TestCase):
         # 3. Save Config cards buttons
         set_config("enforce_sending_window", "false", db_path=db)
         set_config("schedule_mode", "continuous", db_path=db)
-        set_config("signature_html", "<p>Best regards,<br>Jack Conner</p>", db_path=db)
+        set_config("signature_html", "<p>Best regards,<br>Jack Connor</p>", db_path=db)
         set_config("negative_keywords", "guarantee, 100% free, act now", db_path=db)
         set_config("send_now_policy", "immediate", db_path=db)
 
         self.assertEqual(get_config("enforce_sending_window", db_path=db), "false")
         self.assertEqual(get_config("schedule_mode", db_path=db), "continuous")
         self.assertEqual(get_config("send_now_policy", db_path=db), "immediate")
-        self.assertIn("Jack Conner", get_config("signature_html", db_path=db))
+        self.assertIn("Jack Connor", get_config("signature_html", db_path=db))
         self.assertIn("guarantee", get_config("negative_keywords", db_path=db))
 
         # 4. Delete Mailbox button

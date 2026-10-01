@@ -499,7 +499,7 @@ def render_bulk_tab():
             unsafe_allow_html=True
         )
 
-        signature_html = get_config("signature_html", "") or "Jack Conner · Sellomize · jack@sellomize.com"
+        signature_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
 
         # Toggle preview between initial email and any follow-up steps
         if st.session_state["bulk_followup_steps"]:
