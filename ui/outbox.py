@@ -146,7 +146,7 @@ def render_outbox_tab():
     if "outbox_filter" not in st.session_state:
         st.session_state["outbox_filter"] = "Scheduled"
 
-    fp_col1, fp_col2, fp_col3, _ = st.columns([1.2, 1, 1.4, 4])
+    fp_col1, fp_col2, fp_col3, _ = st.columns([1.2, 1, 1.4, 4], vertical_alignment="center")
     with fp_col1:
         is_sched = st.session_state["outbox_filter"] == "Scheduled"
         if st.button("🕒 Scheduled", key="outbox_pill_sched", type="primary" if is_sched else "secondary", use_container_width=True):
@@ -249,7 +249,7 @@ def render_outbox_tab():
             """, unsafe_allow_html=True)
 
             # Action buttons row
-            btn_col1, btn_col2, btn_col3, btn_col4, _ = st.columns([1, 1, 1, 1, 2])
+            btn_col1, btn_col2, btn_col3, btn_col4, _ = st.columns([1, 1, 1, 1, 2], vertical_alignment="center")
 
             if current_filter == "Scheduled":
                 with btn_col1:

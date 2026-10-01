@@ -10,6 +10,7 @@ import sys
 import re
 import json
 import time
+import random
 import threading
 import logging
 from typing import Dict, List, Optional, Any, Union, Tuple
@@ -156,38 +157,52 @@ class PostgresCursorWrapper:
         self._expects_returning = expects_returning
         self._lastrowid = None
 
-        try:
-            if params is not None:
-                self._cursor.execute(translated_sql, params)
-            else:
-                self._cursor.execute(translated_sql)
-
-            if self._expects_returning:
-                try:
-                    res = self._cursor.fetchone()
-                    if res and len(res) > 0:
-                        self._lastrowid = res[0]
-                except Exception:
-                    self._lastrowid = None
-            return self
-        except Exception as e:
+        max_attempts = 4
+        for attempt in range(max_attempts):
             try:
-                self._conn.rollback()
-            except Exception:
-                pass
-            raise e
+                if params is not None:
+                    self._cursor.execute(translated_sql, params)
+                else:
+                    self._cursor.execute(translated_sql)
+
+                if self._expects_returning:
+                    try:
+                        res = self._cursor.fetchone()
+                        if res and len(res) > 0:
+                            self._lastrowid = res[0]
+                    except Exception:
+                        self._lastrowid = None
+                return self
+            except Exception as e:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                err_str = str(e).lower()
+                if ("deadlock" in err_str or "40p01" in err_str or "lock wait timeout" in err_str) and attempt < max_attempts - 1:
+                    sleep_s = 0.15 * (attempt + 1) + random.uniform(0.05, 0.25)
+                    time.sleep(sleep_s)
+                    continue
+                raise e
 
     def executemany(self, sql: str, seq_of_params):
         translated_sql, _ = translate_sqlite_to_pg(sql)
-        try:
-            self._cursor.executemany(translated_sql, seq_of_params)
-            return self
-        except Exception as e:
+        max_attempts = 4
+        for attempt in range(max_attempts):
             try:
-                self._conn.rollback()
-            except Exception:
-                pass
-            raise e
+                self._cursor.executemany(translated_sql, seq_of_params)
+                return self
+            except Exception as e:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                err_str = str(e).lower()
+                if ("deadlock" in err_str or "40p01" in err_str or "lock wait timeout" in err_str) and attempt < max_attempts - 1:
+                    sleep_s = 0.15 * (attempt + 1) + random.uniform(0.05, 0.25)
+                    time.sleep(sleep_s)
+                    continue
+                raise e
 
     def fetchone(self) -> Optional[RowProxy]:
         try:

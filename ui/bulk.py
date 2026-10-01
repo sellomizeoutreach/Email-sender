@@ -228,7 +228,7 @@ def render_bulk_tab():
         can_add  = fu_count < 3
 
         if fu_count > 0:
-            c1, c2, c3, c4 = st.columns([1.5, 1.5, 2.0, 1.0], vertical_alignment="center")
+            c1, c2, c3, c4 = st.columns([1.5, 1.5, 2.0, 1.2], vertical_alignment="center")
             with c1:
                 if st.button(
                     "📄 Load template", key="bulk_mode_tpl",
@@ -605,8 +605,8 @@ def render_bulk_tab():
                              type="primary" if st.session_state["bulk_tag_filter"] == "all" else "secondary"):
                     st.session_state["bulk_tag_filter"] = "all"
                     st.rerun()
-                for tag in tag_list:
-                    if st.button(tag, key=f"tag_pill_{tag}",
+                for idx, tag in enumerate(tag_list):
+                    if st.button(tag, key=f"tag_pill_{idx}_{tag}",
                                  type="primary" if st.session_state["bulk_tag_filter"] == tag else "secondary"):
                         st.session_state["bulk_tag_filter"] = tag
                         st.rerun()
@@ -626,8 +626,8 @@ def render_bulk_tab():
                          type="primary" if st.session_state["bulk_status_filter"] == "all" else "secondary"):
                 st.session_state["bulk_status_filter"] = "all"
                 st.rerun()
-            for st_name in LEAD_STATUSES:
-                if st.button(st_name, key=f"st_pill_{st_name}",
+            for idx, st_name in enumerate(LEAD_STATUSES):
+                if st.button(st_name, key=f"st_pill_{idx}_{st_name}",
                              type="primary" if st.session_state["bulk_status_filter"] == st_name else "secondary"):
                     st.session_state["bulk_status_filter"] = st_name
                     st.rerun()

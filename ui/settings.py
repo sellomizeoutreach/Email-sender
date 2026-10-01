@@ -282,9 +282,10 @@ def render_settings_tab():
 
             with st.container(border=True):
                 c_mb_info, c_mb_lim, c_mb_warm, c_mb_cap, c_mb_stat, c_mb_test, c_mb_edit = st.columns(
-                    [2.6, 0.9, 1.1, 0.9, 1.0, 1.3, 0.9],
+                    [3.0, 1.0, 1.2, 1.0, 1.1, 1.5, 1.1],
                     vertical_alignment="center"
                 )
+
                 with c_mb_info:
                     st.markdown(f"""
                     <div>
@@ -605,7 +606,7 @@ def render_settings_tab():
             help="Wraps hyperlinks in your emails so you know when a lead clicks a link to sellomize.com."
         )
 
-        c_track_btn1, c_track_btn2, c_track_btn3 = st.columns([1.2, 1.2, 1.6])
+        c_track_btn1, c_track_btn2, c_track_btn3 = st.columns([1.2, 1.2, 1.6], vertical_alignment="center")
         with c_track_btn1:
             if st.button("💾 Save Tracking URL", type="primary", use_container_width=True, key="btn_save_tracking_url"):
                 clean_track_url = tracking_input.strip().rstrip("/")

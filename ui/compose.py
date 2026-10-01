@@ -238,7 +238,7 @@ def render_compose_schedule_dialog(
     st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
     confirm_label = "🚀 Launch Outreach Sequence" if (mode == "send_now" and init_dt is None) else "🕒 Confirm Scheduled Sequence"
     
-    col_act_main, col_act_draft, col_act_disc = st.columns([2.5, 1.4, 1.1])
+    col_act_main, col_act_draft, col_act_disc = st.columns([2.5, 1.4, 1.1], vertical_alignment="center")
     with col_act_main:
         submit_clicked = st.button(confirm_label, type="primary", use_container_width=True, key="comp_dlg_confirm_cta")
     with col_act_draft:
@@ -652,7 +652,7 @@ def render_compose_tab(contacts=None, templates=None):
                 )
 
                 # Quick token insertion buttons for follow-up
-                c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3])
+                c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3], vertical_alignment="center")
                 with c_tok1:
                     if st.button("👤 [Name]", key=f"comp_fu_tok_name_{idx}", use_container_width=True):
                         fu["body"] = fu["body"] + " [Name]"
@@ -715,7 +715,7 @@ def render_compose_tab(contacts=None, templates=None):
         # =====================================================================
         # ACTION BUTTONS (Send now, Schedule, Save draft, Save template)
         # =====================================================================
-        c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.4, 1.3, 1.1, 1.2, 1.0])
+        c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.4, 1.3, 1.1, 1.2, 1.1], vertical_alignment="center")
 
         with c_act1:
             send_btn_label = "🚀 Send now"

@@ -546,7 +546,7 @@ def render_dual_mode_editor(
         # ------------------------------------------------------------------
         # Row 1: Formatting toolbar (Proportional widths, zero truncation)
         # ------------------------------------------------------------------
-        tb_cols = st.columns([0.5, 0.5, 0.5, 1.3, 1.4, 1.3, 1.5])
+        tb_cols = st.columns([0.5, 0.5, 0.5, 1.3, 1.4, 1.3, 1.5], vertical_alignment="center")
 
         with tb_cols[0]:
             if st.button("**B**", key=f"{key_prefix}_btn_bold",

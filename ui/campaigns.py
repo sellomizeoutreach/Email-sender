@@ -243,7 +243,7 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
                     st.progress(pct_clamped)
 
                     # Bottom footer buttons
-                    act_c1, act_c2, act_c3 = st.columns([5, 4, 1], vertical_alignment="center")
+                    act_c1, act_c2, act_c3 = st.columns([4.5, 4.2, 1.3], vertical_alignment="center")
                     with act_c1:
                         st.caption(f"Created: {camp['created_at'][:10]}")
                     with act_c2:
@@ -252,7 +252,7 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
                             st.session_state["campaign_active_id"] = cid
                             st.rerun()
                     with act_c3:
-                        with st.popover("⚙️", use_container_width=False):
+                        with st.popover("⚙️", use_container_width=True):
                             if st.button("✏️ Edit", key=f"quick_edit_{cid}", use_container_width=True):
                                 st.session_state["campaign_view"] = "detail"
                                 st.session_state["campaign_active_id"] = cid
@@ -794,7 +794,7 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
                 """, unsafe_allow_html=True)
                 btn_c1, btn_c2, btn_c3 = st.columns([3, 4, 3])
                 with btn_c2:
-                    with st.popover("➕ Enroll Leads Now", type="primary", use_container_width=True):
+                    with st.popover("➕ Enroll Leads Now", use_container_width=True):
                         st.markdown("##### 👥 Choose Leads to Enroll")
                         lead_sources = sorted(list({c.get("lead_source") or "Other" for c in all_contacts}))
                         source_options = ["All leads"] + [f"Source: {s}" for s in lead_sources]
@@ -855,7 +855,7 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
                         if cc.get("next_send_at"):
                             st.caption(f"Next: {cc['next_send_at'][:16]}")
                     with c_col4:
-                        act_c1, act_c2, act_c3 = st.columns([1.1, 1.1, 0.8])
+                        act_c1, act_c2, act_c3 = st.columns([1.1, 1.2, 0.9], vertical_alignment="center")
                         with act_c1:
                             if not cc.get("converted"):
                                 if st.button("⭐ Won", key=f"btn_conv_{cc['id']}", use_container_width=True, help="Mark lead converted"):

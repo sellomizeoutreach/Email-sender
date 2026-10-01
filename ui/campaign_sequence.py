@@ -152,7 +152,7 @@ def render_sequence_builder(
             with sh_c3:
                 # Reorder and Delete controls
                 if not read_only:
-                    r_c1, r_c2, r_c3, r_c4 = st.columns(4)
+                    r_c1, r_c2, r_c3, r_c4 = st.columns(4, vertical_alignment="center")
                     with r_c1:
                         if not is_first and st.button("⬆️", key=f"{key_prefix}_up_{pos}", help="Move Step Up"):
                             steps[idx], steps[idx-1] = steps[idx-1], steps[idx]
@@ -242,23 +242,10 @@ def render_sequence_builder(
             prev_c1, prev_c2 = st.columns([7, 3], vertical_alignment="center")
 
             with prev_c1:
-                with st.expander(f"👁️ Live Preview for Sample Lead ({sample_lead.get('name')})"):
-                    sig_html = get_config("signature_html", "") or "Best regards,<br>Jack Connor<br>Sellomize"
-                    resolved_subj = resolve_template(stp.get("subject", ""), sample_lead)
-                    resolved_body = resolve_template(stp.get("body_html", ""), sample_lead)
-                    full_preview_html = f"{resolved_body}<br><br>{sig_html}"
-
-                    # Missing tokens check
-                    unfilled_subj = _missing_tokens(resolved_subj)
-                    unfilled_body = _missing_tokens(resolved_body)
-                    if unfilled_subj or unfilled_body:
-                        st.error(f"⚠️ Unfilled Tokens Detected: {', '.join(unfilled_subj + unfilled_body)}")
-                    else:
-                        st.caption("🛡️ Send Guard Clear — No unfilled variables detected.")
-
-                    st.markdown(f"**Subject:** {html.escape(resolved_subj)}")
-                    st.markdown("<hr style='margin:6px 0; border:0; border-top:1px solid #CBD5E1;'>", unsafe_allow_html=True)
-                    st.markdown(full_preview_html, unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='font-size:13px; color:#475569;'>👁️ <b>Live Preview</b> — <i>{html.escape(sample_lead.get('name', 'Sample Lead'))}</i></div>",
+                    unsafe_allow_html=True
+                )
 
             with prev_c2:
                 with st.popover("📤 Send Test Email", key=f"{key_prefix}_test_pop_{pos}", use_container_width=True):
@@ -284,6 +271,27 @@ def render_sequence_builder(
                                 trigger_toast(f"Test email for Step {pos} dispatched to {test_to}!", icon="🚀")
                             else:
                                 st.error(f"Failed to send test: {msg}")
+
+            # Live Preview expander — placed BELOW columns to avoid height jitter (Pattern 6 fix)
+            with st.expander(f"👁️ Live Preview — {sample_lead.get('name', 'Sample Lead')}", expanded=False):
+                sig_html = get_config("signature_html", "") or "Best regards,<br>Jack Connor<br>Sellomize"
+                resolved_subj = resolve_template(stp.get("subject", ""), sample_lead)
+                resolved_body = resolve_template(stp.get("body_html", ""), sample_lead)
+                full_preview_html = f"{resolved_body}<br><br>{sig_html}"
+
+                # Missing tokens check
+                unfilled_subj = _missing_tokens(resolved_subj)
+                unfilled_body = _missing_tokens(resolved_body)
+                if unfilled_subj or unfilled_body:
+                    st.error(f"⚠️ Unfilled Tokens Detected: {', '.join(unfilled_subj + unfilled_body)}")
+                else:
+                    st.caption("🛡️ Send Guard Clear — No unfilled variables detected.")
+
+                st.markdown(f"**Subject:** {html.escape(resolved_subj)}")
+                st.markdown("<hr style='margin:6px 0; border:0; border-top:1px solid #CBD5E1;'>", unsafe_allow_html=True)
+                st.markdown(full_preview_html, unsafe_allow_html=True)
+
+
 
     # Add Step Button
     if not read_only:

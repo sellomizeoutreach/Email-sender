@@ -382,7 +382,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
 
     if vis_sel_count > 0:
         with st.container(border=True):
-            u_c1, u_c2, u_c3, u_c4, u_c5 = st.columns([3.4, 1.8, 1.5, 1.5, 1.0], vertical_alignment="center")
+            u_c1, u_c2, u_c3, u_c4, u_c5 = st.columns([3.2, 1.9, 1.6, 1.6, 1.4], vertical_alignment="center")
             with u_c1:
                 master_label = f"Deselect all visible ({len(id_list)})" if all_visible_selected else f"Select all visible ({len(id_list)})"
                 master_toggled = st.checkbox(

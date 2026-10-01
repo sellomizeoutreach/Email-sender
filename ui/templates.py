@@ -124,7 +124,7 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
             )
 
         # Action buttons
-        btn_save, btn_comp, btn_bulk, btn_del, btn_cancel = st.columns([1.4, 1.2, 1.1, 1.0, 0.9])
+        btn_save, btn_comp, btn_bulk, btn_del, btn_cancel = st.columns([1.4, 1.2, 1.1, 1.1, 1.0], vertical_alignment="center")
         with btn_save:
             if st.button("💾 Save Template", type="primary", use_container_width=True, key="btn_save_tpl"):
                 if not tpl_name_val.strip():
@@ -234,7 +234,7 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                     <div style="font-size:12px; color:#64748B; margin:3px 0 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Subject: {html.escape(tsubj_display)}</div>
                     """, unsafe_allow_html=True)
 
-                    c1, c2, c3, c4, c5 = st.columns([1.0, 1.1, 1.0, 0.7, 0.6])
+                    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 0.8], vertical_alignment="center")
                     with c1:
                         if st.button("📥 Load", key=f"tpl_load_{tid}", use_container_width=True):
                             # Load raw subject into Compose (empty string if none stored)
@@ -269,20 +269,20 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                             st.rerun()
 
                     with c4:
-                        if st.button("📑", key=f"tpl_grid_dup_{tid}", use_container_width=True, help=f"Duplicate '{tname}'"):
-                            new_tid = create_template(
-                                template_name=f"{tname} (Copy)",
-                                subject=tsubj_raw,
-                                body_content=tbody,
-                                body_html=tbody
-                            )
-                            trigger_toast(f"Duplicated as '{tname} (Copy)'!", icon="📑")
-                            st.rerun()
+                        with st.popover("⚙️", use_container_width=True):
+                            if st.button("📑 Duplicate", key=f"tpl_grid_dup_{tid}", use_container_width=True):
+                                new_tid = create_template(
+                                    template_name=f"{tname} (Copy)",
+                                    subject=tsubj_raw,
+                                    body_content=tbody,
+                                    body_html=tbody
+                                )
+                                trigger_toast(f"Duplicated as '{tname} (Copy)'!", icon="📑")
+                                st.rerun()
 
-                    with c5:
-                        if st.button("🗑️", key=f"tpl_grid_del_{tid}", use_container_width=True, help=f"Delete '{tname}'"):
-                            delete_template(tid)
-                            if str(st.session_state.get("editing_template_id")) == str(tid):
-                                st.session_state.pop("editing_template_id", None)
-                            trigger_toast(f"Template '{tname}' deleted.", icon="🗑️")
-                            st.rerun()
+                            if st.button("🗑️ Delete", key=f"tpl_grid_del_{tid}", type="primary", use_container_width=True):
+                                delete_template(tid)
+                                if str(st.session_state.get("editing_template_id")) == str(tid):
+                                    st.session_state.pop("editing_template_id", None)
+                                trigger_toast(f"Template '{tname}' deleted.", icon="🗑️")
+                                st.rerun()
