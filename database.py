@@ -552,6 +552,8 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_camp ON campaign_contacts(campaign_id, state)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_cid ON campaign_contacts(contact_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_due ON campaign_contacts(campaign_id, state, next_send_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_state ON campaign_contacts(campaign_id, state, converted)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS campaign_events (
@@ -565,6 +567,7 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_camp ON campaign_events(campaign_id, event_type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_created ON campaign_events(campaign_id, event_type, created_at)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS campaign_images (
@@ -4014,27 +4017,35 @@ def get_campaign_events(
 
 
 def get_campaign_kpis(db_path: str = DB_FILE) -> Dict[str, Any]:
-    """Calculate core KPIs from real campaign data."""
+    """Calculate core KPIs from real campaign data with optimized aggregated queries."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) as total FROM campaign_campaigns")
-    total_campaigns = cursor.fetchone()["total"]
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN status = 'Draft' THEN 1 ELSE 0 END) as drafts
+        FROM campaign_campaigns
+    """)
+    camp_row = cursor.fetchone()
+    total_campaigns = int(camp_row["total"] or 0) if camp_row else 0
+    active_campaigns = int(camp_row["active"] or 0) if camp_row else 0
+    draft_campaigns = int(camp_row["drafts"] or 0) if camp_row else 0
 
-    cursor.execute("SELECT COUNT(*) as active FROM campaign_campaigns WHERE status = 'Active'")
-    active_campaigns = cursor.fetchone()["active"]
-
-    cursor.execute("SELECT COUNT(*) as drafts FROM campaign_campaigns WHERE status = 'Draft'")
-    draft_campaigns = cursor.fetchone()["drafts"]
-
-    cursor.execute("SELECT COUNT(*) as sent FROM campaign_events WHERE event_type = 'sent'")
-    total_sent = cursor.fetchone()["sent"]
-
-    cursor.execute("SELECT COUNT(*) as opened FROM campaign_events WHERE event_type = 'opened'")
-    total_opened = cursor.fetchone()["opened"]
+    cursor.execute("""
+        SELECT 
+            SUM(CASE WHEN event_type = 'sent' THEN 1 ELSE 0 END) as sent,
+            SUM(CASE WHEN event_type = 'opened' THEN 1 ELSE 0 END) as opened
+        FROM campaign_events
+    """)
+    ev_row = cursor.fetchone()
+    total_sent = int(ev_row["sent"] or 0) if ev_row else 0
+    total_opened = int(ev_row["opened"] or 0) if ev_row else 0
 
     cursor.execute("SELECT COUNT(*) as converted FROM campaign_contacts WHERE converted = 1")
-    total_converted = cursor.fetchone()["converted"]
+    conv_row = cursor.fetchone()
+    total_converted = int(conv_row["converted"] or 0) if conv_row else 0
 
     avg_open_rate = (total_opened / total_sent * 100.0) if total_sent > 0 else 0.0
 
@@ -4051,33 +4062,39 @@ def get_campaign_kpis(db_path: str = DB_FILE) -> Dict[str, Any]:
 
 
 def get_campaign_detail_stats(campaign_id: int, db_path: str = DB_FILE) -> Dict[str, Any]:
-    """Retrieve detailed stats for a single campaign."""
+    """Retrieve detailed stats for a single campaign using fast aggregated queries."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) as enrolled FROM campaign_contacts WHERE campaign_id = ?", (campaign_id,))
-    total_contacts = cursor.fetchone()["enrolled"]
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as enrolled,
+            SUM(CASE WHEN state = 'replied' THEN 1 ELSE 0 END) as replied,
+            SUM(CASE WHEN converted = 1 THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN state = 'bounced' THEN 1 ELSE 0 END) as bounced,
+            SUM(CASE WHEN state = 'unsubscribed' THEN 1 ELSE 0 END) as unsubscribed
+        FROM campaign_contacts
+        WHERE campaign_id = ?
+    """, (campaign_id,))
+    c_row = cursor.fetchone()
+    total_contacts = int(c_row["enrolled"] or 0) if c_row else 0
+    total_replied = int(c_row["replied"] or 0) if c_row else 0
+    total_converted = int(c_row["converted"] or 0) if c_row else 0
+    total_bounced = int(c_row["bounced"] or 0) if c_row else 0
+    total_unsubscribed = int(c_row["unsubscribed"] or 0) if c_row else 0
 
-    cursor.execute("SELECT COUNT(*) as sent FROM campaign_events WHERE campaign_id = ? AND event_type = 'sent'", (campaign_id,))
-    total_sent = cursor.fetchone()["sent"]
-
-    cursor.execute("SELECT COUNT(*) as opened FROM campaign_events WHERE campaign_id = ? AND event_type = 'opened'", (campaign_id,))
-    total_opened = cursor.fetchone()["opened"]
-
-    cursor.execute("SELECT COUNT(*) as clicked FROM campaign_events WHERE campaign_id = ? AND event_type = 'clicked'", (campaign_id,))
-    total_clicked = cursor.fetchone()["clicked"]
-
-    cursor.execute("SELECT COUNT(*) as replied FROM campaign_contacts WHERE campaign_id = ? AND state = 'replied'", (campaign_id,))
-    total_replied = cursor.fetchone()["replied"]
-
-    cursor.execute("SELECT COUNT(*) as converted FROM campaign_contacts WHERE campaign_id = ? AND converted = 1", (campaign_id,))
-    total_converted = cursor.fetchone()["converted"]
-
-    cursor.execute("SELECT COUNT(*) as bounced FROM campaign_contacts WHERE campaign_id = ? AND state = 'bounced'", (campaign_id,))
-    total_bounced = cursor.fetchone()["bounced"]
-
-    cursor.execute("SELECT COUNT(*) as unsubscribed FROM campaign_contacts WHERE campaign_id = ? AND state = 'unsubscribed'", (campaign_id,))
-    total_unsubscribed = cursor.fetchone()["unsubscribed"]
+    cursor.execute("""
+        SELECT 
+            SUM(CASE WHEN event_type = 'sent' THEN 1 ELSE 0 END) as sent,
+            SUM(CASE WHEN event_type = 'opened' THEN 1 ELSE 0 END) as opened,
+            SUM(CASE WHEN event_type = 'clicked' THEN 1 ELSE 0 END) as clicked
+        FROM campaign_events
+        WHERE campaign_id = ?
+    """, (campaign_id,))
+    e_row = cursor.fetchone()
+    total_sent = int(e_row["sent"] or 0) if e_row else 0
+    total_opened = int(e_row["opened"] or 0) if e_row else 0
+    total_clicked = int(e_row["clicked"] or 0) if e_row else 0
 
     open_rate = (total_opened / total_sent * 100.0) if total_sent > 0 else 0.0
     reply_rate = (total_replied / total_contacts * 100.0) if total_contacts > 0 else 0.0
@@ -4097,6 +4114,91 @@ def get_campaign_detail_stats(campaign_id: int, db_path: str = DB_FILE) -> Dict[
         "reply_rate": reply_rate,
         "click_rate": click_rate,
     }
+
+
+def get_all_campaigns_summary_stats(campaign_ids: List[int], db_path: str = DB_FILE) -> Dict[int, Dict[str, Any]]:
+    """
+    Batch loads stats and step counts for multiple campaigns in 3 fast queries.
+    Completely eliminates N+1 queries when loading campaign list cards.
+    """
+    if not campaign_ids:
+        return {}
+
+    placeholders = ",".join(["?"] * len(campaign_ids))
+    result = {int(cid): {
+        "contacts": 0, "sent": 0, "opened": 0, "clicked": 0,
+        "replied": 0, "converted": 0, "bounced": 0, "unsubscribed": 0,
+        "open_rate": 0.0, "reply_rate": 0.0, "click_rate": 0.0,
+        "num_steps": 0
+    } for cid in campaign_ids}
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # Query 1: Step counts
+    cursor.execute(f"""
+        SELECT campaign_id, COUNT(*) as cnt
+        FROM campaign_steps
+        WHERE campaign_id IN ({placeholders})
+        GROUP BY campaign_id
+    """, tuple(campaign_ids))
+    for r in cursor.fetchall():
+        cid = int(r["campaign_id"])
+        if cid in result:
+            result[cid]["num_steps"] = int(r["cnt"] or 0)
+
+    # Query 2: Contact metrics
+    cursor.execute(f"""
+        SELECT 
+            campaign_id,
+            COUNT(*) as enrolled,
+            SUM(CASE WHEN state = 'replied' THEN 1 ELSE 0 END) as replied,
+            SUM(CASE WHEN converted = 1 THEN 1 ELSE 0 END) as converted,
+            SUM(CASE WHEN state = 'bounced' THEN 1 ELSE 0 END) as bounced,
+            SUM(CASE WHEN state = 'unsubscribed' THEN 1 ELSE 0 END) as unsubscribed
+        FROM campaign_contacts
+        WHERE campaign_id IN ({placeholders})
+        GROUP BY campaign_id
+    """, tuple(campaign_ids))
+    for r in cursor.fetchall():
+        cid = int(r["campaign_id"])
+        if cid in result:
+            res = result[cid]
+            res["contacts"] = int(r["enrolled"] or 0)
+            res["replied"] = int(r["replied"] or 0)
+            res["converted"] = int(r["converted"] or 0)
+            res["bounced"] = int(r["bounced"] or 0)
+            res["unsubscribed"] = int(r["unsubscribed"] or 0)
+
+    # Query 3: Event metrics
+    cursor.execute(f"""
+        SELECT 
+            campaign_id,
+            SUM(CASE WHEN event_type = 'sent' THEN 1 ELSE 0 END) as sent,
+            SUM(CASE WHEN event_type = 'opened' THEN 1 ELSE 0 END) as opened,
+            SUM(CASE WHEN event_type = 'clicked' THEN 1 ELSE 0 END) as clicked
+        FROM campaign_events
+        WHERE campaign_id IN ({placeholders})
+        GROUP BY campaign_id
+    """, tuple(campaign_ids))
+    for r in cursor.fetchall():
+        cid = int(r["campaign_id"])
+        if cid in result:
+            res = result[cid]
+            res["sent"] = int(r["sent"] or 0)
+            res["opened"] = int(r["opened"] or 0)
+            res["clicked"] = int(r["clicked"] or 0)
+
+    conn.close()
+
+    for res in result.values():
+        sent = res["sent"]
+        contacts = res["contacts"]
+        res["open_rate"] = (res["opened"] / sent * 100.0) if sent > 0 else 0.0
+        res["reply_rate"] = (res["replied"] / contacts * 100.0) if contacts > 0 else 0.0
+        res["click_rate"] = (res["clicked"] / sent * 100.0) if sent > 0 else 0.0
+
+    return result
 
 # Initialize upon import
 if is_postgres_active():

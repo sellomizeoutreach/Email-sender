@@ -414,21 +414,23 @@ def run_campaign_engine_cycle(dry_run: bool = False, db_path: str = DB_FILE) -> 
         due_contacts = get_due_campaign_contacts(cid, limit=batch_limit, db_path=db_path)
 
         if not due_contacts:
-            # Check if all enrolled contacts are finished
+            # Fast indexed check: are there any pending/scheduled/sending contacts remaining?
             conn = get_connection(db_path)
             cur = conn.cursor()
             cur.execute("""
-                SELECT COUNT(*) as total,
-                       SUM(CASE WHEN state IN ('completed', 'replied', 'unsubscribed', 'bounced') THEN 1 ELSE 0 END) as done
-                FROM campaign_contacts
-                WHERE campaign_id = ?
+                SELECT 1 FROM campaign_contacts
+                WHERE campaign_id = ? AND state IN ('pending', 'scheduled', 'sending')
+                LIMIT 1
             """, (cid,))
-            row = cur.fetchone()
+            has_pending = cur.fetchone() is not None
+            if not has_pending:
+                cur.execute("SELECT COUNT(*) as total FROM campaign_contacts WHERE campaign_id = ?", (cid,))
+                t_row = cur.fetchone()
+                total_cnt = int(t_row["total"] or 0) if t_row else 0
+                if total_cnt > 0:
+                    update_campaign(cid, status="Completed", db_path=db_path)
+                    logger.info(f"[Campaign #{cid}] '{camp['name']}' automatically completed (all {total_cnt} contacts processed).")
             conn.close()
-
-            if row and row["total"] > 0 and row["total"] == row["done"]:
-                update_campaign(cid, status="Completed", db_path=db_path)
-                logger.info(f"[Campaign #{cid}] '{camp['name']}' automatically completed (all {row['total']} contacts processed).")
             continue
 
         delay_seconds = float(camp.get("delay_seconds", 60))

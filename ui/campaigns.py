@@ -35,6 +35,7 @@ from database import (
     get_campaign_events,
     get_campaign_kpis,
     get_campaign_detail_stats,
+    get_all_campaigns_summary_stats,
     get_contacts,
     get_templates,
     create_template,
@@ -182,15 +183,17 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
 
     st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
-    # 2-Column Responsive Card Grid
+    # 2-Column Responsive Card Grid (Batch-loaded to eliminate N+1 queries)
+    camp_ids = [c["id"] for c in campaigns]
+    batch_stats = get_all_campaigns_summary_stats(camp_ids)
+
     for row_idx in range(0, len(campaigns), 2):
         row_camps = campaigns[row_idx:row_idx+2]
         cols = st.columns(2)
         for col_idx, camp in enumerate(row_camps):
             cid = camp["id"]
-            stats = get_campaign_detail_stats(cid)
-            steps = get_campaign_steps(cid)
-            num_steps = len(steps)
+            stats = batch_stats.get(cid) or get_campaign_detail_stats(cid)
+            num_steps = stats.get("num_steps", 0)
 
             with cols[col_idx]:
                 with st.container(border=True):
