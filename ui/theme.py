@@ -1320,6 +1320,14 @@ SELLOMIZE_THEME_CSS = """<style>
         box-shadow: 0 4px 12px rgba(8, 55, 49, 0.15) !important;
     }
 
+    /* Completely hide cursor tracker helper input */
+    div[data-testid="stTextInput"]:has(input[aria-label="cursor_tracker"]) {
+        display: none !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
 </style>"""
 
 def apply_theme():

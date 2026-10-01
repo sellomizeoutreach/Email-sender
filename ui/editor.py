@@ -22,6 +22,7 @@ import re
 from typing import Optional, Dict, Any, Tuple
 from PIL import ImageGrab, Image
 import streamlit as st
+import streamlit.components.v1 as components
 
 from template_engine import resolve_template
 from security import sanitize_preview_html
@@ -419,38 +420,114 @@ def render_dual_mode_editor(
             st.session_state[last_synced_html] = st.session_state[state_key]
             st.rerun()
 
-        # Helper: append a token to whatever the user has typed so far,
-        # then sync BOTH state keys so rerun shows the token in the editor.
+        cursor_tracker_key = f"{key_prefix}_cursor_pos"
+        cursor_input_key   = f"{key_prefix}_cursor_input"
+
+        # Check if cursor tracker has been updated from client-side
+        current_cursor_pos = st.session_state.get(cursor_tracker_key, -1)
+        if cursor_input_key in st.session_state:
+            try:
+                val = int(st.session_state[cursor_input_key])
+                if val >= 0:
+                    current_cursor_pos = val
+                    st.session_state[cursor_tracker_key] = val
+            except Exception:
+                pass
+
+        def _get_insertion_pos(token_type: str = "text") -> int:
+            pos = current_cursor_pos
+            if 0 <= pos <= len(live_visual):
+                return pos
+
+            if token_type == "name":
+                m = re.match(r'^(Hi|Hey|Hello|Dear)\s*', live_visual, re.IGNORECASE)
+                if m:
+                    return m.end()
+                return 0
+
+            if token_type == "image":
+                parts = live_visual.split("\n\n", 1)
+                if len(parts) > 1:
+                    return len(parts[0])
+                return len(live_visual)
+
+            return len(live_visual)
+
+        # Helper: insert a token at cursor position (where the text writer is),
+        # with smart spacing and fallback so it never gets dumped at the bottom.
         def _insert(token: str):
-            new_visual = live_visual + token
+            is_name_token = any(x in token.lower() for x in ["[name]", "{first_name}", "[first name]"])
+            pos = _get_insertion_pos("name" if is_name_token else "text")
+
+            before = live_visual[:pos]
+            after  = live_visual[pos:]
+
+            clean_tok = token
+            if before and not before.endswith((" ", "\n")) and not clean_tok.startswith(" "):
+                clean_tok = " " + clean_tok
+            if after and after.startswith(",") and clean_tok.endswith(" "):
+                clean_tok = clean_tok.rstrip()
+
+            new_visual = before + clean_tok + after
             new_html   = visual_text_to_html(new_visual, img_map)
+
+            new_cursor = len(before + clean_tok)
+            st.session_state[cursor_tracker_key] = new_cursor
+            if cursor_input_key in st.session_state:
+                st.session_state[cursor_input_key] = str(new_cursor)
+
             st.session_state[state_key]        = new_html      # persistent HTML
             st.session_state[textarea_key]     = new_visual    # clean visual text
             st.session_state[last_synced_html] = new_html
             st.rerun()
 
         def _insert_html(html_tag: str):
-            """Insert formatted text or HTML token."""
-            new_visual = live_visual + html_tag
+            """Insert formatted text or HTML token at cursor position."""
+            pos = _get_insertion_pos("text")
+            before = live_visual[:pos]
+            after  = live_visual[pos:]
+
+            clean_tag = html_tag
+            if before and not before.endswith((" ", "\n")) and not clean_tag.startswith(" "):
+                clean_tag = " " + clean_tag
+
+            new_visual = before + clean_tag + after
             new_html   = visual_text_to_html(new_visual, img_map)
+
+            new_cursor = len(before + clean_tag)
+            st.session_state[cursor_tracker_key] = new_cursor
+            if cursor_input_key in st.session_state:
+                st.session_state[cursor_input_key] = str(new_cursor)
+
             st.session_state[state_key]        = new_html
             st.session_state[textarea_key]     = new_visual
             st.session_state[last_synced_html] = new_html
             st.rerun()
 
         def _insert_image(img_tag: str):
-            """Inserts a clean [Image X] token in visual text without exposing raw base64 or HTML."""
+            """Inserts a clean [Image X] token in visual text at the cursor position."""
             existing_nums = [
                 int(m.group(1)) for m in re.finditer(r'\[Image\s+(\d+)\]', live_visual, re.IGNORECASE)
             ]
             next_num = (max(existing_nums) + 1) if existing_nums else (len(img_map) + 1)
             placeholder = f"[Image {next_num}]"
-
             img_map[placeholder] = img_tag
-            sep = "\n\n" if live_visual and not live_visual.endswith("\n\n") else ""
-            new_visual = f"{live_visual}{sep}{placeholder}\n\n"
+
+            pos = _get_insertion_pos("image")
+            before = live_visual[:pos].rstrip()
+            after  = live_visual[pos:].lstrip()
+
+            prefix = "\n\n" if before else ""
+            suffix = "\n\n" if after else ""
+            new_visual = f"{before}{prefix}{placeholder}{suffix}{after}"
 
             new_html = visual_text_to_html(new_visual, img_map)
+
+            new_pos = len(before + prefix + placeholder)
+            st.session_state[cursor_tracker_key] = new_pos
+            if cursor_input_key in st.session_state:
+                st.session_state[cursor_input_key] = str(new_pos)
+
             st.session_state[state_key]        = new_html
             st.session_state[textarea_key]     = new_visual
             st.session_state[last_synced_html] = new_html
@@ -673,6 +750,48 @@ def render_dual_mode_editor(
             label_visibility="collapsed",
             help="Type or paste your email body here. Use the toolbar buttons above to format or insert variables."
         )
+
+        # Hidden cursor tracker input to capture cursor position from browser
+        st.text_input(
+            "cursor_tracker",
+            value=str(current_cursor_pos),
+            key=cursor_input_key,
+            label_visibility="collapsed"
+        )
+
+        # Injected script to sync textarea cursor position on click/keyup/select
+        components.html(f"""
+        <script>
+        (function() {{
+            const pDoc = window.parent.document;
+            function bindCursorTracker() {{
+                const allTextareas = Array.from(pDoc.querySelectorAll('textarea'));
+                const ta = allTextareas.find(t => t.id && t.id.includes('{textarea_key}')) || allTextareas[0];
+                if (!ta || ta._sellomizeBound) return;
+                ta._sellomizeBound = true;
+
+                function sendPos() {{
+                    const pos = ta.selectionStart;
+                    const trackerInputs = Array.from(pDoc.querySelectorAll('input[aria-label="cursor_tracker"]'));
+                    const inp = trackerInputs.find(i => i.id && i.id.includes('{cursor_input_key}')) || trackerInputs[0];
+                    if (inp && inp.value !== String(pos)) {{
+                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeSetter.call(inp, String(pos));
+                        inp.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                }}
+
+                ta.addEventListener('click', sendPos);
+                ta.addEventListener('keyup', sendPos);
+                ta.addEventListener('select', sendPos);
+                ta.addEventListener('blur', sendPos);
+                ta.addEventListener('input', sendPos);
+            }}
+            setTimeout(bindCursorTracker, 200);
+            setInterval(bindCursorTracker, 1000);
+        }})();
+        </script>
+        """, height=0, width=0)
 
         # Convert clean visual text back to structured HTML for dispatch & preview
         st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
