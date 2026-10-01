@@ -499,6 +499,86 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
         SELECT key, value FROM system_config
     """)
 
+    # 9. Campaigns tables (Additive Data Model)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            tags TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Draft',
+            list_id TEXT DEFAULT 'all',
+            timezone TEXT DEFAULT 'America/New_York',
+            send_window_start TEXT DEFAULT '09:00',
+            send_window_end TEXT DEFAULT '18:00',
+            send_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+            daily_limit INTEGER DEFAULT 50,
+            delay_seconds INTEGER DEFAULT 60,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_status ON campaign_campaigns(status)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            subject TEXT NOT NULL DEFAULT '',
+            body_html TEXT NOT NULL DEFAULT '',
+            wait_days INTEGER DEFAULT 0,
+            wait_hours INTEGER DEFAULT 0,
+            condition TEXT DEFAULT 'no_reply',
+            template_id INTEGER DEFAULT NULL,
+            is_reply_thread INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_steps_camp ON campaign_steps(campaign_id, position)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL,
+            contact_id INTEGER NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending',
+            current_step INTEGER DEFAULT 0,
+            next_send_at TEXT DEFAULT '',
+            last_event_at TEXT DEFAULT '',
+            converted INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_camp ON campaign_contacts(campaign_id, state)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_cid ON campaign_contacts(contact_id)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL,
+            contact_id INTEGER NOT NULL,
+            step_id INTEGER DEFAULT NULL,
+            event_type TEXT NOT NULL,
+            meta_json TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_camp ON campaign_events(campaign_id, event_type)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_type TEXT DEFAULT 'campaign',
+            owner_id INTEGER DEFAULT NULL,
+            file_path TEXT NOT NULL,
+            cid TEXT DEFAULT '',
+            file_size INTEGER DEFAULT 0,
+            mime_type TEXT DEFAULT 'image/png',
+            created_at TEXT NOT NULL
+        )
+    """)
+
     # Populate default configuration keys if not already present
     default_configs = {
         "dispatch_method": "hostinger_smtp",
@@ -3537,6 +3617,462 @@ def get_targeted_pipeline_leads(db_path: str = DB_FILE) -> Dict[str, List[Dict[s
         buckets["drafting"].append(lead_summary)
 
     return buckets
+
+# ------------------------------------------------------------------------------
+# CAMPAIGNS HELPERS (Phase 2 Additive Automation Engine)
+# ------------------------------------------------------------------------------
+
+def create_campaign(
+    name: str,
+    description: str = "",
+    tags: str = "",
+    status: str = "Draft",
+    list_id: str = "all",
+    timezone: str = "America/New_York",
+    send_window_start: str = "09:00",
+    send_window_end: str = "18:00",
+    send_days: str = "Mon,Tue,Wed,Thu,Fri",
+    daily_limit: int = 50,
+    delay_seconds: int = 60,
+    db_path: str = DB_FILE,
+) -> int:
+    """Create a new campaign record and return its ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute("""
+        INSERT INTO campaign_campaigns (
+            name, description, tags, status, list_id, timezone,
+            send_window_start, send_window_end, send_days, daily_limit,
+            delay_seconds, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        name.strip(), description.strip(), tags.strip(), status.strip(),
+        list_id.strip(), timezone.strip(), send_window_start.strip(),
+        send_window_end.strip(), send_days.strip(), int(daily_limit),
+        int(delay_seconds), now_str, now_str
+    ))
+    camp_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return camp_id
+
+
+def get_campaign(campaign_id: int, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    """Retrieve a single campaign by ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM campaign_campaigns WHERE id = ?", (campaign_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_all_campaigns(
+    status_filter: Optional[str] = None,
+    search: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> List[Dict[str, Any]]:
+    """Retrieve all campaigns with optional status filtering and name search."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    query = "SELECT * FROM campaign_campaigns WHERE 1=1"
+    params = []
+
+    if status_filter and status_filter.lower() != "all":
+        query += " AND LOWER(status) = ?"
+        params.append(status_filter.lower().strip())
+
+    if search and search.strip():
+        query += " AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(tags) LIKE ?)"
+        term = f"%{search.lower().strip()}%"
+        params.extend([term, term, term])
+
+    query += " ORDER BY id DESC"
+    cursor.execute(query, tuple(params))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_campaign(campaign_id: int, db_path: str = DB_FILE, **kwargs) -> bool:
+    """Update fields on a campaign."""
+    allowed = {
+        "name", "description", "tags", "status", "list_id", "timezone",
+        "send_window_start", "send_window_end", "send_days", "daily_limit",
+        "delay_seconds"
+    }
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    updates["updated_at"] = now_str
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    clauses = [f"{validate_identifier(k)} = ?" for k in updates.keys()]
+    params = list(updates.values()) + [campaign_id]
+    cursor.execute(f"UPDATE campaign_campaigns SET {', '.join(clauses)} WHERE id = ?", tuple(params))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def delete_campaign(campaign_id: int, db_path: str = DB_FILE) -> bool:
+    """Permanently delete a campaign and its associated steps, contacts, and events."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM campaign_events WHERE campaign_id = ?", (campaign_id,))
+    cursor.execute("DELETE FROM campaign_contacts WHERE campaign_id = ?", (campaign_id,))
+    cursor.execute("DELETE FROM campaign_steps WHERE campaign_id = ?", (campaign_id,))
+    cursor.execute("DELETE FROM campaign_campaigns WHERE id = ?", (campaign_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def duplicate_campaign(campaign_id: int, db_path: str = DB_FILE) -> int:
+    """Duplicate an existing campaign and its steps as a new Draft."""
+    src = get_campaign(campaign_id, db_path=db_path)
+    if not src:
+        raise ValueError(f"Campaign #{campaign_id} not found.")
+
+    new_name = f"{src['name']} (Copy)"
+    new_id = create_campaign(
+        name=new_name,
+        description=src.get("description", ""),
+        tags=src.get("tags", ""),
+        status="Draft",
+        list_id=src.get("list_id", "all"),
+        timezone=src.get("timezone", "America/New_York"),
+        send_window_start=src.get("send_window_start", "09:00"),
+        send_window_end=src.get("send_window_end", "18:00"),
+        send_days=src.get("send_days", "Mon,Tue,Wed,Thu,Fri"),
+        daily_limit=int(src.get("daily_limit", 50)),
+        delay_seconds=int(src.get("delay_seconds", 60)),
+        db_path=db_path
+    )
+
+    steps = get_campaign_steps(campaign_id, db_path=db_path)
+    for stp in steps:
+        create_campaign_step(
+            campaign_id=new_id,
+            position=stp["position"],
+            subject=stp["subject"],
+            body_html=stp["body_html"],
+            wait_days=stp["wait_days"],
+            wait_hours=stp["wait_hours"],
+            condition=stp.get("condition", "no_reply"),
+            template_id=stp.get("template_id"),
+            is_reply_thread=stp.get("is_reply_thread", 0),
+            db_path=db_path
+        )
+    return new_id
+
+
+def create_campaign_step(
+    campaign_id: int,
+    position: int,
+    subject: str,
+    body_html: str,
+    wait_days: int = 0,
+    wait_hours: int = 0,
+    condition: str = "no_reply",
+    template_id: Optional[int] = None,
+    is_reply_thread: int = 0,
+    db_path: str = DB_FILE,
+) -> int:
+    """Add a sequence step to a campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        INSERT INTO campaign_steps (
+            campaign_id, position, subject, body_html, wait_days,
+            wait_hours, condition, template_id, is_reply_thread, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        campaign_id, int(position), subject.strip(), body_html.strip(),
+        int(wait_days), int(wait_hours), condition.strip(),
+        template_id, int(is_reply_thread), now_str
+    ))
+    step_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return step_id
+
+
+def get_campaign_steps(campaign_id: int, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all steps for a campaign ordered by position."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM campaign_steps WHERE campaign_id = ? ORDER BY position ASC, id ASC", (campaign_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_campaign_step(step_id: int, db_path: str = DB_FILE, **kwargs) -> bool:
+    """Update fields on a campaign step."""
+    allowed = {"position", "subject", "body_html", "wait_days", "wait_hours", "condition", "template_id", "is_reply_thread"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    clauses = [f"{validate_identifier(k)} = ?" for k in updates.keys()]
+    params = list(updates.values()) + [step_id]
+    cursor.execute(f"UPDATE campaign_steps SET {', '.join(clauses)} WHERE id = ?", tuple(params))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def delete_campaign_step(step_id: int, db_path: str = DB_FILE) -> bool:
+    """Delete a step and re-index remaining step positions."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT campaign_id FROM campaign_steps WHERE id = ?", (step_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+    camp_id = row["campaign_id"]
+    cursor.execute("DELETE FROM campaign_steps WHERE id = ?", (step_id,))
+    cursor.execute("SELECT id FROM campaign_steps WHERE campaign_id = ? ORDER BY position ASC, id ASC", (camp_id,))
+    rem_steps = cursor.fetchall()
+    for idx, r in enumerate(rem_steps, 1):
+        cursor.execute("UPDATE campaign_steps SET position = ? WHERE id = ?", (idx, r["id"]))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def enroll_contacts_in_campaign(
+    campaign_id: int,
+    contact_ids: List[int],
+    db_path: str = DB_FILE
+) -> int:
+    """Enroll contacts into a campaign if not already enrolled."""
+    if not contact_ids:
+        return 0
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Filter out contacts already enrolled in this campaign
+    cursor.execute("SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?", (campaign_id,))
+    existing_cids = {r["contact_id"] for r in cursor.fetchall()}
+
+    enrolled = 0
+    for cid in contact_ids:
+        if cid not in existing_cids:
+            cursor.execute("""
+                INSERT INTO campaign_contacts (
+                    campaign_id, contact_id, state, current_step,
+                    next_send_at, last_event_at, converted, created_at
+                ) VALUES (?, ?, 'pending', 0, '', '', 0, ?)
+            """, (campaign_id, cid, now_str))
+            enrolled += 1
+
+    conn.commit()
+    conn.close()
+    return enrolled
+
+
+def get_campaign_contacts(
+    campaign_id: int,
+    state_filter: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> List[Dict[str, Any]]:
+    """Retrieve enrolled contacts for a campaign with lead details."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    query = """
+        SELECT cc.*, c.name, c.email, c.company, c.status as lead_status, c.tags as lead_tags
+        FROM campaign_contacts cc
+        JOIN contacts c ON cc.contact_id = c.id
+        WHERE cc.campaign_id = ?
+    """
+    params = [campaign_id]
+    if state_filter and state_filter.lower() != "all":
+        query += " AND LOWER(cc.state) = ?"
+        params.append(state_filter.lower().strip())
+
+    query += " ORDER BY cc.id DESC"
+    cursor.execute(query, tuple(params))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_campaign_contact_converted(contact_enrollment_id: int, db_path: str = DB_FILE) -> bool:
+    """Manually mark a contact as converted in a campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        UPDATE campaign_contacts
+        SET converted = 1, state = 'completed', last_event_at = ?
+        WHERE id = ?
+    """, (now_str, contact_enrollment_id))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def mark_campaign_contact_replied(contact_enrollment_id: int, db_path: str = DB_FILE) -> bool:
+    """Manually mark a contact as replied in a campaign (stops further steps)."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        UPDATE campaign_contacts
+        SET state = 'replied', last_event_at = ?
+        WHERE id = ?
+    """, (now_str, contact_enrollment_id))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def record_campaign_event(
+    campaign_id: int,
+    contact_id: int,
+    step_id: Optional[int],
+    event_type: str,
+    meta: Optional[Dict[str, Any]] = None,
+    db_path: str = DB_FILE
+) -> int:
+    """Record an audit trail event for a campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    meta_json = json.dumps(meta or {})
+    cursor.execute("""
+        INSERT INTO campaign_events (
+            campaign_id, contact_id, step_id, event_type, meta_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+    """, (campaign_id, contact_id, step_id, event_type.strip(), meta_json, now_str))
+    ev_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return ev_id
+
+
+def get_campaign_events(
+    campaign_id: int,
+    limit: int = 50,
+    db_path: str = DB_FILE
+) -> List[Dict[str, Any]]:
+    """Retrieve recent event history for a campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT ce.*, c.name, c.email, c.company
+        FROM campaign_events ce
+        LEFT JOIN contacts c ON ce.contact_id = c.id
+        WHERE ce.campaign_id = ?
+        ORDER BY ce.id DESC
+        LIMIT ?
+    """, (campaign_id, limit))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_campaign_kpis(db_path: str = DB_FILE) -> Dict[str, Any]:
+    """Calculate core KPIs from real campaign data."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) as total FROM campaign_campaigns")
+    total_campaigns = cursor.fetchone()["total"]
+
+    cursor.execute("SELECT COUNT(*) as active FROM campaign_campaigns WHERE status = 'Active'")
+    active_campaigns = cursor.fetchone()["active"]
+
+    cursor.execute("SELECT COUNT(*) as drafts FROM campaign_campaigns WHERE status = 'Draft'")
+    draft_campaigns = cursor.fetchone()["drafts"]
+
+    cursor.execute("SELECT COUNT(*) as sent FROM campaign_events WHERE event_type = 'sent'")
+    total_sent = cursor.fetchone()["sent"]
+
+    cursor.execute("SELECT COUNT(*) as opened FROM campaign_events WHERE event_type = 'opened'")
+    total_opened = cursor.fetchone()["opened"]
+
+    cursor.execute("SELECT COUNT(*) as converted FROM campaign_contacts WHERE converted = 1")
+    total_converted = cursor.fetchone()["converted"]
+
+    avg_open_rate = (total_opened / total_sent * 100.0) if total_sent > 0 else 0.0
+
+    conn.close()
+    return {
+        "total_campaigns": total_campaigns,
+        "active_campaigns": active_campaigns,
+        "draft_campaigns": draft_campaigns,
+        "total_sent": total_sent,
+        "total_opened": total_opened,
+        "avg_open_rate": avg_open_rate,
+        "total_converted": total_converted,
+    }
+
+
+def get_campaign_detail_stats(campaign_id: int, db_path: str = DB_FILE) -> Dict[str, Any]:
+    """Retrieve detailed stats for a single campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) as enrolled FROM campaign_contacts WHERE campaign_id = ?", (campaign_id,))
+    total_contacts = cursor.fetchone()["enrolled"]
+
+    cursor.execute("SELECT COUNT(*) as sent FROM campaign_events WHERE campaign_id = ? AND event_type = 'sent'", (campaign_id,))
+    total_sent = cursor.fetchone()["sent"]
+
+    cursor.execute("SELECT COUNT(*) as opened FROM campaign_events WHERE campaign_id = ? AND event_type = 'opened'", (campaign_id,))
+    total_opened = cursor.fetchone()["opened"]
+
+    cursor.execute("SELECT COUNT(*) as clicked FROM campaign_events WHERE campaign_id = ? AND event_type = 'clicked'", (campaign_id,))
+    total_clicked = cursor.fetchone()["clicked"]
+
+    cursor.execute("SELECT COUNT(*) as replied FROM campaign_contacts WHERE campaign_id = ? AND state = 'replied'", (campaign_id,))
+    total_replied = cursor.fetchone()["replied"]
+
+    cursor.execute("SELECT COUNT(*) as converted FROM campaign_contacts WHERE campaign_id = ? AND converted = 1", (campaign_id,))
+    total_converted = cursor.fetchone()["converted"]
+
+    cursor.execute("SELECT COUNT(*) as bounced FROM campaign_contacts WHERE campaign_id = ? AND state = 'bounced'", (campaign_id,))
+    total_bounced = cursor.fetchone()["bounced"]
+
+    cursor.execute("SELECT COUNT(*) as unsubscribed FROM campaign_contacts WHERE campaign_id = ? AND state = 'unsubscribed'", (campaign_id,))
+    total_unsubscribed = cursor.fetchone()["unsubscribed"]
+
+    open_rate = (total_opened / total_sent * 100.0) if total_sent > 0 else 0.0
+    reply_rate = (total_replied / total_contacts * 100.0) if total_contacts > 0 else 0.0
+    click_rate = (total_clicked / total_sent * 100.0) if total_sent > 0 else 0.0
+
+    conn.close()
+    return {
+        "contacts": total_contacts,
+        "sent": total_sent,
+        "opened": total_opened,
+        "clicked": total_clicked,
+        "replied": total_replied,
+        "converted": total_converted,
+        "bounced": total_bounced,
+        "unsubscribed": total_unsubscribed,
+        "open_rate": open_rate,
+        "reply_rate": reply_rate,
+        "click_rate": click_rate,
+    }
 
 # Initialize upon import
 if is_postgres_active():

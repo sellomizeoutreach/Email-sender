@@ -34,7 +34,12 @@ TABLES_WITH_ID = {
     'templates',
     'smtp_accounts',
     'notifications',
-    'sequence_rules'
+    'sequence_rules',
+    'campaign_campaigns',
+    'campaign_steps',
+    'campaign_contacts',
+    'campaign_events',
+    'campaign_images',
 }
 
 class RowProxy(dict):

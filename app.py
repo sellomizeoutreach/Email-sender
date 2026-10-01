@@ -32,6 +32,7 @@ from ui.compose import render_compose_tab
 from ui.templates import render_templates_tab
 from ui.ai_studio import render_ai_studio_tab
 from ui.leads import render_leads_tab
+from ui.campaigns import render_campaigns_tab
 from ui.bulk import render_bulk_tab
 from ui.outbox import render_outbox_tab
 from ui.settings import render_settings_tab
@@ -77,6 +78,7 @@ TAB_TO_SCREEN = {
     "📄 Templates": "templates",
     "✨ AI Studio": "ai_studio",
     "👥 Leads": "leads",
+    "🎯 Campaigns": "campaigns",
     "🚀 Bulk Send": "bulk",
     "📥 Outbox": "outbox",
     "⚙️ Settings": "settings",
@@ -122,6 +124,8 @@ elif screen_key == "ai_studio":
     render_ai_studio_tab(all_contacts)
 elif screen_key == "leads":
     render_leads_tab(all_contacts)
+elif screen_key == "campaigns":
+    render_campaigns_tab(all_contacts, all_templates)
 elif screen_key == "bulk":
     render_bulk_tab()
 elif screen_key == "outbox":
