@@ -243,7 +243,7 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
                     st.progress(pct_clamped)
 
                     # Bottom footer buttons
-                    act_c1, act_c2, act_c3 = st.columns([4, 4, 2], vertical_alignment="center")
+                    act_c1, act_c2, act_c3 = st.columns([5, 4, 1], vertical_alignment="center")
                     with act_c1:
                         st.caption(f"Created: {camp['created_at'][:10]}")
                     with act_c2:
@@ -252,7 +252,7 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
                             st.session_state["campaign_active_id"] = cid
                             st.rerun()
                     with act_c3:
-                        with st.popover("⚙️", key=f"pop_quick_camp_{cid}"):
+                        with st.popover("⚙️", use_container_width=False):
                             if st.button("✏️ Edit", key=f"quick_edit_{cid}", use_container_width=True):
                                 st.session_state["campaign_view"] = "detail"
                                 st.session_state["campaign_active_id"] = cid
@@ -266,6 +266,7 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
                                 delete_campaign(cid)
                                 trigger_toast("Campaign deleted.", icon="🗑️")
                                 st.rerun()
+
 
 
 # -----------------------------------------------------------------------------

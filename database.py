@@ -11,8 +11,12 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Tuple, Set
 import re
 import logging
+import threading
 
 logger = logging.getLogger("database")
+
+_init_db_done = False
+_init_db_lock = threading.Lock()
 
 def get_log_file_path() -> str:
     """Determine sellomize.log file location."""
@@ -190,461 +194,505 @@ def get_connection(db_path: str = DB_FILE) -> Union[sqlite3.Connection, Postgres
 
 def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, PostgresConnectionWrapper]] = None):
     """Initialize database tables and default configuration settings."""
-    if conn is None:
-        conn = get_connection(db_path)
-    cursor = conn.cursor()
+    global _init_db_done
 
-    # 1. Configuration table for API keys, models, sender/BCC, spam words, negative keywords
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS system_config (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    """)
+    # In-process guard: prevent re-running 50 DDL statements on every Streamlit page rerun
+    if conn is None and _init_db_done and db_path == DB_FILE:
+        return
 
-    # 2. Contacts table (Spreadsheet-free CRM with Tagging)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS contacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            company TEXT,
-            tags TEXT DEFAULT '',
-            custom_variables TEXT DEFAULT '{}',
-            created_at TEXT NOT NULL
-        )
-    """)
+    with _init_db_lock:
+        if conn is None and _init_db_done and db_path == DB_FILE:
+            return
 
-    # Schema migrations for contacts table (Excel CRM fields)
-    contact_migrations = [
-        ("tags", "TEXT DEFAULT ''"),
-        ("lead_source", "TEXT DEFAULT 'Other'"),
-        ("priority", "TEXT DEFAULT 'Medium'"),
-        ("contacted", "TEXT DEFAULT 'No'"),
-        ("date_first_emailed", "TEXT DEFAULT ''"),
-        ("status", "TEXT DEFAULT 'New'"),
-        ("follow_ups_sent", "INTEGER DEFAULT 0"),
-        ("last_contact_date", "TEXT DEFAULT ''"),
-        ("next_follow_up", "TEXT DEFAULT ''"),
-        ("owner", "TEXT DEFAULT ''"),
-        ("notes", "TEXT DEFAULT ''"),
-        ("last_reply_at", "TEXT DEFAULT ''"),
-        ("reply_subject", "TEXT DEFAULT ''"),
-        ("country_or_timezone", "TEXT DEFAULT ''")
-    ]
-    for col_name, col_def in contact_migrations:
+        should_close = False
+        if conn is None:
+            conn = get_connection(db_path)
+            should_close = True
+
+        cursor = conn.cursor()
+        has_advisory_lock = False
+
         try:
-            valid_col = validate_identifier(col_name)
-            cursor.execute(f"ALTER TABLE contacts ADD COLUMN {valid_col} {col_def}")
-        except DB_OPERATIONAL_ERRORS as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.warning(f"OperationalError during contacts migration for {col_name}: {e}")
+            # PostgreSQL advisory lock to serialize DDL across multi-process workers (Streamlit + Scheduler)
+            if is_postgres_active() and hasattr(conn, "_conn"):
+                try:
+                    cursor.execute("SELECT pg_try_advisory_lock(88889999);")
+                    row = cursor.fetchone()
+                    if row and not row[0]:
+                        logger.info("Another process is currently running init_db(); skipping concurrent initialization.")
+                        _init_db_done = True
+                        return
+                    has_advisory_lock = True
+                except Exception:
+                    has_advisory_lock = False
 
-    # Normalize all contacts to the 5 simplified statuses
-    cursor.execute("""
-        UPDATE contacts SET status = 'New'
-        WHERE status IN ('Researched', 'Drafted', 'Needs Review', 'Not Contacted', 'new', 'New')
-    """)
-    cursor.execute("""
-        UPDATE contacts SET status = 'Emailed'
-        WHERE status IN ('Approved', 'Queued', 'Sent', 'Follow-Up 1', 'Follow-Up 2', 'Follow-Up 3', 'emailed', 'Emailed')
-    """)
-    cursor.execute("""
-        UPDATE contacts SET status = 'Replied'
-        WHERE status IN ('Interested', 'Meeting Booked', 'replied', 'Replied')
-    """)
-    cursor.execute("""
-        UPDATE contacts SET status = 'Do Not Contact'
-        WHERE status IN ('Not Interested', 'Paused', 'do not contact', 'Do Not Contact')
-    """)
+            # 1. Configuration table for API keys, models, sender/BCC, spam words, negative keywords
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
 
-    # Create leads view for simplified lead access
-    cursor.execute("""
-        CREATE VIEW IF NOT EXISTS leads AS
-        SELECT id, name, email, company, country_or_timezone, status, notes, created_at
-        FROM contacts
-    """)
+            # 2. Contacts table (Spreadsheet-free CRM with Tagging)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    company TEXT,
+                    tags TEXT DEFAULT '',
+                    custom_variables TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                )
+            """)
 
-    # 3. Templates table (Reusable Spintax & Variable templates)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            template_name TEXT NOT NULL,
-            body_content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
+            # Schema migrations for contacts table (Excel CRM fields)
+            contact_migrations = [
+                ("tags", "TEXT DEFAULT ''"),
+                ("lead_source", "TEXT DEFAULT 'Other'"),
+                ("priority", "TEXT DEFAULT 'Medium'"),
+                ("contacted", "TEXT DEFAULT 'No'"),
+                ("date_first_emailed", "TEXT DEFAULT ''"),
+                ("status", "TEXT DEFAULT 'New'"),
+                ("follow_ups_sent", "INTEGER DEFAULT 0"),
+                ("last_contact_date", "TEXT DEFAULT ''"),
+                ("next_follow_up", "TEXT DEFAULT ''"),
+                ("owner", "TEXT DEFAULT ''"),
+                ("notes", "TEXT DEFAULT ''"),
+                ("last_reply_at", "TEXT DEFAULT ''"),
+                ("reply_subject", "TEXT DEFAULT ''"),
+                ("country_or_timezone", "TEXT DEFAULT ''")
+            ]
+            for col_name, col_def in contact_migrations:
+                try:
+                    valid_col = validate_identifier(col_name)
+                    cursor.execute(f"ALTER TABLE contacts ADD COLUMN {valid_col} {col_def}")
+                except DB_OPERATIONAL_ERRORS as e:
+                    if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                        logger.warning(f"OperationalError during contacts migration for {col_name}: {e}")
 
-    template_migrations = [
-        ("name", "TEXT DEFAULT ''"),
-        ("subject", "TEXT DEFAULT ''"),
-        ("body_html", "TEXT DEFAULT ''"),
-        ("updated_at", "TEXT DEFAULT ''")
-    ]
-    for col_name, col_def in template_migrations:
-        try:
-            valid_col = validate_identifier(col_name)
-            cursor.execute(f"ALTER TABLE templates ADD COLUMN {valid_col} {col_def}")
-        except DB_OPERATIONAL_ERRORS:
-            pass
+            # Normalize all contacts to the 5 simplified statuses
+            cursor.execute("""
+                UPDATE contacts SET status = 'New'
+                WHERE status IN ('Researched', 'Drafted', 'Needs Review', 'Not Contacted', 'new', 'New')
+            """)
+            cursor.execute("""
+                UPDATE contacts SET status = 'Emailed'
+                WHERE status IN ('Approved', 'Queued', 'Sent', 'Follow-Up 1', 'Follow-Up 2', 'Follow-Up 3', 'emailed', 'Emailed')
+            """)
+            cursor.execute("""
+                UPDATE contacts SET status = 'Replied'
+                WHERE status IN ('Interested', 'Meeting Booked', 'replied', 'Replied')
+            """)
+            cursor.execute("""
+                UPDATE contacts SET status = 'Do Not Contact'
+                WHERE status IN ('Not Interested', 'Paused', 'do not contact', 'Do Not Contact')
+            """)
 
-    # Ensure name and body_html are synced with template_name and body_content
-    cursor.execute("UPDATE templates SET name = template_name WHERE name = '' OR name IS NULL")
-    cursor.execute("UPDATE templates SET body_html = body_content WHERE body_html = '' OR body_html IS NULL")
+            # Create leads view for simplified lead access
+            cursor.execute("""
+                CREATE VIEW IF NOT EXISTS leads AS
+                SELECT id, name, email, company, country_or_timezone, status, notes, created_at
+                FROM contacts
+            """)
+            conn.commit()
 
-    # 4. Emails queue table for drafts, review, and dispatch status
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT,
-            recipient TEXT,
-            email_html TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Pending',
-            scheduled_time TEXT,
-            revision_notes TEXT,
-            variation_num INTEGER DEFAULT 1,
-            error_message TEXT,
-            sent_via TEXT DEFAULT '',
-            smtp_account_id INTEGER DEFAULT NULL,
-            opened_at TEXT DEFAULT '',
-            open_count INTEGER DEFAULT 0,
-            is_bounced INTEGER DEFAULT 0,
-            bounce_reason TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
+            # 3. Templates table (Reusable Spintax & Variable templates)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS templates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    template_name TEXT NOT NULL,
+                    body_content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
 
-    # Schema migration: ensure emails tracking and dispatch columns exist
-    email_migrations = [
-        ("sent_via", "TEXT DEFAULT ''"),
-        ("smtp_account_id", "INTEGER DEFAULT NULL"),
-        ("opened_at", "TEXT DEFAULT ''"),
-        ("open_count", "INTEGER DEFAULT 0"),
-        ("is_bounced", "INTEGER DEFAULT 0"),
-        ("bounce_reason", "TEXT DEFAULT ''"),
-        ("clicked_at", "TEXT DEFAULT ''"),
-        ("click_count", "INTEGER DEFAULT 0"),
-        ("last_clicked_url", "TEXT DEFAULT ''"),
-        ("sequence_step", "INTEGER DEFAULT 1"),
-        ("sequence_id", "TEXT DEFAULT ''"),
-        ("target_timezone", "TEXT DEFAULT ''"),
-        ("target_country", "TEXT DEFAULT ''"),
-        ("market_key", "TEXT DEFAULT ''"),
-        ("message_id", "TEXT DEFAULT ''"),
-        ("in_reply_to", "TEXT DEFAULT ''"),
-        ("thread_id", "TEXT DEFAULT ''"),
-        ("lead_id", "INTEGER DEFAULT NULL"),
-        ("mailbox_id", "INTEGER DEFAULT NULL"),
-        ("body_html_resolved", "TEXT DEFAULT ''"),
-        ("scheduled_time_utc", "TEXT DEFAULT ''"),
-        ("lead_local_time", "TEXT DEFAULT ''"),
-        ("thread_refs", "TEXT DEFAULT ''"),
-        ("sequence_group", "TEXT DEFAULT ''"),
-        ("bcc_email", "TEXT DEFAULT ''")
-    ]
-    for col_name, col_def in email_migrations:
-        try:
-            valid_col = validate_identifier(col_name)
-            cursor.execute(f"ALTER TABLE emails ADD COLUMN {valid_col} {col_def}")
-        except DB_OPERATIONAL_ERRORS as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.warning(f"OperationalError during emails migration for {col_name}: {e}")
+            template_migrations = [
+                ("name", "TEXT DEFAULT ''"),
+                ("subject", "TEXT DEFAULT ''"),
+                ("body_html", "TEXT DEFAULT ''"),
+                ("updated_at", "TEXT DEFAULT ''")
+            ]
+            for col_name, col_def in template_migrations:
+                try:
+                    valid_col = validate_identifier(col_name)
+                    cursor.execute(f"ALTER TABLE templates ADD COLUMN {valid_col} {col_def}")
+                except DB_OPERATIONAL_ERRORS:
+                    pass
 
-    # High-performance database indexes for sub-millisecond query execution
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_status_sched ON emails(status, scheduled_time)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_recipient ON emails(recipient)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_click ON emails(click_count)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_seq ON emails(sequence_id, sequence_step)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
+            # Ensure name and body_html are synced with template_name and body_content
+            cursor.execute("UPDATE templates SET name = template_name WHERE name = '' OR name IS NULL")
+            cursor.execute("UPDATE templates SET body_html = body_content WHERE body_html = '' OR body_html IS NULL")
+            conn.commit()
 
-    # 5. SMTP Accounts table for Hostinger / direct SMTP multi-account rotation
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS smtp_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            smtp_host TEXT NOT NULL DEFAULT 'smtp.hostinger.com',
-            smtp_port INTEGER NOT NULL DEFAULT 465,
-            password TEXT NOT NULL,
-            daily_limit INTEGER NOT NULL DEFAULT 80,
-            sent_today INTEGER NOT NULL DEFAULT 0,
-            last_reset_date TEXT NOT NULL DEFAULT '',
-            is_active INTEGER NOT NULL DEFAULT 1,
-            warmup_enabled INTEGER NOT NULL DEFAULT 0,
-            warmup_start_date TEXT NOT NULL DEFAULT '',
-            warmup_starting_limit INTEGER NOT NULL DEFAULT 10,
-            warmup_daily_increment INTEGER NOT NULL DEFAULT 5,
-            warmup_target_limit INTEGER NOT NULL DEFAULT 50,
-            created_at TEXT NOT NULL
-        )
-    """)
+            # 4. Emails queue table for drafts, review, and dispatch status
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS emails (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject TEXT,
+                    recipient TEXT,
+                    email_html TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Pending',
+                    scheduled_time TEXT,
+                    revision_notes TEXT,
+                    variation_num INTEGER DEFAULT 1,
+                    error_message TEXT,
+                    sent_via TEXT DEFAULT '',
+                    smtp_account_id INTEGER DEFAULT NULL,
+                    opened_at TEXT DEFAULT '',
+                    open_count INTEGER DEFAULT 0,
+                    is_bounced INTEGER DEFAULT 0,
+                    bounce_reason TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
 
-    # Schema migrations for smtp_accounts table (Warmup & Ramp-Up schedule)
-    smtp_migrations = [
-        ("warmup_enabled", "INTEGER DEFAULT 0"),
-        ("warmup_start_date", "TEXT DEFAULT ''"),
-        ("warmup_starting_limit", "INTEGER DEFAULT 10"),
-        ("warmup_daily_increment", "INTEGER DEFAULT 5"),
-        ("warmup_target_limit", "INTEGER DEFAULT 50")
-    ]
-    for col_name, col_def in smtp_migrations:
-        try:
-            valid_col = validate_identifier(col_name)
-            cursor.execute(f"ALTER TABLE smtp_accounts ADD COLUMN {valid_col} {col_def}")
-        except DB_OPERATIONAL_ERRORS as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.warning(f"OperationalError during smtp_accounts migration for {col_name}: {e}")
+            # Schema migration: ensure emails tracking and dispatch columns exist
+            email_migrations = [
+                ("sent_via", "TEXT DEFAULT ''"),
+                ("smtp_account_id", "INTEGER DEFAULT NULL"),
+                ("opened_at", "TEXT DEFAULT ''"),
+                ("open_count", "INTEGER DEFAULT 0"),
+                ("is_bounced", "INTEGER DEFAULT 0"),
+                ("bounce_reason", "TEXT DEFAULT ''"),
+                ("clicked_at", "TEXT DEFAULT ''"),
+                ("click_count", "INTEGER DEFAULT 0"),
+                ("last_clicked_url", "TEXT DEFAULT ''"),
+                ("sequence_step", "INTEGER DEFAULT 1"),
+                ("sequence_id", "TEXT DEFAULT ''"),
+                ("target_timezone", "TEXT DEFAULT ''"),
+                ("target_country", "TEXT DEFAULT ''"),
+                ("market_key", "TEXT DEFAULT ''"),
+                ("message_id", "TEXT DEFAULT ''"),
+                ("in_reply_to", "TEXT DEFAULT ''"),
+                ("thread_id", "TEXT DEFAULT ''"),
+                ("lead_id", "INTEGER DEFAULT NULL"),
+                ("mailbox_id", "INTEGER DEFAULT NULL"),
+                ("body_html_resolved", "TEXT DEFAULT ''"),
+                ("scheduled_time_utc", "TEXT DEFAULT ''"),
+                ("lead_local_time", "TEXT DEFAULT ''"),
+                ("thread_refs", "TEXT DEFAULT ''"),
+                ("sequence_group", "TEXT DEFAULT ''"),
+                ("bcc_email", "TEXT DEFAULT ''")
+            ]
+            for col_name, col_def in email_migrations:
+                try:
+                    valid_col = validate_identifier(col_name)
+                    cursor.execute(f"ALTER TABLE emails ADD COLUMN {valid_col} {col_def}")
+                except DB_OPERATIONAL_ERRORS as e:
+                    if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                        logger.warning(f"OperationalError during emails migration for {col_name}: {e}")
 
-    # 6. Notifications table for incoming prospect replies and alerts
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL DEFAULT 'reply',
-            title TEXT NOT NULL,
-            message TEXT NOT NULL,
-            contact_email TEXT DEFAULT '',
-            is_read INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read, created_at)")
+            # High-performance database indexes for sub-millisecond query execution
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_status_sched ON emails(status, scheduled_time)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_recipient ON emails(recipient)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_click ON emails(click_count)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_emails_seq ON emails(sequence_id, sequence_step)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
+            conn.commit()
 
-    # 7. Processed inbox messages table for IMAP idempotency and deduplication
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS processed_inbox_messages (
-            message_id TEXT PRIMARY KEY,
-            sender_email TEXT NOT NULL,
-            subject TEXT DEFAULT '',
-            mailbox TEXT DEFAULT '',
-            processed_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_processed_msg_sender ON processed_inbox_messages(sender_email)")
+            # 5. SMTP Accounts table for Hostinger / direct SMTP multi-account rotation
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS smtp_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_name TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    smtp_host TEXT NOT NULL DEFAULT 'smtp.hostinger.com',
+                    smtp_port INTEGER NOT NULL DEFAULT 465,
+                    password TEXT NOT NULL,
+                    daily_limit INTEGER NOT NULL DEFAULT 80,
+                    sent_today INTEGER NOT NULL DEFAULT 0,
+                    last_reset_date TEXT NOT NULL DEFAULT '',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    warmup_enabled INTEGER NOT NULL DEFAULT 0,
+                    warmup_start_date TEXT NOT NULL DEFAULT '',
+                    warmup_starting_limit INTEGER NOT NULL DEFAULT 10,
+                    warmup_daily_increment INTEGER NOT NULL DEFAULT 5,
+                    warmup_target_limit INTEGER NOT NULL DEFAULT 50,
+                    created_at TEXT NOT NULL
+                )
+            """)
 
-    # 8. Automated sequence rules table (Send-triggered dynamic follow-up engine)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sequence_rules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sequence_id TEXT NOT NULL,
-            contact_id INTEGER NOT NULL,
-            contact_email TEXT NOT NULL,
-            step_number INTEGER DEFAULT 2,
-            delay_unit TEXT DEFAULT 'days',
-            delay_value INTEGER DEFAULT 3,
-            template_id INTEGER DEFAULT 0,
-            custom_subject TEXT DEFAULT '',
-            trigger_email_id INTEGER DEFAULT NULL,
-            triggered_at TEXT DEFAULT '',
-            due_at TEXT DEFAULT '',
-            status TEXT DEFAULT 'Waiting_Trigger',
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_status_due ON sequence_rules(status, due_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_email ON sequence_rules(contact_email)")
+            smtp_migrations = [
+                ("warmup_enabled", "INTEGER DEFAULT 0"),
+                ("warmup_start_date", "TEXT DEFAULT ''"),
+                ("warmup_starting_limit", "INTEGER DEFAULT 10"),
+                ("warmup_daily_increment", "INTEGER DEFAULT 5"),
+                ("warmup_target_limit", "INTEGER DEFAULT 50")
+            ]
+            for col_name, col_def in smtp_migrations:
+                try:
+                    valid_col = validate_identifier(col_name)
+                    cursor.execute(f"ALTER TABLE smtp_accounts ADD COLUMN {valid_col} {col_def}")
+                except DB_OPERATIONAL_ERRORS as e:
+                    if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                        logger.warning(f"OperationalError during smtp_accounts migration for {col_name}: {e}")
+            conn.commit()
 
-    # Schema migration: sequence_rules timezone, market, and custom_body columns
-    seq_rule_migrations = [
-        ("target_timezone", "TEXT DEFAULT ''"),
-        ("target_country", "TEXT DEFAULT ''"),
-        ("market_key", "TEXT DEFAULT ''"),
-        ("custom_body", "TEXT DEFAULT ''"),
-        ("thread_reply", "INTEGER DEFAULT 1")
-    ]
-    for col_name, col_def in seq_rule_migrations:
-        try:
-            valid_col = validate_identifier(col_name)
-            cursor.execute(f"ALTER TABLE sequence_rules ADD COLUMN {valid_col} {col_def}")
-        except DB_OPERATIONAL_ERRORS as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.warning(f"OperationalError during sequence_rules migration for {col_name}: {e}")
+            # 6. Notifications table for incoming prospect replies and alerts
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL DEFAULT 'reply',
+                    title TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    contact_email TEXT DEFAULT '',
+                    is_read INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read, created_at)")
 
-    # Automatically prune historical duplicate notifications if any exist
-    try:
-        cursor.execute("""
-            DELETE FROM notifications
-            WHERE id NOT IN (
-                SELECT MAX(id) FROM notifications
-                GROUP BY type, LOWER(TRIM(contact_email)), title
-            )
-        """)
-    except Exception:
-        pass
+            # 7. Processed inbox messages table for IMAP idempotency and deduplication
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS processed_inbox_messages (
+                    message_id TEXT PRIMARY KEY,
+                    sender_email TEXT NOT NULL,
+                    subject TEXT DEFAULT '',
+                    mailbox TEXT DEFAULT '',
+                    processed_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_processed_msg_sender ON processed_inbox_messages(sender_email)")
+            conn.commit()
 
-    # Drop removed proof_stories table (Section 2.2)
-    cursor.execute("DROP TABLE IF EXISTS proof_stories")
+            # 8. Automated sequence rules table (Send-triggered dynamic follow-up engine)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sequence_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sequence_id TEXT NOT NULL,
+                    contact_id INTEGER NOT NULL,
+                    contact_email TEXT NOT NULL,
+                    step_number INTEGER DEFAULT 2,
+                    delay_unit TEXT DEFAULT 'days',
+                    delay_value INTEGER DEFAULT 3,
+                    template_id INTEGER DEFAULT 0,
+                    custom_subject TEXT DEFAULT '',
+                    trigger_email_id INTEGER DEFAULT NULL,
+                    triggered_at TEXT DEFAULT '',
+                    due_at TEXT DEFAULT '',
+                    status TEXT DEFAULT 'Waiting_Trigger',
+                    created_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_status_due ON sequence_rules(status, due_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_rules_email ON sequence_rules(contact_email)")
 
-    # Canonical Views matching Target Data Model (Section B3)
-    cursor.execute("""
-        CREATE VIEW IF NOT EXISTS mailboxes AS
-        SELECT id, sender_name AS from_name, email AS username, smtp_host AS host, smtp_port AS port,
-               password AS password_encrypted, daily_limit,
-               warmup_starting_limit AS warmup_start, warmup_daily_increment AS warmup_increment,
-               warmup_target_limit AS warmup_cap, warmup_start_date, is_active AS active,
-               sender_name AS label
-        FROM smtp_accounts
-    """)
-    cursor.execute("""
-        CREATE VIEW IF NOT EXISTS messages AS
-        SELECT id, lead_id, recipient AS to_email, smtp_account_id AS mailbox_id, subject,
-               COALESCE(NULLIF(body_html_resolved, ''), email_html) AS body_html,
-               scheduled_time AS scheduled_time_utc, status, thread_refs, sequence_group,
-               error_message AS error, 0 AS attempts, created_at, updated_at AS sent_at
-        FROM emails
-    """)
-    cursor.execute("""
-        CREATE VIEW IF NOT EXISTS settings AS
-        SELECT key, value FROM system_config
-    """)
+            seq_rule_migrations = [
+                ("target_timezone", "TEXT DEFAULT ''"),
+                ("target_country", "TEXT DEFAULT ''"),
+                ("market_key", "TEXT DEFAULT ''"),
+                ("custom_body", "TEXT DEFAULT ''"),
+                ("thread_reply", "INTEGER DEFAULT 1")
+            ]
+            for col_name, col_def in seq_rule_migrations:
+                try:
+                    valid_col = validate_identifier(col_name)
+                    cursor.execute(f"ALTER TABLE sequence_rules ADD COLUMN {valid_col} {col_def}")
+                except DB_OPERATIONAL_ERRORS as e:
+                    if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                        logger.warning(f"OperationalError during sequence_rules migration for {col_name}: {e}")
 
-    # 9. Campaigns tables (Additive Data Model)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS campaign_campaigns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            tags TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'Draft',
-            list_id TEXT DEFAULT 'all',
-            timezone TEXT DEFAULT 'America/New_York',
-            send_window_start TEXT DEFAULT '09:00',
-            send_window_end TEXT DEFAULT '18:00',
-            send_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
-            daily_limit INTEGER DEFAULT 50,
-            delay_seconds INTEGER DEFAULT 60,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_status ON campaign_campaigns(status)")
+            # Automatically prune historical duplicate notifications if any exist
+            try:
+                cursor.execute("""
+                    DELETE FROM notifications
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM notifications
+                        GROUP BY type, LOWER(TRIM(contact_email)), title
+                    )
+                """)
+            except Exception:
+                pass
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS campaign_steps (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER NOT NULL,
-            position INTEGER NOT NULL,
-            subject TEXT NOT NULL DEFAULT '',
-            body_html TEXT NOT NULL DEFAULT '',
-            wait_days INTEGER DEFAULT 0,
-            wait_hours INTEGER DEFAULT 0,
-            condition TEXT DEFAULT 'no_reply',
-            template_id INTEGER DEFAULT NULL,
-            is_reply_thread INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_steps_camp ON campaign_steps(campaign_id, position)")
+            # Drop removed proof_stories table (Section 2.2)
+            cursor.execute("DROP TABLE IF EXISTS proof_stories")
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS campaign_contacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER NOT NULL,
-            contact_id INTEGER NOT NULL,
-            state TEXT NOT NULL DEFAULT 'pending',
-            current_step INTEGER DEFAULT 0,
-            next_send_at TEXT DEFAULT '',
-            last_event_at TEXT DEFAULT '',
-            converted INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_camp ON campaign_contacts(campaign_id, state)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_cid ON campaign_contacts(contact_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_due ON campaign_contacts(campaign_id, state, next_send_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_state ON campaign_contacts(campaign_id, state, converted)")
+            # Canonical Views matching Target Data Model (Section B3)
+            cursor.execute("""
+                CREATE VIEW IF NOT EXISTS mailboxes AS
+                SELECT id, sender_name AS from_name, email AS username, smtp_host AS host, smtp_port AS port,
+                       password AS password_encrypted, daily_limit,
+                       warmup_starting_limit AS warmup_start, warmup_daily_increment AS warmup_increment,
+                       warmup_target_limit AS warmup_cap, warmup_start_date, is_active AS active,
+                       sender_name AS label
+                FROM smtp_accounts
+            """)
+            cursor.execute("""
+                CREATE VIEW IF NOT EXISTS messages AS
+                SELECT id, lead_id, recipient AS to_email, smtp_account_id AS mailbox_id, subject,
+                       COALESCE(NULLIF(body_html_resolved, ''), email_html) AS body_html,
+                       scheduled_time AS scheduled_time_utc, status, thread_refs, sequence_group,
+                       error_message AS error, 0 AS attempts, created_at, updated_at AS sent_at
+                FROM emails
+            """)
+            cursor.execute("""
+                CREATE VIEW IF NOT EXISTS settings AS
+                SELECT key, value FROM system_config
+            """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS campaign_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER NOT NULL,
-            contact_id INTEGER NOT NULL,
-            step_id INTEGER DEFAULT NULL,
-            event_type TEXT NOT NULL,
-            meta_json TEXT DEFAULT '{}',
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_camp ON campaign_events(campaign_id, event_type)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_created ON campaign_events(campaign_id, event_type, created_at)")
+            # 9. Campaigns tables (Additive Data Model)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS campaign_campaigns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    tags TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'Draft',
+                    list_id TEXT DEFAULT 'all',
+                    timezone TEXT DEFAULT 'America/New_York',
+                    send_window_start TEXT DEFAULT '09:00',
+                    send_window_end TEXT DEFAULT '18:00',
+                    send_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+                    daily_limit INTEGER DEFAULT 50,
+                    delay_seconds INTEGER DEFAULT 60,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_status ON campaign_campaigns(status)")
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS campaign_images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_type TEXT DEFAULT 'campaign',
-            owner_id INTEGER DEFAULT NULL,
-            file_path TEXT NOT NULL,
-            cid TEXT DEFAULT '',
-            file_size INTEGER DEFAULT 0,
-            mime_type TEXT DEFAULT 'image/png',
-            created_at TEXT NOT NULL
-        )
-    """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS campaign_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    campaign_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    subject TEXT NOT NULL DEFAULT '',
+                    body_html TEXT NOT NULL DEFAULT '',
+                    wait_days INTEGER DEFAULT 0,
+                    wait_hours INTEGER DEFAULT 0,
+                    condition TEXT DEFAULT 'no_reply',
+                    template_id INTEGER DEFAULT NULL,
+                    is_reply_thread INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_steps_camp ON campaign_steps(campaign_id, position)")
 
-    # Populate default configuration keys if not already present
-    default_configs = {
-        "dispatch_method": "hostinger_smtp",
-        "min_delay_seconds": "20",
-        "max_delay_seconds": "45",
-        "sender_email": "",
-        "bcc_email": "",
-        "schedule_mode": "adaptive_multi_country",
-        "default_market": "LOCAL",
-        "default_timezone": "Asia/Karachi",
-        "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
-        "signature_html": "<p>Best regards,<br><strong>Outreach Team</strong></p>",
-        "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
-        "sending_start_time": "09:00",
-        "sending_end_time": "17:00",
-        "default_window_start": "09:00",
-        "default_window_end": "17:00",
-        "send_delay_seconds": "60",
-        "worker_heartbeat": "",
-        "send_now_outside_window_policy": "immediate",
-        "enforce_sending_window": "false"
-    }
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS campaign_contacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    campaign_id INTEGER NOT NULL,
+                    contact_id INTEGER NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'pending',
+                    current_step INTEGER DEFAULT 0,
+                    next_send_at TEXT DEFAULT '',
+                    last_event_at TEXT DEFAULT '',
+                    converted INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_camp ON campaign_contacts(campaign_id, state)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_cid ON campaign_contacts(contact_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_due ON campaign_contacts(campaign_id, state, next_send_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_contacts_state ON campaign_contacts(campaign_id, state, converted)")
 
-    for key, val in default_configs.items():
-        cursor.execute("""
-            INSERT OR IGNORE INTO system_config (key, value)
-            VALUES (?, ?)
-        """, (key, val))
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS campaign_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    campaign_id INTEGER NOT NULL,
+                    contact_id INTEGER NOT NULL,
+                    step_id INTEGER DEFAULT NULL,
+                    event_type TEXT NOT NULL,
+                    meta_json TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_camp ON campaign_events(campaign_id, event_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_events_created ON campaign_events(campaign_id, event_type, created_at)")
 
-    # Add sample template if none exist
-    cursor.execute("SELECT COUNT(*) as count FROM templates")
-    if cursor.fetchone()["count"] == 0:
-        now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        sample_template = (
-            "{Hi|Hello|Hey} [Name],<br><br>"
-            "I was looking into [Company]'s current product catalog and noticed a few {quick opportunities|easy optimizations|high-impact improvements} on your mobile listings.<br><br>"
-            "We recently prepared a 3-point listing teardown showing how {enhancing bullet clarity|optimizing infographics|refining backend keywords} helped similar brands boost conversion rates by 18-24%.<br><br>"
-            "Would you be {open to|interested in} reviewing a quick 3-minute video breakdown for [Company] this week?"
-        )
-        cursor.execute("""
-            INSERT INTO templates (template_name, body_content, created_at)
-            VALUES (?, ?, ?)
-        """, ("E-Commerce Listing Audit Outreach", sample_template, now_iso))
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS campaign_images (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_type TEXT DEFAULT 'campaign',
+                    owner_id INTEGER DEFAULT NULL,
+                    file_path TEXT NOT NULL,
+                    cid TEXT DEFAULT '',
+                    file_size INTEGER DEFAULT 0,
+                    mime_type TEXT DEFAULT 'image/png',
+                    created_at TEXT NOT NULL
+                )
+            """)
 
-    # Add sample contacts with tags if none exist
-    cursor.execute("SELECT COUNT(*) as count FROM contacts")
-    if cursor.fetchone()["count"] == 0:
-        now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("""
-            INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'New', ?)
-        """, ("Sarah Jenkins", "sarah@apexoutdoors.com", "Apex Outdoors", "Listing Audit, Outdoor Brands", json.dumps({"Niche": "Outdoor Gear", "Role": "Founder"}), now_iso))
-        cursor.execute("""
-            INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'New', ?)
-        """, ("Elena Rostova", "elena@skinfix.com", "Skinfix", "Beauty Brands, Q4 Leads", json.dumps({"Niche": "Skincare", "Role": "Brand Director"}), now_iso))
-        cursor.execute("""
-            INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'New', ?)
-        """, ("Marcus Brody", "marcus@minoribeauty.com", "Minori Beauty", "Beauty Brands, Listing Audit", json.dumps({"Niche": "Cosmetics", "Role": "E-commerce Head"}), now_iso))
+            # Populate default configuration keys if not already present
+            default_configs = {
+                "dispatch_method": "hostinger_smtp",
+                "min_delay_seconds": "20",
+                "max_delay_seconds": "45",
+                "sender_email": "",
+                "bcc_email": "",
+                "schedule_mode": "adaptive_multi_country",
+                "default_market": "LOCAL",
+                "default_timezone": "Asia/Karachi",
+                "negative_keywords": "unsubscribe, free, guarantee, 100%, act now, urgent, winner, risk-free, spam, credit card, no catch, cash",
+                "signature_html": "<p>Best regards,<br><strong>Outreach Team</strong></p>",
+                "sending_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
+                "sending_start_time": "09:00",
+                "sending_end_time": "17:00",
+                "default_window_start": "09:00",
+                "default_window_end": "17:00",
+                "send_delay_seconds": "60",
+                "worker_heartbeat": "",
+                "send_now_outside_window_policy": "immediate",
+                "enforce_sending_window": "false"
+            }
+            for key, val in default_configs.items():
+                cursor.execute("""
+                    INSERT OR IGNORE INTO system_config (key, value)
+                    VALUES (?, ?)
+                """, (key, val))
 
-    conn.commit()
-    conn.close()
+            # Add sample template if none exist
+            cursor.execute("SELECT COUNT(*) as count FROM templates")
+            if cursor.fetchone()["count"] == 0:
+                now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                sample_template = (
+                    "{Hi|Hello|Hey} [Name],<br><br>"
+                    "I was looking into [Company]'s current product catalog and noticed a few {quick opportunities|easy optimizations|high-impact improvements} on your mobile listings.<br><br>"
+                    "We recently prepared a 3-point listing teardown showing how {enhancing bullet clarity|optimizing infographics|refining backend keywords} helped similar brands boost conversion rates by 18-24%.<br><br>"
+                    "Would you be {open to|interested in} reviewing a quick 3-minute video breakdown for [Company] this week?"
+                )
+                cursor.execute("""
+                    INSERT INTO templates (template_name, body_content, created_at)
+                    VALUES (?, ?, ?)
+                """, ("E-Commerce Listing Audit Outreach", sample_template, now_iso))
+
+            # Add sample contacts with tags if none exist
+            cursor.execute("SELECT COUNT(*) as count FROM contacts")
+            if cursor.fetchone()["count"] == 0:
+                now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                cursor.execute("""
+                    INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'New', ?)
+                """, ("Sarah Jenkins", "sarah@apexoutdoors.com", "Apex Outdoors", "Listing Audit, Outdoor Brands", json.dumps({"Niche": "Outdoor Gear", "Role": "Founder"}), now_iso))
+                cursor.execute("""
+                    INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'New', ?)
+                """, ("Elena Rostova", "elena@skinfix.com", "Skinfix", "Beauty Brands, Q4 Leads", json.dumps({"Niche": "Skincare", "Role": "Brand Director"}), now_iso))
+                cursor.execute("""
+                    INSERT INTO contacts (name, email, company, tags, custom_variables, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'New', ?)
+                """, ("Marcus Brody", "marcus@minoribeauty.com", "Minori Beauty", "Beauty Brands, Listing Audit", json.dumps({"Niche": "Cosmetics", "Role": "E-commerce Head"}), now_iso))
+
+        finally:
+            # Release PostgreSQL advisory lock
+            if has_advisory_lock:
+                try:
+                    cursor.execute("SELECT pg_advisory_unlock(88889999);")
+                    conn.commit()
+                except Exception:
+                    pass
+            # Commit & close connection if we opened it
+            if should_close:
+                try:
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass
+            _init_db_done = True
 
     # Automatically restore user data if this is a fresh container / instance
     try:
