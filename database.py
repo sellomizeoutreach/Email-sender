@@ -2366,6 +2366,17 @@ def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
             if c_status not in ["Replied", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]:
                 cursor.execute("UPDATE contacts SET status = 'Opened' WHERE id = ?", (cid,))
 
+            # Also log to campaign_events if enrolled in any campaign
+            try:
+                cursor.execute("SELECT campaign_id FROM campaign_contacts WHERE contact_id = ?", (cid,))
+                for ccr in cursor.fetchall():
+                    cursor.execute("""
+                        INSERT INTO campaign_events (campaign_id, contact_id, step_id, event_type, meta_json, created_at)
+                        VALUES (?, ?, NULL, 'opened', ?, ?)
+                    """, (ccr["campaign_id"], cid, json.dumps({"email_id": email_id}), now_iso))
+            except Exception:
+                pass
+
     conn.commit()
     conn.close()
     return True
@@ -2429,6 +2440,17 @@ def record_email_click(email_id: int, clicked_url: str = "", db_path: str = DB_F
                 cursor.execute("""
                     UPDATE contacts SET tags = ?, notes = ? WHERE id = ?
                 """, (tags_str, updated_notes, cid))
+
+            # Also log to campaign_events if enrolled in any campaign
+            try:
+                cursor.execute("SELECT campaign_id FROM campaign_contacts WHERE contact_id = ?", (cid,))
+                for ccr in cursor.fetchall():
+                    cursor.execute("""
+                        INSERT INTO campaign_events (campaign_id, contact_id, step_id, event_type, meta_json, created_at)
+                        VALUES (?, ?, NULL, 'clicked', ?, ?)
+                    """, (ccr["campaign_id"], cid, json.dumps({"email_id": email_id, "url": clicked_url}), now_iso))
+            except Exception:
+                pass
 
     conn.commit()
     conn.close()

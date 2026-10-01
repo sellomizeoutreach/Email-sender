@@ -43,6 +43,13 @@ from database import (
     init_db,
 )
 from smtp_dispatcher import test_smtp_connection
+from tracker import (
+    is_port_in_use,
+    start_tracking_server,
+    get_tracking_base_url,
+    is_public_tracking_url,
+)
+import urllib.request
 from timezone_helper import TARGET_MARKETS, get_engine_now
 from ui.components import trigger_toast
 from config import (
@@ -541,6 +548,139 @@ def render_settings_tab():
             st.metric("Poll Interval", f"{WORKER_POLL_INTERVAL_SECONDS} seconds")
 
         st.caption("To start the background daemon, run `run_scheduler.bat` or `python scheduler.py` in the terminal.")
+
+    # =========================================================================
+    # SECTION 3.5: EMAIL OPEN & CLICK TRACKING CONFIGURATION (sellomize.com)
+    # =========================================================================
+    st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:16px 0;'>", unsafe_allow_html=True)
+    with st.expander("📬 Email Open & Click Tracking Configuration (sellomize.com)", expanded=True):
+        tracker_running = is_port_in_use(8502)
+        current_tracking_url = get_tracking_base_url()
+        is_public = is_public_tracking_url(current_tracking_url)
+
+        # Micro-server Status & Controls
+        t_col1, t_col2, t_col3 = st.columns([1.5, 1.5, 1.5], vertical_alignment="center")
+        with t_col1:
+            st.metric("Tracking Listener (:8502)", "🟢 Listening" if tracker_running else "⚪ Stopped")
+        with t_col2:
+            st.metric("Domain Reachability", "🌐 Public Reachable" if is_public else "⚠️ Localhost Only")
+        with t_col3:
+            if st.button("🚀 Start / Restart Tracker", key="btn_start_tracker", use_container_width=True):
+                started = start_tracking_server(port=8502)
+                if started or is_port_in_use(8502):
+                    trigger_toast("Tracking listener online on port 8502!", icon="✅")
+                else:
+                    trigger_toast("Could not bind port 8502.", icon="⚠️")
+                st.rerun()
+
+        st.markdown("""
+        <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:12px 16px; margin: 12px 0;">
+            <div style="font-size:13px; font-weight:700; color:#083731;">How Open Tracking Works:</div>
+            <div style="font-size:12px; color:#475569; margin-top:4px; line-height:1.5;">
+                When an outreach email is sent, a 1x1 transparent invisible image pixel is automatically embedded at the end of the email:<br>
+                <code>&lt;img src="&lt;Tracking_URL&gt;/track/open/&lt;email_id&gt;.png" width="1" height="1" ... /&gt;</code><br>
+                When your lead opens the email in Gmail, Outlook, Apple Mail, or phone, the email client fetches the image, firing an open event back to Sellomize Reach. This instantly updates the contact's CRM status to <b>Opened / Interested</b> and records opens in <b>Campaign Analytics</b>.
+            </div>
+            <div style="font-size:12px; color:#B45309; margin-top:6px; font-weight:600;">
+                ⚠️ Important: <code>http://localhost:8502</code> only works for emails opened on your own PC. For real external leads, you must connect a public domain (such as <code>https://track.sellomize.com</code>) pointing to port 8502.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("**Public Tracking Base URL**")
+        tracking_input = st.text_input(
+            "Tracking Base URL",
+            value=current_tracking_url,
+            placeholder="https://track.sellomize.com",
+            key="input_tracking_base_url",
+            label_visibility="collapsed",
+            help="Publicly accessible HTTPS domain pointing to this server's port 8502."
+        )
+
+        click_track_curr = get_config("enable_click_tracking", "false").lower() in ["true", "1", "yes"]
+        enable_clicks = st.checkbox(
+            "Enable Link Click Tracking (Rewrites outbound links to track lead website visits)",
+            value=click_track_curr,
+            key="chk_enable_click_tracking",
+            help="Wraps hyperlinks in your emails so you know when a lead clicks a link to sellomize.com."
+        )
+
+        c_track_btn1, c_track_btn2, c_track_btn3 = st.columns([1.2, 1.2, 1.6])
+        with c_track_btn1:
+            if st.button("💾 Save Tracking URL", type="primary", use_container_width=True, key="btn_save_tracking_url"):
+                clean_track_url = tracking_input.strip().rstrip("/")
+                if not clean_track_url:
+                    clean_track_url = "http://localhost:8502"
+                set_config("tracking_base_url", clean_track_url)
+                set_config("enable_click_tracking", "true" if enable_clicks else "false")
+                auto_save_backup()
+                trigger_toast("Tracking configuration saved!", icon="💾")
+                st.rerun()
+
+        with c_track_btn2:
+            if st.button("🌐 Ping / Test URL", use_container_width=True, key="btn_ping_tracking_url"):
+                target_ping = (tracking_input.strip() or "http://localhost:8502").rstrip("/")
+                test_endpoint = f"{target_ping}/health"
+                try:
+                    req = urllib.request.Request(test_endpoint, headers={"User-Agent": "SellomizeHealthCheck/1.0"})
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        status_code = resp.getcode()
+                        content = resp.read().decode("utf-8", errors="ignore")
+                        if status_code == 200:
+                            st.success(f"✅ Verified! Tracking server responded at `{test_endpoint}`: {content}")
+                            trigger_toast("Tracking URL reachable!", icon="✅")
+                        else:
+                            st.warning(f"⚠️ Tracking server responded with HTTP {status_code} at `{test_endpoint}`")
+                except Exception as ex:
+                    st.error(f"❌ Cannot reach `{test_endpoint}`: {ex}")
+                    st.info("💡 Ensure port 8502 is listening and your domain / tunnel is forwarding traffic to port 8502.")
+
+        with c_track_btn3:
+            if st.button("🔄 Reset to Default (Localhost)", use_container_width=True, key="btn_reset_tracking_local"):
+                set_config("tracking_base_url", "http://localhost:8502")
+                auto_save_backup()
+                trigger_toast("Reset to http://localhost:8502", icon="🔄")
+                st.rerun()
+
+        with st.expander("🛠️ How to Connect track.sellomize.com (Step-by-Step Setup)", expanded=False):
+            st.markdown("""
+            ### Option 1: Cloudflare Tunnel (Free, Recommended & Easiest)
+            Cloudflare Tunnel securely connects your local port 8502 directly to `https://track.sellomize.com` without needing port forwarding or opening your firewall:
+            1. Download `cloudflared` from **[cloudflare.com](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)**.
+            2. In your terminal, run:
+            ```bash
+            cloudflared tunnel --url http://localhost:8502
+            ```
+            3. Cloudflare will generate a secure `https://xxx.trycloudflare.com` URL (or you can map it permanently to `track.sellomize.com` in your Cloudflare Zero Trust dashboard).
+            4. Paste the URL above, click **💾 Save Tracking URL**, and you're fully live with SSL!
+
+            ---
+
+            ### Option 2: Nginx Reverse Proxy (If hosting on a VPS or Server)
+            If Sellomize Reach runs on a Linux server or VPS where `sellomize.com` DNS points:
+            ```nginx
+            server {
+                server_name track.sellomize.com;
+
+                location / {
+                    proxy_pass http://127.0.0.1:8502;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+            }
+            ```
+            Run `certbot --nginx -d track.sellomize.com` for a free Let's Encrypt SSL certificate.
+
+            ---
+
+            ### Option 3: Quick Dev Testing with Ngrok
+            ```bash
+            ngrok http 8502
+            ```
+            Copy the public `https://xxx.ngrok-free.app` URL and save it above.
+            """)
 
     # =========================================================================
     # SECTION 4: CLOUD POSTGRESQL PERSISTENCE (SUPABASE / NEON)
