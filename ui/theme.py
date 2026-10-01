@@ -215,6 +215,7 @@ SELLOMIZE_THEME_CSS = """<style>
     .ebody { padding: 12px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 120px; }
     .hl { background: #FDE2DA; color: #FD4D1B; border-radius: 3px; padding: 0 3px; font-weight: 600; }
     .preview { border: 1px solid #E2E8F0; border-radius: 10px; background: #FFFFFF; padding: 16px; font-size: 13px; color: #334155; line-height: 1.6; min-height: 380px; display: flex; flex-direction: column; }
+    .preview p { margin: 0 0 1em 0; line-height: 1.6; }
     .preview img { max-width: 100%; height: auto; border-radius: 6px; margin: 8px 0; display: block; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
     .preview .sig { margin-top: auto; padding-top: 12px; border-top: 1px solid #E2E8F0; font-size: 12px; color: #64748B; }
     .spam { font-size: 12px; color: #D97706; display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; }

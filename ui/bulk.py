@@ -531,16 +531,16 @@ def render_bulk_tab():
             )
             if prev_sel.startswith("📧"):
                 preview_subj = inject_variables(parse_spintax(selected_subject), sample_lead)
-                preview_body = resolve_template(current_body, sample_lead)
+                preview_body = format_email_html(resolve_template(current_body, sample_lead))
             else:
                 fu_idx = int(prev_sel.split("#")[-1]) - 1
                 fu_step = st.session_state["bulk_followup_steps"][fu_idx]
                 preview_subj = inject_variables(parse_spintax(fu_step["subject"]), sample_lead)
-                fu_html = "<p>" + fu_step["body"].replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
-                preview_body = resolve_template(fu_html, sample_lead)
+                fu_resolved = resolve_template(fu_step["body"], sample_lead)
+                preview_body = format_email_html(fu_resolved)
         else:
             preview_subj = inject_variables(parse_spintax(selected_subject), sample_lead)
-            preview_body = resolve_template(current_body, sample_lead)
+            preview_body = format_email_html(resolve_template(current_body, sample_lead))
 
         preview_box_html = (
             '<div class="preview">'

@@ -491,10 +491,9 @@ def render_rich_editor(
         help="Type or paste your email body here. Press Ctrl+V or drop images directly into this area."
     )
 
-    # Detect manual typing in text_area
-    if edited_val != live_visual:
-        st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
-        st.session_state[last_synced_html] = st.session_state[state_key]
+    # Always ensure state_key contains structured HTML corresponding to edited_val for preview and dispatch
+    st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
+    st.session_state[last_synced_html] = st.session_state[state_key]
 
     # Visually hide the hidden receivers
     st.markdown("""

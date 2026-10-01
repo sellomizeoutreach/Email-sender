@@ -440,7 +440,7 @@ def format_email_html(raw_body: str) -> str:
     """
     if not raw_body or not raw_body.strip():
         return ""
-    text = raw_body.strip()
+    text = raw_body.replace('\r\n', '\n').replace('\r', '\n').strip()
 
     # Apply inline markdown formatting if present
     if "**" in text:
@@ -461,8 +461,8 @@ def format_email_html(raw_body: str) -> str:
         return text
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if not paragraphs:
-        return f"<p>{text}</p>"
-    return "".join(f"<p style='margin: 0 0 1em 0;'>{p}</p>" for p in paragraphs)
+        return f"<p style='margin: 0 0 1em 0;'>{text.replace(chr(10), '<br>')}</p>"
+    return "".join(f"<p style='margin: 0 0 1em 0;'>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
 
 
 def resolve_template(template_body: str, contact: Dict[str, Any]) -> str:

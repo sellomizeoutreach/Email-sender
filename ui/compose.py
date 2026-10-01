@@ -814,16 +814,16 @@ def render_compose_tab(contacts=None, templates=None):
             )
             if prev_choice.startswith("📧"):
                 preview_subj = final_subj
-                preview_body = final_body
+                preview_body = format_email_html(final_body)
             else:
                 fu_idx = int(prev_choice.split("#")[-1]) - 1
                 fu_obj = st.session_state["compose_followups"][fu_idx]
                 preview_subj = inject_variables(parse_spintax(fu_obj["subject"]), current_lead)
-                fu_raw = fu_obj["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
-                preview_body = resolve_template(f"<p>{fu_raw}</p>", current_lead)
+                fu_resolved = resolve_template(fu_obj["body"], current_lead)
+                preview_body = format_email_html(fu_resolved)
         else:
             preview_subj = final_subj
-            preview_body = final_body
+            preview_body = format_email_html(final_body)
 
         bcc_active_str = st.session_state.get("compose_bcc_email", "").strip() if st.session_state.get("compose_show_bcc") else ""
         bcc_preview_html = (

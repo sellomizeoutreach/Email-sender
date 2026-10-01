@@ -260,8 +260,9 @@ def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
     if not html_content:
         return "", {}
 
-    # 1. Extract images first
-    text, img_map = extract_images_to_placeholders(html_content)
+    # 1. Normalize Windows CRLF to standard \n and extract images first
+    norm_content = str(html_content).replace('\r\n', '\n').replace('\r', '\n')
+    text, img_map = extract_images_to_placeholders(norm_content)
 
     # Convert <ul> lists to bullet points
     def ul_repl(match):
@@ -324,7 +325,7 @@ def visual_text_to_html(visual_text: str, img_map: Dict[str, str]) -> str:
     if not visual_text or not visual_text.strip():
         return ""
 
-    text = visual_text.strip()
+    text = visual_text.replace('\r\n', '\n').replace('\r', '\n').strip()
 
     # If the text already has full custom block structure (table, style, etc.), don't double-wrap
     has_custom_block = any(tag in text.lower() for tag in ["<table", "<style", "<h1", "<h2", "<h3"])
