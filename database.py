@@ -4005,6 +4005,44 @@ def mark_campaign_contact_replied(contact_enrollment_id: int, db_path: str = DB_
     return affected
 
 
+def unenroll_campaign_contact(contact_enrollment_id: int, db_path: str = DB_FILE) -> bool:
+    """Remove a contact from a campaign enrollment."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM campaign_contacts WHERE id = ?", (contact_enrollment_id,))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def clear_campaign_contacts(campaign_id: int, db_path: str = DB_FILE) -> int:
+    """Remove all contacts enrolled in a campaign."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM campaign_contacts WHERE campaign_id = ?", (campaign_id,))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def reset_campaign_contact(contact_enrollment_id: int, db_path: str = DB_FILE) -> bool:
+    """Reset a contact's sequence progress back to pending step 0."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE campaign_contacts
+        SET state = 'pending', current_step = 0, next_send_at = '', converted = 0
+        WHERE id = ?
+    """, (contact_enrollment_id,))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+
 def record_campaign_event(
     campaign_id: int,
     contact_id: int,

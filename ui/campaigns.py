@@ -30,6 +30,9 @@ from database import (
     sync_campaign_steps,
     get_campaign_contacts,
     enroll_contacts_in_campaign,
+    unenroll_campaign_contact,
+    clear_campaign_contacts,
+    reset_campaign_contact,
     mark_campaign_contact_converted,
     mark_campaign_contact_replied,
     get_campaign_events,
@@ -239,15 +242,30 @@ def _render_campaigns_list(all_contacts: List[Dict[str, Any]], all_templates: Li
                     pct_clamped = min(max(pct_sent, 0.0), 1.0)
                     st.progress(pct_clamped)
 
-                    # Bottom footer button
-                    act_c1, act_c2 = st.columns([6, 4], vertical_alignment="center")
+                    # Bottom footer buttons
+                    act_c1, act_c2, act_c3 = st.columns([4, 4, 2], vertical_alignment="center")
                     with act_c1:
                         st.caption(f"Created: {camp['created_at'][:10]}")
                     with act_c2:
-                        if st.button("View Details →", key=f"btn_view_camp_{cid}", use_container_width=True):
+                        if st.button("View Details →", key=f"btn_view_camp_{cid}", type="primary", use_container_width=True):
                             st.session_state["campaign_view"] = "detail"
                             st.session_state["campaign_active_id"] = cid
                             st.rerun()
+                    with act_c3:
+                        with st.popover("⚙️", key=f"pop_quick_camp_{cid}"):
+                            if st.button("✏️ Edit", key=f"quick_edit_{cid}", use_container_width=True):
+                                st.session_state["campaign_view"] = "detail"
+                                st.session_state["campaign_active_id"] = cid
+                                st.session_state[f"show_camp_edit_{cid}"] = True
+                                st.rerun()
+                            if st.button("📑 Copy", key=f"quick_dup_{cid}", use_container_width=True):
+                                new_id = duplicate_campaign(cid)
+                                trigger_toast(f"Duplicated as Campaign #{new_id}!", icon="📑")
+                                st.rerun()
+                            if st.button("🗑️ Delete", key=f"quick_del_{cid}", type="primary", use_container_width=True):
+                                delete_campaign(cid)
+                                trigger_toast("Campaign deleted.", icon="🗑️")
+                                st.rerun()
 
 
 # -----------------------------------------------------------------------------
@@ -552,6 +570,9 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
             st.rerun()
     with dh_c3:
         with st.popover("⚙️ More Options", use_container_width=True):
+            if st.button("✏️ Edit Campaign Settings", use_container_width=True):
+                st.session_state[f"show_camp_edit_{campaign_id}"] = not st.session_state.get(f"show_camp_edit_{campaign_id}", False)
+                st.rerun()
             if st.button("📑 Duplicate Campaign", use_container_width=True):
                 new_id = duplicate_campaign(campaign_id)
                 st.session_state["campaign_active_id"] = new_id
@@ -561,6 +582,7 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
                 update_campaign(campaign_id, status="Completed")
                 trigger_toast("Campaign marked completed.", icon="📦")
                 st.rerun()
+            st.markdown("<hr style='margin:6px 0;'>", unsafe_allow_html=True)
             if st.button("🗑️ Delete Campaign", type="primary", use_container_width=True):
                 delete_campaign(campaign_id)
                 st.session_state["campaign_view"] = "list"
@@ -570,6 +592,68 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
     if st.button("← Back to All Campaigns", key="btn_back_to_list"):
         st.session_state["campaign_view"] = "list"
         st.rerun()
+
+    # Collapsible Edit Settings Container
+    if st.session_state.get(f"show_camp_edit_{campaign_id}"):
+        with st.container(border=True):
+            st.markdown(f"#### ✏️ Edit Campaign Settings")
+            st.caption("Update schedule, rate limits, sending window, or audience label.")
+            with st.form(f"form_edit_camp_detail_{campaign_id}"):
+                ec_name = st.text_input("Campaign Name *", value=camp.get("name") or "")
+                ec_desc = st.text_area("Description / Goal", value=camp.get("description") or "")
+                ec_tags = st.text_input("Tags (comma-separated)", value=camp.get("tags") or "")
+
+                ec_c1, ec_c2 = st.columns(2)
+                with ec_c1:
+                    tz_options = ["America/New_York (US East)", "America/Los_Angeles (US West)", "Europe/London (UK)", "Asia/Karachi (Local UTC+5)"]
+                    cur_tz = camp.get("timezone", "America/New_York")
+                    tz_idx = 0
+                    for idx, tzo in enumerate(tz_options):
+                        if cur_tz in tzo:
+                            tz_idx = idx
+                            break
+                    ec_tz = st.selectbox("Send Timezone", options=tz_options, index=tz_idx)
+                    ec_list = st.text_input("Audience List Segment", value=camp.get("list_id") or "All leads")
+
+                with ec_c2:
+                    w1, w2 = st.columns(2)
+                    with w1:
+                        ec_win_s = st.text_input("Window Start", value=camp.get("send_window_start") or "09:00")
+                    with w2:
+                        ec_win_e = st.text_input("Window End", value=camp.get("send_window_end") or "18:00")
+
+                    lim1, lim2 = st.columns(2)
+                    with lim1:
+                        ec_limit = st.number_input("Max Daily Emails", min_value=1, max_value=500, value=int(camp.get("daily_limit") or 50))
+                    with lim2:
+                        ec_delay = st.number_input("Inter-Email Delay (sec)", min_value=10, max_value=600, value=int(camp.get("delay_seconds") or 60))
+
+                btn_c1, btn_c2 = st.columns(2)
+                with btn_c1:
+                    if st.form_submit_button("💾 Save Settings", type="primary", use_container_width=True):
+                        if not ec_name.strip():
+                            st.error("Campaign Name cannot be empty.")
+                        else:
+                            clean_tz = ec_tz.split(" ")[0]
+                            update_campaign(
+                                campaign_id=campaign_id,
+                                name=ec_name.strip(),
+                                description=ec_desc.strip(),
+                                tags=ec_tags.strip(),
+                                timezone=clean_tz,
+                                send_window_start=ec_win_s.strip(),
+                                send_window_end=ec_win_e.strip(),
+                                daily_limit=int(ec_limit),
+                                delay_seconds=int(ec_delay),
+                                list_id=ec_list.strip()
+                            )
+                            st.session_state[f"show_camp_edit_{campaign_id}"] = False
+                            trigger_toast("Campaign settings updated successfully!", icon="✅")
+                            st.rerun()
+                with btn_c2:
+                    if st.form_submit_button("✖️ Cancel", use_container_width=True):
+                        st.session_state[f"show_camp_edit_{campaign_id}"] = False
+                        st.rerun()
 
     st.markdown("<hr style='margin:10px 0; border:0; border-top:1px solid #E2E8F0;'>", unsafe_allow_html=True)
 
@@ -646,36 +730,149 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
         st.markdown("##### Enrolled Prospects")
         camp_contacts = get_campaign_contacts(campaign_id)
 
-        top_act1, top_act2 = st.columns([8, 2], vertical_alignment="center")
+        top_act1, top_act2, top_act3 = st.columns([5, 2.5, 2.5], vertical_alignment="center")
         with top_act1:
-            st.caption(f"Showing {len(camp_contacts)} enrolled leads.")
+            st.caption(f"Showing **{len(camp_contacts)}** enrolled leads in this campaign.")
         with top_act2:
+            with st.popover("➕ Enroll / Add Leads", use_container_width=True):
+                st.markdown("##### 👥 Enroll Leads into Campaign")
+                lead_sources = sorted(list({c.get("lead_source") or "Other" for c in all_contacts}))
+                source_options = ["All leads"] + [f"Source: {s}" for s in lead_sources]
+                sel_seg = st.selectbox("Audience Segment", options=source_options, key=f"enroll_seg_{campaign_id}")
+
+                # Filter leads
+                enrolled_ids = {cc["contact_id"] for cc in camp_contacts}
+                if sel_seg == "All leads":
+                    available_leads = [c for c in all_contacts if (c.get("status") or "").lower() != "do not contact" and c["id"] not in enrolled_ids]
+                else:
+                    src_val = sel_seg.replace("Source: ", "")
+                    available_leads = [c for c in all_contacts if (c.get("lead_source") or "") == src_val and (c.get("status") or "").lower() != "do not contact" and c["id"] not in enrolled_ids]
+
+                st.caption(f"Found **{len(available_leads)} eligible leads** not yet enrolled.")
+
+                enroll_mode = st.radio("Enrollment Mode", ["Enroll all eligible in segment", "Pick specific leads"], key=f"enroll_mode_{campaign_id}", horizontal=True)
+
+                leads_to_add = []
+                if enroll_mode == "Enroll all eligible in segment":
+                    leads_to_add = [c["id"] for c in available_leads]
+                else:
+                    lead_pick_map = {f"{c.get('name') or 'Lead'} ({c.get('email')}) — {c.get('company') or 'No Brand'}": c["id"] for c in available_leads}
+                    picked_labels = st.multiselect("Select Contacts", options=list(lead_pick_map.keys()), key=f"enroll_picked_{campaign_id}")
+                    leads_to_add = [lead_pick_map[lbl] for lbl in picked_labels]
+
+                if st.button(f"🚀 Enroll {len(leads_to_add)} Contacts", type="primary", use_container_width=True, key=f"btn_do_enroll_{campaign_id}"):
+                    if not leads_to_add:
+                        st.warning("No contacts selected to enroll.")
+                    else:
+                        cnt_added = enroll_contacts_in_campaign(campaign_id, leads_to_add)
+                        trigger_toast(f"Successfully enrolled {cnt_added} leads into campaign!", icon="👥")
+                        st.rerun()
+
+        with top_act3:
             if camp_contacts:
-                df_export = pd.DataFrame(camp_contacts)
-                csv_bytes = df_export.to_csv(index=False).encode("utf-8")
-                st.download_button("📤 Export CSV", data=csv_bytes, file_name=f"campaign_{campaign_id}_contacts.csv", mime="text/csv", use_container_width=True)
+                with st.popover("⚙️ Manage Contacts", use_container_width=True):
+                    df_export = pd.DataFrame(camp_contacts)
+                    csv_bytes = df_export.to_csv(index=False).encode("utf-8")
+                    st.download_button("📤 Export Enrolled CSV", data=csv_bytes, file_name=f"campaign_{campaign_id}_contacts.csv", mime="text/csv", use_container_width=True)
+                    st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
+                    if st.button("🗑️ Unenroll All Leads", type="primary", use_container_width=True, key=f"btn_clear_all_{campaign_id}", help="Remove all contacts from this campaign"):
+                        cnt_cleared = clear_campaign_contacts(campaign_id)
+                        trigger_toast(f"Unenrolled {cnt_cleared} leads from campaign.", icon="🗑️")
+                        st.rerun()
 
         if not camp_contacts:
-            st.info("No contacts enrolled in this campaign yet.")
+            with st.container(border=True):
+                st.markdown("""
+                <div style="text-align:center; padding:20px 10px;">
+                    <div style="font-size:28px; margin-bottom:8px;">👥</div>
+                    <div style="font-size:15px; font-weight:700; color:#083731;">No contacts enrolled in this campaign yet</div>
+                    <div style="font-size:13px; color:#64748B; margin-top:4px; max-width:480px; margin-left:auto; margin-right:auto;">
+                        Enroll your prospective leads into this campaign to begin the multi-step automated outreach sequence.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                btn_c1, btn_c2, btn_c3 = st.columns([3, 4, 3])
+                with btn_c2:
+                    with st.popover("➕ Enroll Leads Now", type="primary", use_container_width=True):
+                        st.markdown("##### 👥 Choose Leads to Enroll")
+                        lead_sources = sorted(list({c.get("lead_source") or "Other" for c in all_contacts}))
+                        source_options = ["All leads"] + [f"Source: {s}" for s in lead_sources]
+                        quick_sel_seg = st.selectbox("Audience Segment", options=source_options, key=f"quick_enroll_seg_{campaign_id}")
+                        if quick_sel_seg == "All leads":
+                            quick_avail = [c for c in all_contacts if (c.get("status") or "").lower() != "do not contact"]
+                        else:
+                            quick_src = quick_sel_seg.replace("Source: ", "")
+                            quick_avail = [c for c in all_contacts if (c.get("lead_source") or "") == quick_src and (c.get("status") or "").lower() != "do not contact"]
+                        st.caption(f"Ready to enroll **{len(quick_avail)} contacts**.")
+                        if st.button(f"🚀 Enroll {len(quick_avail)} Leads", type="primary", use_container_width=True, key=f"btn_quick_do_enroll_{campaign_id}"):
+                            cnt = enroll_contacts_in_campaign(campaign_id, [c["id"] for c in quick_avail])
+                            trigger_toast(f"Enrolled {cnt} leads into campaign!", icon="👥")
+                            st.rerun()
         else:
-            for cc in camp_contacts[:40]:
+            # Filter and search row for enrolled contacts
+            fc1, fc2 = st.columns([6, 4], vertical_alignment="center")
+            with fc1:
+                # State filter pills
+                curr_state_filt = st.session_state.get(f"camp_contact_state_{campaign_id}", "all")
+                st_opts = ["all", "pending", "replied", "completed"]
+                p_cols = st.columns(len(st_opts))
+                for idx, s_opt in enumerate(st_opts):
+                    with p_cols[idx]:
+                        is_sel = (curr_state_filt == s_opt)
+                        if st.button(s_opt.capitalize(), key=f"btn_st_f_{campaign_id}_{s_opt}", type="primary" if is_sel else "secondary", use_container_width=True):
+                            st.session_state[f"camp_contact_state_{campaign_id}"] = s_opt
+                            st.rerun()
+            with fc2:
+                contact_search = st.text_input("Search Leads", placeholder="Search by name, email, company...", key=f"search_camp_c_{campaign_id}", label_visibility="collapsed")
+
+            # Filter camp_contacts
+            display_contacts = camp_contacts
+            if curr_state_filt != "all":
+                display_contacts = [cc for cc in display_contacts if (cc.get("state") or "pending").lower() == curr_state_filt]
+            if contact_search.strip():
+                c_q = contact_search.strip().lower()
+                display_contacts = [
+                    cc for cc in display_contacts
+                    if c_q in (cc.get("name") or "").lower()
+                    or c_q in (cc.get("email") or "").lower()
+                    or c_q in (cc.get("company") or "").lower()
+                ]
+
+            st.caption(f"Showing {len(display_contacts[:50])} of {len(display_contacts)} leads")
+            for cc in display_contacts[:50]:
                 with st.container(border=True):
-                    c_col1, c_col2, c_col3, c_col4 = st.columns([4, 2, 2, 2], vertical_alignment="center")
+                    c_col1, c_col2, c_col3, c_col4 = st.columns([3.5, 2, 2, 2.5], vertical_alignment="center")
                     with c_col1:
-                        st.markdown(f"**{cc.get('name') or 'Unnamed'}** · {cc.get('email')}")
+                        st.markdown(f"**{cc.get('name') or 'Unnamed'}** · `{cc.get('email')}`")
                         st.caption(f"Brand: {cc.get('company') or 'N/A'}")
                     with c_col2:
-                        st.markdown(f"State: `{(cc.get('state') or 'pending').upper()}`")
+                        state_val = (cc.get("state") or "pending").upper()
+                        badge_color = "#10B981" if state_val == "COMPLETED" else ("#3B82F6" if state_val == "PENDING" else "#F59E0B")
+                        st.markdown(f"<span style='background:{badge_color}22; color:{badge_color}; padding:2px 8px; border-radius:4px; font-weight:700; font-size:11px;'>{state_val}</span>", unsafe_allow_html=True)
                     with c_col3:
-                        st.markdown(f"Step Reached: **#{cc.get('current_step', 0)}**")
+                        st.markdown(f"Step: **#{cc.get('current_step', 0)}**")
+                        if cc.get("next_send_at"):
+                            st.caption(f"Next: {cc['next_send_at'][:16]}")
                     with c_col4:
-                        if not cc.get("converted"):
-                            if st.button("⭐ Convert", key=f"btn_conv_{cc['id']}", use_container_width=True):
-                                mark_campaign_contact_converted(cc["id"])
-                                trigger_toast(f"Marked {cc.get('name')} as converted!", icon="⭐")
+                        act_c1, act_c2, act_c3 = st.columns([1.1, 1.1, 0.8])
+                        with act_c1:
+                            if not cc.get("converted"):
+                                if st.button("⭐ Won", key=f"btn_conv_{cc['id']}", use_container_width=True, help="Mark lead converted"):
+                                    mark_campaign_contact_converted(cc["id"])
+                                    trigger_toast(f"Marked {cc.get('name')} converted!", icon="⭐")
+                                    st.rerun()
+                            else:
+                                st.markdown("⭐ **Won**")
+                        with act_c2:
+                            if st.button("🔄 Reset", key=f"btn_reset_{cc['id']}", use_container_width=True, help="Reset sequence to Step 1"):
+                                reset_campaign_contact(cc["id"])
+                                trigger_toast(f"Reset {cc.get('name')} to Step 1.", icon="🔄")
                                 st.rerun()
-                        else:
-                            st.markdown("⭐ **Converted**")
+                        with act_c3:
+                            if st.button("🗑️", key=f"btn_del_{cc['id']}", use_container_width=True, help="Remove from campaign"):
+                                unenroll_campaign_contact(cc["id"])
+                                trigger_toast(f"Removed {cc.get('name')}.", icon="🗑️")
+                                st.rerun()
 
     # TAB 4: ACTIVITY
     with d_tab4:

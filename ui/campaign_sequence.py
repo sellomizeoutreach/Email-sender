@@ -132,8 +132,13 @@ def render_sequence_builder(
                                         stp["subject"] = picked.get("subject") or stp["subject"]
                                         stp["body_html"] = picked.get("body_html") or picked.get("body_content") or stp["body_html"]
                                         stp["template_id"] = picked["id"]
-                                        trigger_toast(f"Loaded '{picked['name']}' into Step {pos}!", icon="📥")
+                                        trigger_toast(f"Loaded '{picked.get('name') or picked.get('template_name')}' into Step {pos}!", icon="📥")
                                         st.rerun()
+                                if st.button("🗑️ Delete from Library", key=f"{key_prefix}_del_lib_tpl_{pos}", use_container_width=True):
+                                    from database import delete_template
+                                    delete_template(sel_tid)
+                                    trigger_toast("Template removed from library.", icon="🗑️")
+                                    st.rerun()
                     with t_c2:
                         with st.popover("💾 Save Template", key=f"{key_prefix}_save_tpl_{pos}", use_container_width=True):
                             st.markdown("**Save as Template**")
