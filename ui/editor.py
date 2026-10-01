@@ -533,6 +533,16 @@ def render_dual_mode_editor(
             st.session_state[last_synced_html] = new_html
             st.rerun()
 
+        # Handle pasted image data received directly from browser Ctrl+V
+        pasted_img_input_key = f"{key_prefix}_pasted_img_input"
+        pasted_data = st.session_state.get(pasted_img_input_key, "")
+        if pasted_data and isinstance(pasted_data, str) and pasted_data.startswith("data:image/"):
+            tag = (f'<img src="{pasted_data}" alt="Screenshot" '
+                   f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+            st.session_state[pasted_img_input_key] = ""
+            trigger_toast("Pasted screenshot inserted right at cursor!", icon="📋")
+            _insert_image(tag)
+
         # ------------------------------------------------------------------
         # Row 1: Formatting toolbar (Proportional widths, zero truncation)
         # ------------------------------------------------------------------
@@ -564,26 +574,15 @@ def render_dual_mode_editor(
 
         with tb_cols[4]:
             with st.popover("🖼️ Image", help="Paste or Upload Screenshot (Ctrl+V)", use_container_width=True):
-                st.markdown("**Paste or Upload Screenshot**")
-                st.caption("Matches your email format: write your message, insert screenshot, and continue.")
-                img_method = st.radio(
-                    "Method",
-                    ["📋 Paste from Clipboard (Ctrl+C / Ctrl+V)", "File Upload", "Image URL"],
-                    key=f"{key_prefix}_img_src",
-                    horizontal=True
-                )
-                if img_method.startswith("📋 Paste"):
-                    st.markdown("""
-                    <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:10px; margin-bottom:10px;">
-                        <div style="font-weight:700; color:#083731; font-size:13px;">📋 Instant Clipboard Paste</div>
-                        <div style="font-size:12px; color:#64748B; margin-top:3px;">
-                            Copy any screenshot (<kbd style="background:#E2E8F0; padding:1px 5px; border-radius:3px;">Win+Shift+S</kbd>
-                            or right-click → Copy Image), then click below.
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    if st.button("📋 Paste Image from Clipboard", type="primary",
-                                 key=f"{key_prefix}_btn_paste_clip", use_container_width=True):
+                st.markdown("<div style='font-size:13px; font-weight:700; color:#083731; margin-bottom:2px;'>🖼️ Insert Screenshot / Image</div>", unsafe_allow_html=True)
+                st.caption("💡 **Tip:** Press **Ctrl+V** anywhere in the text area to paste directly at your cursor!")
+
+                # 1. Instant Clipboard Paste
+                c_p1, c_p2 = st.columns([2.0, 1.2], vertical_alignment="center")
+                with c_p1:
+                    st.markdown("<div style='font-size:12px; color:#475569;'><b>Copy screenshot</b> (<kbd>Win+Shift+S</kbd> or Copy image) then click:</div>", unsafe_allow_html=True)
+                with c_p2:
+                    if st.button("📋 Paste Image", type="primary", key=f"{key_prefix}_btn_paste_clip", use_container_width=True):
                         res = grab_clipboard_image()
                         if res:
                             data_uri, fpath, w, h = res
@@ -592,38 +591,48 @@ def render_dual_mode_editor(
                             _insert_image(tag)
                             trigger_toast(f"Pasted screenshot ({w}x{h}px) as [Image] token!", icon="📋")
                         else:
-                            st.warning("⚠️ No image found on local clipboard. Or switch to 'File Upload' below and drop / paste your file.")
+                            st.warning("No image found on clipboard. Drag & drop image below or press Ctrl+V directly in the editor.")
 
-                elif img_method == "File Upload":
-                    st.caption("Upload or paste screenshot. Optimized for email delivery.")
-                    up_file = st.file_uploader("Choose Image (or press Ctrl+V in browser)", type=["png", "jpg", "jpeg", "webp"],
-                                               key=f"{key_prefix}_img_up")
-                    if up_file:
-                        raw_bytes = up_file.read()
-                        try:
-                            pil_img = Image.open(io.BytesIO(raw_bytes))
-                            w, h = pil_img.size
-                            if w > 720:
-                                ratio = 720 / float(w)
-                                pil_img = pil_img.resize((720, int(h * ratio)), Image.Resampling.LANCZOS)
-                                w, h = 720, int(h * ratio)
-                            buf = io.BytesIO()
-                            pil_img.save(buf, format="PNG", optimize=True)
-                            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                        except Exception:
-                            b64 = base64.b64encode(raw_bytes).decode("utf-8")
-                        mime = up_file.type or "image/png"
-                        tag  = (f'<img src="data:{mime};base64,{b64}" alt="Screenshot" '
-                                f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-                        if st.button("Insert Screenshot into Email", type="primary",
-                                     key=f"{key_prefix}_btn_ins_up_img", use_container_width=True):
-                            _insert_image(tag)
-                            trigger_toast("Screenshot inserted as [Image] token!", icon="🖼️")
-                else:
+                st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:10px 0;'>", unsafe_allow_html=True)
+
+                # 2. File Upload / Drag & Drop
+                st.markdown("<div style='font-size:12px; font-weight:600; color:#083731; margin-bottom:4px;'>📁 Upload or Drop File:</div>", unsafe_allow_html=True)
+                up_file = st.file_uploader(
+                    "Upload Image",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"{key_prefix}_img_up",
+                    label_visibility="collapsed"
+                )
+                if up_file:
+                    raw_bytes = up_file.read()
+                    try:
+                        pil_img = Image.open(io.BytesIO(raw_bytes))
+                        w, h = pil_img.size
+                        if w > 720:
+                            ratio = 720 / float(w)
+                            pil_img = pil_img.resize((720, int(h * ratio)), Image.Resampling.LANCZOS)
+                            w, h = 720, int(h * ratio)
+                        buf = io.BytesIO()
+                        pil_img.save(buf, format="PNG", optimize=True)
+                        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                    except Exception:
+                        b64 = base64.b64encode(raw_bytes).decode("utf-8")
+                    mime = up_file.type or "image/png"
+                    tag  = (f'<img src="data:{mime};base64,{b64}" alt="Screenshot" '
+                            f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                    if st.button("➕ Insert Uploaded Screenshot", type="primary",
+                                 key=f"{key_prefix}_btn_ins_up_img", use_container_width=True):
+                        _insert_image(tag)
+                        trigger_toast("Screenshot inserted as [Image] token!", icon="🖼️")
+
+                st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:10px 0;'>", unsafe_allow_html=True)
+
+                # 3. Direct Web Image URL (Expander)
+                with st.expander("🔗 Or insert via Web URL"):
                     img_url = st.text_input("Image Direct URL", placeholder="https://sellomize.com/logo.png",
                                             key=f"{key_prefix}_img_url_val")
                     img_alt = st.text_input("Alt Text", value="Screenshot", key=f"{key_prefix}_img_alt_val")
-                    if st.button("Insert URL Image", type="primary",
+                    if st.button("Insert URL Image",
                                  key=f"{key_prefix}_btn_ins_url_img", use_container_width=True):
                         if img_url.strip():
                             tag = (f'<img src="{html.escape(img_url.strip())}" alt="{html.escape(img_alt)}" '
@@ -751,6 +760,20 @@ def render_dual_mode_editor(
             help="Type or paste your email body here. Use the toolbar buttons above to format or insert variables."
         )
 
+        # Visually hide the cursor tracker and pasted image receiver inputs
+        st.markdown("""
+        <style>
+        div[data-testid="stTextInput"]:has(input[aria-label="cursor_tracker"]),
+        div[data-testid="stTextInput"]:has(input[aria-label="pasted_image_receiver"]) {
+            display: none !important;
+            height: 0px !important;
+            min-height: 0px !important;
+            margin: 0px !important;
+            padding: 0px !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
         # Hidden cursor tracker input to capture cursor position from browser
         st.text_input(
             "cursor_tracker",
@@ -759,12 +782,20 @@ def render_dual_mode_editor(
             label_visibility="collapsed"
         )
 
-        # Injected script to sync textarea cursor position on click/keyup/select
+        # Hidden receiver for direct browser Ctrl+V pasted screenshots
+        st.text_input(
+            "pasted_image_receiver",
+            value="",
+            key=pasted_img_input_key,
+            label_visibility="collapsed"
+        )
+
+        # Injected script to sync textarea cursor position AND intercept Ctrl+V image pastes
         components.html(f"""
         <script>
         (function() {{
             const pDoc = window.parent.document;
-            function bindCursorTracker() {{
+            function bindCursorAndPasteTracker() {{
                 const allTextareas = Array.from(pDoc.querySelectorAll('textarea'));
                 const ta = allTextareas.find(t => t.id && t.id.includes('{textarea_key}')) || allTextareas[0];
                 if (!ta || ta._sellomizeBound) return;
@@ -786,9 +817,53 @@ def render_dual_mode_editor(
                 ta.addEventListener('select', sendPos);
                 ta.addEventListener('blur', sendPos);
                 ta.addEventListener('input', sendPos);
+
+                // Direct browser Ctrl+V paste interceptor for images
+                ta.addEventListener('paste', function(e) {{
+                    if (!e.clipboardData || !e.clipboardData.items) return;
+                    const items = e.clipboardData.items;
+                    for (let i = 0; i < items.length; i++) {{
+                        if (items[i].type && items[i].type.indexOf('image') !== -1) {{
+                            e.preventDefault();
+                            sendPos();
+                            const file = items[i].getAsFile();
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = function(evt) {{
+                                const img = new Image();
+                                img.onload = function() {{
+                                    let w = img.width, h = img.height;
+                                    const maxW = 720;
+                                    if (w > maxW) {{
+                                        h = Math.round((h * maxW) / w);
+                                        w = maxW;
+                                    }}
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = w;
+                                    canvas.height = h;
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.drawImage(img, 0, 0, w, h);
+                                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+                                    const pInps = Array.from(pDoc.querySelectorAll('input[aria-label="pasted_image_receiver"]'));
+                                    const pInp = pInps.find(i => i.id && i.id.includes('{pasted_img_input_key}')) || pInps[0];
+                                    if (pInp) {{
+                                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                        nativeSetter.call(pInp, dataUrl);
+                                        pInp.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                        pInp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    }}
+                                }};
+                                img.src = evt.target.result;
+                            }};
+                            reader.readAsDataURL(file);
+                            break;
+                        }}
+                    }}
+                }});
             }}
-            setTimeout(bindCursorTracker, 200);
-            setInterval(bindCursorTracker, 1000);
+            setTimeout(bindCursorAndPasteTracker, 200);
+            setInterval(bindCursorAndPasteTracker, 1000);
         }})();
         </script>
         """, height=0, width=0)

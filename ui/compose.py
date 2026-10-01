@@ -233,10 +233,39 @@ def render_compose_schedule_dialog(
                 fu_dts.append(target_fu_dt)
                 st.caption(f"📅 Scheduled to dispatch: **{target_fu_dt.strftime('%a %b %d, %Y at %H:%M')} (UTC+5)**")
 
-    # ── Confirmation Action ──
+    # ── Confirmation & Cancel/Draft Actions ──
     st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
     confirm_label = "🚀 Launch Outreach Sequence" if (mode == "send_now" and init_dt is None) else "🕒 Confirm Scheduled Sequence"
-    if st.button(confirm_label, type="primary", use_container_width=True, key="comp_dlg_confirm_cta"):
+    
+    col_act_main, col_act_draft, col_act_disc = st.columns([2.5, 1.4, 1.1])
+    with col_act_main:
+        submit_clicked = st.button(confirm_label, type="primary", use_container_width=True, key="comp_dlg_confirm_cta")
+    with col_act_draft:
+        save_draft_clicked = st.button("💾 Save Draft", use_container_width=True, key="comp_dlg_save_draft_cta", help="Save this message to Outbox as Pending draft")
+    with col_act_disc:
+        discard_clicked = st.button("🗑️ Discard", use_container_width=True, key="comp_dlg_discard_cta", help="Discard outreach and close popup")
+
+    if discard_clicked:
+        trigger_toast("Outreach dismissed without sending.", icon="ℹ️")
+        st.rerun()
+
+    if save_draft_clicked:
+        email_html = format_email_html(final_body)
+        create_email(
+            email_html=email_html,
+            subject=final_subj,
+            recipient=recipient_clean,
+            status="Pending",
+            scheduled_time=get_engine_now_str(),
+            target_timezone=lead_tz,
+            bcc_email=bcc_email
+        )
+        trigger_toast("Saved as draft in Outbox.", icon="💾")
+        st.session_state["active_screen"] = "outbox"
+        st.session_state["main_app_tabs"] = "📥 Outbox"
+        st.rerun()
+
+    if submit_clicked:
         with st.spinner("Processing outreach..."):
             email_html = format_email_html(final_body)
 
@@ -296,7 +325,16 @@ def render_compose_schedule_dialog(
                     bcc_email=bcc_email
                 )
 
+            # Auto-clean Compose fields and uploaded media after sending
             st.session_state["compose_followups"] = []
+            st.session_state["compose_subject"] = ""
+            st.session_state["compose_body_html"] = ""
+            st.session_state["compose_visual_textarea"] = ""
+            st.session_state["compose_last_synced_html"] = ""
+            st.session_state.pop("compose_img_up", None)
+            st.session_state.pop("comp_subj_in", None)
+            st.session_state.pop("compose_custom_email_input", None)
+
             if init_dt is None:
                 if ok:
                     msg = f"Sent initial email to {recipient_clean}!"
@@ -651,7 +689,7 @@ def render_compose_tab(contacts=None, templates=None):
         # =====================================================================
         # ACTION BUTTONS (Send now, Schedule, Save draft, Save template)
         # =====================================================================
-        c_act1, c_act2, c_act3, c_act4 = st.columns([1.4, 1.3, 1.2, 1.3])
+        c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.4, 1.3, 1.1, 1.2, 1.0])
 
         with c_act1:
             send_btn_label = "🚀 Send now"
@@ -714,6 +752,18 @@ def render_compose_tab(contacts=None, templates=None):
                     body_html=current_body
                 )
                 trigger_toast("Saved as template!", icon="📋")
+
+        with c_act5:
+            if st.button("🗑️ Discard", use_container_width=True, help="Clear email body, subject, and uploaded media"):
+                st.session_state["compose_subject"] = ""
+                st.session_state["compose_body_html"] = ""
+                st.session_state["compose_visual_textarea"] = ""
+                st.session_state["compose_last_synced_html"] = ""
+                st.session_state["compose_followups"] = []
+                st.session_state.pop("compose_img_up", None)
+                st.session_state.pop("comp_subj_in", None)
+                trigger_toast("Compose editor cleared.", icon="🗑️")
+                st.rerun()
 
     # =========================================================================
     # RIGHT COLUMN — Live preview (Subject + Body preview)

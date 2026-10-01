@@ -273,7 +273,7 @@ def _apply_filters(
     elif active_filter == "Emailed":
         f = [c for c in f if (c.get("status") or "").lower() == "emailed"]
     elif active_filter == "Opened":
-        f = [c for c in f if (c.get("status") or "").lower() == "opened" or (c.get("contacted") or "").lower() == "yes"]
+        f = [c for c in f if (c.get("status") or "").lower() == "opened"]
     elif active_filter == "Bounced":
         f = [c for c in f if (c.get("status") or "").lower() == "bounced"]
     elif active_filter == "High Priority":
@@ -374,7 +374,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
     cnt_total = len(all_contacts)
     cnt_not_contacted = sum(1 for c in all_contacts if (c.get("status") or "New") == "New")
     cnt_emailed = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "emailed")
-    cnt_opened = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "opened" or (c.get("contacted") or "").lower() == "yes")
+    cnt_opened = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "opened")
     cnt_bounced = sum(1 for c in all_contacts if (c.get("status") or "").lower() == "bounced")
 
     filter_tabs = [
@@ -443,9 +443,9 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                 st.session_state.pop("crm_data_editor", None)
                 st.rerun()
 
-    # Master Checkbox:
+    # Master Checkbox & Quick Add Row:
     # Checked when all visible rows are selected; unchecked when none or only partial are selected.
-    m_col1, m_col2 = st.columns([2.8, 7.2], vertical_alignment="center")
+    m_col1, m_col2, m_col3 = st.columns([2.5, 1.8, 5.7], vertical_alignment="center")
     with m_col1:
         master_label = f"Select all visible ({len(id_list)})" if not all_visible_selected else f"Deselect all visible ({len(id_list)})"
         master_toggled = st.checkbox(
@@ -462,6 +462,21 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             st.session_state.pop("crm_data_editor", None)
             st.rerun()
     with m_col2:
+        if st.button("➕ Add Row", key="btn_quick_add_lead_row", help="Create a new lead with auto-generated ID to edit directly in the table", use_container_width=True):
+            new_lid = create_contact(
+                name="New Contact",
+                email=f"lead_{int(datetime.now().timestamp())}@brand.com",
+                company="New Brand",
+                status="New",
+                lead_source="Amazon scrape",
+                priority="Medium",
+                owner="Jack Conner",
+                notes=""
+            )
+            st.session_state.pop("crm_data_editor", None)
+            trigger_toast(f"Created Lead #SLM-{new_lid:04d}! Click any cell to edit details.", icon="✅")
+            st.rerun()
+    with m_col3:
         st.caption("💡 **Click any cell to edit · Press Enter to save to database** · Click column headers to sort")
 
     # =========================================================================
