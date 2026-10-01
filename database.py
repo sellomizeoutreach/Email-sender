@@ -65,6 +65,7 @@ def validate_identifier(name: str) -> str:
 LEAD_STATUSES = [
     "New",
     "Emailed",
+    "Opened",
     "Replied",
     "Bounced",
     "Do Not Contact",
@@ -72,7 +73,7 @@ LEAD_STATUSES = [
 CONTACT_STATUSES = LEAD_STATUSES
 
 def normalize_lead_status(status: str) -> str:
-    """Normalize legacy 17 statuses into the 5 final statuses."""
+    """Normalize legacy statuses into the standardized statuses."""
     s = (status or "New").strip()
     if s in LEAD_STATUSES:
         return s
@@ -81,6 +82,8 @@ def normalize_lead_status(status: str) -> str:
         return "New"
     if s_lower in ["sent", "approved", "queued", "follow-up 1", "follow-up 2", "follow-up 3", "emailed", "contacted", "follow-up sent"]:
         return "Emailed"
+    if s_lower in ["opened", "open", "opened / interested"]:
+        return "Opened"
     if s_lower in ["replied", "interested", "meeting booked"]:
         return "Replied"
     if s_lower in ["bounced"]:
@@ -1354,7 +1357,7 @@ def advance_contact_followup(
     except Exception:
         curr_sent = 1
     curr_status = row["status"] or "New"
-    if curr_status in ["Replied", "Bounced", "Do Not Contact"]:
+    if curr_status in ["Opened", "Replied", "Bounced", "Do Not Contact"]:
         new_status = curr_status
     else:
         new_status = "Emailed"
@@ -2211,9 +2214,9 @@ def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
         if contact_row:
             cid = contact_row["id"]
             c_status = contact_row["status"] or ""
-            # If lead hasn't replied or closed, update status to Opened / Interested
+            # If lead hasn't replied or closed, update status to Opened
             if c_status not in ["Replied", "Closed Won", "Closed Lost", "Bounced", "Do Not Contact"]:
-                cursor.execute("UPDATE contacts SET status = 'Opened / Interested' WHERE id = ?", (cid,))
+                cursor.execute("UPDATE contacts SET status = 'Opened' WHERE id = ?", (cid,))
 
     conn.commit()
     conn.close()

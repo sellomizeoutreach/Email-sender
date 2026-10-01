@@ -53,6 +53,9 @@ _EDITABLE_COLS: Dict[str, str] = {
     "Priority":        "priority",
     "Contacted?":      "contacted",
     "Status":          "status",
+    "First Contacted": "date_first_emailed",
+    "Last Contacted":  "last_contact_date",
+    "Next Follow-Up":  "next_follow_up",
     "Owner":           "owner",
     "Notes":           "notes",
     "Tags":            "tags",
@@ -115,6 +118,15 @@ def render_edit_lead_dialog(lead: Dict[str, Any]):
             status = st.selectbox("Status", LEAD_STATUSES,
                 index=LEAD_STATUSES.index(curr_s) if curr_s in LEAD_STATUSES else 0)
             tags = st.text_input("Tags", value=lead.get("tags") or "")
+        
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            first_emailed = st.text_input("First Contacted (YYYY-MM-DD)", value=lead.get("date_first_emailed") or "")
+        with d2:
+            last_emailed = st.text_input("Last Contacted (YYYY-MM-DD)", value=lead.get("last_contact_date") or "")
+        with d3:
+            next_follow = st.text_input("Next Follow-Up (YYYY-MM-DD)", value=lead.get("next_follow_up") or "")
+
         notes = st.text_area("Notes", value=lead.get("notes") or "")
 
         col_save, col_del = st.columns([3, 1])
@@ -127,6 +139,9 @@ def render_edit_lead_dialog(lead: Dict[str, Any]):
         update_contact(
             contact_id=lid, name=name.strip(), company=company.strip(),
             status=status, lead_source=lead_source, priority=priority,
+            date_first_emailed=first_emailed.strip(),
+            last_contact_date=last_emailed.strip(),
+            next_follow_up=next_follow.strip(),
             owner=owner.strip(), notes=notes.strip(), tags=tags.strip()
         )
         st.session_state.pop("crm_data_editor", None)
@@ -504,6 +519,9 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             "Priority":        c.get("priority") or "Medium",
             "Contacted?":      c.get("contacted") or "No",
             "Status":          c.get("status") or "New",
+            "First Contacted": c.get("date_first_emailed") or "",
+            "Last Contacted":  c.get("last_contact_date") or "",
+            "Next Follow-Up":  c.get("next_follow_up") or "",
             "Follow-Ups":      int(c.get("follow_ups_sent") or 0),
             "Owner":           c.get("owner") or "",
             "Notes":           c.get("notes") or "",
@@ -528,6 +546,9 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
         "Priority":        st.column_config.SelectboxColumn("Priority",    options=PRIORITY_OPTS,  width="small"),
         "Contacted?":      st.column_config.SelectboxColumn("Contacted?",  options=CONTACTED_OPTS, width="small"),
         "Status":          st.column_config.SelectboxColumn("Status",      options=LEAD_STATUSES,  width="small"),
+        "First Contacted": st.column_config.TextColumn("First Contacted", width="small", help="Date initial email was dispatched (YYYY-MM-DD)"),
+        "Last Contacted":  st.column_config.TextColumn("Last Contacted",  width="small", help="Date of most recent outreach (YYYY-MM-DD)"),
+        "Next Follow-Up":  st.column_config.TextColumn("Next Follow-Up",  width="small", help="Target date for next follow-up sequence (YYYY-MM-DD)"),
         "Follow-Ups":      st.column_config.NumberColumn("Follow-Ups",    disabled=True, width="small", format="%d"),
         "Owner":           st.column_config.TextColumn("Owner",           width="small"),
         "Notes":           st.column_config.TextColumn("Notes",           width="large"),

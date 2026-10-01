@@ -325,6 +325,23 @@ def render_compose_schedule_dialog(
                     bcc_email=bcc_email
                 )
 
+            # Update lead outreach dates in CRM database
+            c_match = get_contact_by_email(recipient_clean)
+            if c_match:
+                c_updates = {}
+                first_date = init_dt.strftime("%Y-%m-%d") if init_dt else get_engine_now().strftime("%Y-%m-%d")
+                if not c_match.get("date_first_emailed"):
+                    c_updates["date_first_emailed"] = first_date
+                if init_dt is None:
+                    c_updates["last_contact_date"] = get_engine_now().strftime("%Y-%m-%d")
+                    c_updates["contacted"] = "Yes"
+                    if (c_match.get("status") or "").lower() not in ["opened", "replied", "bounced", "do not contact"]:
+                        c_updates["status"] = "Emailed"
+                if fu_dts:
+                    c_updates["next_follow_up"] = fu_dts[0].strftime("%Y-%m-%d")
+                if c_updates:
+                    update_contact(c_match["id"], **c_updates)
+
             # Auto-clean Compose fields and uploaded media after sending
             st.session_state["compose_followups"] = []
             st.session_state["compose_subject"] = ""
