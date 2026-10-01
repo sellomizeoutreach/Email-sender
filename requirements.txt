@@ -11,3 +11,4 @@ keyring==25.7.0
 nh3==0.3.7
 dnspython==2.8.0
 tzdata==2024.2
+psycopg2-binary==2.9.13

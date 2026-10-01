@@ -147,7 +147,40 @@ def get_db_path() -> str:
 
 DB_FILE = get_db_path()
 
-def get_connection(db_path: str = DB_FILE) -> sqlite3.Connection:
+from cloud_db import (
+    PSYCOPG2_AVAILABLE,
+    RowProxy,
+    PostgresConnectionWrapper,
+    PostgresCursorWrapper,
+    get_database_url,
+    set_database_url,
+    is_postgres_active,
+    get_postgres_connection,
+    close_all_pg_connections,
+    test_pg_connection,
+    migrate_sqlite_to_postgres,
+)
+
+try:
+    import psycopg2
+    DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError, psycopg2.OperationalError, psycopg2.ProgrammingError)
+except ImportError:
+    DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError,)
+
+
+def get_connection(db_path: str = DB_FILE) -> Union[sqlite3.Connection, PostgresConnectionWrapper]:
+    """
+    Acquire active database connection.
+    If Cloud PostgreSQL is configured and active, returns a thread-pooled
+    PostgreSQL connection wrapper with transparent dialect compatibility.
+    Otherwise, returns local SQLite connection.
+    """
+    if is_postgres_active() and (db_path == DB_FILE or not os.path.exists(db_path)):
+        try:
+            return get_postgres_connection()
+        except Exception as e:
+            logger.error(f"Cloud PostgreSQL connection error: {e}. Falling back to SQLite.")
+
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
@@ -199,8 +232,8 @@ def init_db(db_path: str = DB_FILE):
         try:
             valid_col = validate_identifier(col_name)
             cursor.execute(f"ALTER TABLE contacts ADD COLUMN {valid_col} {col_def}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
+        except DB_OPERATIONAL_ERRORS as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
                 logger.warning(f"OperationalError during contacts migration for {col_name}: {e}")
 
     # Normalize all contacts to the 5 simplified statuses
@@ -248,7 +281,7 @@ def init_db(db_path: str = DB_FILE):
         try:
             valid_col = validate_identifier(col_name)
             cursor.execute(f"ALTER TABLE templates ADD COLUMN {valid_col} {col_def}")
-        except sqlite3.OperationalError:
+        except DB_OPERATIONAL_ERRORS:
             pass
 
     # Ensure name and body_html are synced with template_name and body_content
@@ -310,8 +343,8 @@ def init_db(db_path: str = DB_FILE):
         try:
             valid_col = validate_identifier(col_name)
             cursor.execute(f"ALTER TABLE emails ADD COLUMN {valid_col} {col_def}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
+        except DB_OPERATIONAL_ERRORS as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
                 logger.warning(f"OperationalError during emails migration for {col_name}: {e}")
 
     # High-performance database indexes for sub-millisecond query execution
@@ -356,8 +389,8 @@ def init_db(db_path: str = DB_FILE):
         try:
             valid_col = validate_identifier(col_name)
             cursor.execute(f"ALTER TABLE smtp_accounts ADD COLUMN {valid_col} {col_def}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
+        except DB_OPERATIONAL_ERRORS as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
                 logger.warning(f"OperationalError during smtp_accounts migration for {col_name}: {e}")
 
     # 6. Notifications table for incoming prospect replies and alerts
@@ -420,8 +453,8 @@ def init_db(db_path: str = DB_FILE):
         try:
             valid_col = validate_identifier(col_name)
             cursor.execute(f"ALTER TABLE sequence_rules ADD COLUMN {valid_col} {col_def}")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
+        except DB_OPERATIONAL_ERRORS as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
                 logger.warning(f"OperationalError during sequence_rules migration for {col_name}: {e}")
 
     # Automatically prune historical duplicate notifications if any exist
@@ -3448,8 +3481,13 @@ def get_targeted_pipeline_leads(db_path: str = DB_FILE) -> Dict[str, List[Dict[s
 
     return buckets
 
-# Initialize upon import if DB does not exist
-if not os.path.exists(DB_FILE):
+# Initialize upon import
+if is_postgres_active():
+    try:
+        init_db()
+    except Exception as e:
+        logger.warning(f"Initial Cloud PostgreSQL sync check: {e}")
+elif not os.path.exists(DB_FILE):
     init_db(DB_FILE)
 else:
     # Ensure any new tables / migrations are applied

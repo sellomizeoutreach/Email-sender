@@ -34,6 +34,13 @@ from database import (
     auto_save_backup,
     WEEKDAY_NAMES,
     DB_FILE,
+    get_database_url,
+    set_database_url,
+    is_postgres_active,
+    test_pg_connection,
+    migrate_sqlite_to_postgres,
+    close_all_pg_connections,
+    init_db,
 )
 from smtp_dispatcher import test_smtp_connection
 from timezone_helper import TARGET_MARKETS, get_engine_now
@@ -521,7 +528,150 @@ def render_settings_tab():
         st.caption("To start the background daemon, run `run_scheduler.bat` or `python scheduler.py` in the terminal.")
 
     # =========================================================================
-    # SECTION 4: DATA PERSISTENCE & CRM BACKUP / RESTORE
+    # SECTION 4: CLOUD POSTGRESQL PERSISTENCE (SUPABASE / NEON)
+    # =========================================================================
+    st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:16px 0;'>", unsafe_allow_html=True)
+    with st.expander("☁️ Cloud PostgreSQL Database (Supabase / Neon Persistence)", expanded=True):
+        pg_active = is_postgres_active()
+        current_url = get_database_url()
+
+        if pg_active:
+            masked_url = re.sub(r':([^:@]+)@', ':••••••••@', current_url)
+            st.markdown(f"""
+            <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:12px 16px; margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:18px;">🟢</span>
+                    <div>
+                        <div style="font-size:14px; font-weight:700; color:#15803D;">Active Storage: Cloud PostgreSQL Database</div>
+                        <div style="font-size:12px; color:#475569; font-family:monospace; margin-top:2px;">{masked_url}</div>
+                    </div>
+                </div>
+                <div style="font-size:12px; color:#166534; margin-top:8px;">
+                    ✅ 100% Persistent across Streamlit Cloud sleeps &amp; reboots. All contacts, mailboxes, and templates are permanently saved.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:12px 16px; margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:18px;">⚪</span>
+                    <div>
+                        <div style="font-size:14px; font-weight:700; color:#083731;">Active Storage: Local SQLite File (email_system.db)</div>
+                        <div style="font-size:12px; color:#64748B; margin-top:2px;">
+                            Running locally on disk. On Streamlit Cloud, containers reset on sleep. Connect a free Cloud PostgreSQL database below to keep your data saved permanently 24/7.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("**Cloud Database Connection String**")
+        st.caption("Supports Supabase, Neon, Railway, or any PostgreSQL provider URI (`postgresql://postgres:[password]@db.[id].supabase.co:5432/postgres`).")
+
+        pg_input_val = st.text_input(
+            "PostgreSQL Connection URI",
+            value=current_url,
+            placeholder="postgresql://postgres:your_password@db.xxxx.supabase.co:5432/postgres",
+            type="password",
+            key="input_cloud_pg_url",
+            label_visibility="collapsed"
+        )
+
+        col_t1, col_t2, col_t3, col_t4 = st.columns([1.2, 1.3, 1.6, 1.2])
+
+        with col_t1:
+            if st.button("🔌 Test Connection", key="btn_test_pg_conn", use_container_width=True):
+                if not pg_input_val.strip():
+                    st.warning("Please enter a PostgreSQL connection URI first.")
+                else:
+                    ok, msg, ms = test_pg_connection(pg_input_val.strip())
+                    if ok:
+                        trigger_toast(f"Connected in {ms}ms! Ready to use.", icon="✅")
+                        st.success(f"✅ {msg}")
+                    else:
+                        trigger_toast("Connection test failed.", icon="❌")
+                        st.error(f"❌ {msg}")
+
+        with col_t2:
+            if st.button("💾 Connect & Save", key="btn_save_pg_conn", type="primary", use_container_width=True):
+                clean_url = pg_input_val.strip()
+                if clean_url:
+                    ok, msg, ms = test_pg_connection(clean_url)
+                    if not ok:
+                        st.error(f"Cannot save invalid connection: {msg}")
+                    else:
+                        set_database_url(clean_url)
+                        try:
+                            init_db()
+                        except Exception:
+                            pass
+                        trigger_toast("Connected to Cloud PostgreSQL!", icon="☁️")
+                        st.rerun()
+                else:
+                    set_database_url("")
+                    trigger_toast("Switched to Local SQLite storage.", icon="💾")
+                    st.rerun()
+
+        with col_t3:
+            if st.button("🚀 1-Click Migrate Local SQLite Data", key="btn_migrate_to_pg", use_container_width=True,
+                         help="Copies all your current contacts, templates, SMTP accounts, and settings to your Cloud PostgreSQL database."):
+                target_url = pg_input_val.strip() or current_url
+                if not target_url:
+                    st.warning("Please enter your PostgreSQL Connection URI first.")
+                else:
+                    with st.spinner("Migrating local database to Cloud PostgreSQL..."):
+                        ok, res_msg = migrate_sqlite_to_postgres(DB_FILE, target_url)
+                        if ok:
+                            set_database_url(target_url)
+                            trigger_toast("Data migrated successfully!", icon="🚀")
+                            st.success(f"✅ {res_msg}")
+                            st.rerun()
+                        else:
+                            trigger_toast("Migration failed.", icon="❌")
+                            st.error(f"❌ {res_msg}")
+
+        with col_t4:
+            if pg_active:
+                if st.button("🔄 Use Local SQLite", key="btn_revert_sqlite", use_container_width=True,
+                             help="Disconnects Cloud PostgreSQL and switches back to local file storage."):
+                    set_database_url("")
+                    close_all_pg_connections()
+                    trigger_toast("Switched back to local SQLite file.", icon="⚪")
+                    st.rerun()
+
+        with st.expander("📖 60-Second Setup Guide: How to Get Free Cloud PostgreSQL (Supabase / Neon)", expanded=False):
+            st.markdown("""
+            ### Option A: Free Supabase PostgreSQL (Recommended)
+            1. Go to **[supabase.com](https://supabase.com)** and sign in / sign up (100% Free).
+            2. Click **New Project**, enter a project name, and create a strong database password.
+            3. In your project dashboard, navigate to **Project Settings** (gear icon) > **Database**.
+            4. Scroll down to **Connection string** > select the **URI** tab.
+            5. Copy the URI string and replace `[YOUR-PASSWORD]` with the password you chose in Step 2.
+            6. Paste the URI above and click **💾 Connect & Save**!
+
+            ---
+
+            ### Option B: Free Neon PostgreSQL
+            1. Go to **[neon.tech](https://neon.tech)** and sign up for a free account.
+            2. Create a new project.
+            3. On the Neon dashboard, copy the connection string (`postgresql://...`).
+            4. Paste the URI above and click **💾 Connect & Save**!
+
+            ---
+
+            ### Deploying to Streamlit Cloud:
+            To connect automatically on Streamlit Cloud without typing it into the UI:
+            1. Go to your app settings on **share.streamlit.io**.
+            2. Open **Secrets** and add:
+            ```toml
+            DATABASE_URL = "postgresql://postgres:your_password@db.xxxx.supabase.co:5432/postgres"
+            ```
+            3. Click **Save**. The app will automatically connect on boot and your data will never reset!
+            """)
+
+    # =========================================================================
+    # SECTION 5: DATA PERSISTENCE & CRM BACKUP / RESTORE
     # =========================================================================
     st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:16px 0;'>", unsafe_allow_html=True)
     with st.expander("💾 Data Persistence & CRM Backup / Restore", expanded=True):
