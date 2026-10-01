@@ -418,13 +418,13 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
 
     # =========================================================================
     # =========================================================================
-    # UNIFIED SELECTION & ACTION BAR (Single Cohesive Box)
+    # UNIFIED SELECTION & ACTION BAR
     # =========================================================================
     vis_sel_count = len(selected_visible)
 
-    with st.container(border=True):
-        if vis_sel_count > 0:
-            u_c1, u_c2, u_c3, u_c4, u_c5, u_c6 = st.columns([2.6, 1.2, 1.5, 1.3, 1.3, 1.0], vertical_alignment="center")
+    if vis_sel_count > 0:
+        with st.container(border=True):
+            u_c1, u_c2, u_c3, u_c4, u_c5 = st.columns([3.4, 1.8, 1.5, 1.5, 1.0], vertical_alignment="center")
             with u_c1:
                 master_label = f"Deselect all visible ({len(id_list)})" if all_visible_selected else f"Select all visible ({len(id_list)})"
                 master_toggled = st.checkbox(
@@ -441,68 +441,50 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                     st.session_state.pop("crm_data_editor", None)
                     st.rerun()
             with u_c2:
-                if st.button("➕ Add Row", key="btn_quick_add_lead_row", help="Create a new lead with auto-generated ID to edit directly in the table", use_container_width=True):
-                    new_lid = create_contact(
-                        name="New Contact",
-                        email=f"lead_{int(datetime.now().timestamp())}@brand.com",
-                        company="New Brand",
-                        status="New",
-                        lead_source="Amazon scrape",
-                        priority="Medium",
-                        owner="Jack Connor",
-                        notes=""
-                    )
-                    st.session_state.pop("crm_data_editor", None)
-                    trigger_toast(f"Created Lead #SLM-{new_lid:04d}! Click any cell to edit details.", icon="✅")
-                    st.rerun()
-            with u_c3:
                 if st.button("✍️ Compose Batch", type="primary", use_container_width=True, key="bar_btn_compose_batch"):
                     st.session_state["bulk_target_leads"] = list(selected_visible if selected_visible else selected_set)
                     st.session_state["active_screen"] = "bulk"
                     st.rerun()
-            with u_c4:
+            with u_c3:
                 if st.button("✏️ Bulk Edit", use_container_width=True, key="bar_btn_bulk_edit"):
                     target_ids = list(selected_visible if selected_visible else selected_set)
                     render_bulk_edit_dialog(target_ids, len(target_ids))
-            with u_c5:
+            with u_c4:
                 if st.button("🗑️ Bulk Delete", use_container_width=True, key="bar_btn_bulk_del"):
                     target_ids = list(selected_visible if selected_visible else selected_set)
                     render_bulk_delete_dialog(target_ids, len(target_ids))
-            with u_c6:
+            with u_c5:
                 if st.button("✖ Clear", use_container_width=True, key="bar_btn_clear"):
                     st.session_state["crm_selected_ids"] = set()
                     st.session_state.pop("crm_data_editor", None)
                     st.rerun()
-        else:
-            u_c1, u_c2, u_c3 = st.columns([2.5, 1.4, 6.1], vertical_alignment="center")
-            with u_c1:
-                master_toggled = st.checkbox(
-                    f"Select all visible ({len(id_list)})",
-                    value=False,
-                    key="crm_master_select_all",
-                    help="Check to select all visible leads in this view",
-                )
-                if master_toggled:
-                    st.session_state["crm_selected_ids"].update(visible_set)
-                    st.session_state.pop("crm_data_editor", None)
-                    st.rerun()
-            with u_c2:
-                if st.button("➕ Add Row", key="btn_quick_add_lead_row", help="Create a new lead with auto-generated ID to edit directly in the table", use_container_width=True):
-                    new_lid = create_contact(
-                        name="New Contact",
-                        email=f"lead_{int(datetime.now().timestamp())}@brand.com",
-                        company="New Brand",
-                        status="New",
-                        lead_source="Amazon scrape",
-                        priority="Medium",
-                        owner="Jack Connor",
-                        notes=""
-                    )
-                    st.session_state.pop("crm_data_editor", None)
-                    trigger_toast(f"Created Lead #SLM-{new_lid:04d}! Click any cell to edit details.", icon="✅")
-                    st.rerun()
-            with u_c3:
-                st.caption("💡 **Click any cell to edit · Press Enter to save to database** · Click column headers to sort")
+    else:
+        # Borderless, aligned directly over the table's Select column
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stCheckbox"]:has(input[aria-label*="Select all visible"]) {
+                margin-bottom: -10px;
+                padding-bottom: 0px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        u_c1, u_c2 = st.columns([2.5, 7.5], vertical_alignment="center")
+        with u_c1:
+            master_toggled = st.checkbox(
+                f"Select all visible ({len(id_list)})",
+                value=False,
+                key="crm_master_select_all",
+                help="Check to select all visible leads in this view",
+            )
+            if master_toggled:
+                st.session_state["crm_selected_ids"].update(visible_set)
+                st.session_state.pop("crm_data_editor", None)
+                st.rerun()
+        with u_c2:
+            st.caption("💡 **Click any cell to edit · Press Enter to save to database** · Click column headers to sort")
 
     # =========================================================================
     # BUILD DATAFRAME — Checkbox column first
