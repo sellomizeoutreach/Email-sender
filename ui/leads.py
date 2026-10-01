@@ -27,6 +27,7 @@ from database import (
     delete_contact,
     bulk_delete_contacts,
     bulk_update_contacts,
+    bulk_modify_contact_tags,
     LEAD_STATUSES,
     DB_FILE,
 )
@@ -112,6 +113,24 @@ def render_bulk_edit_dialog(selected_ids: List[int], count: int):
             new_status  = st.selectbox("Status",         [""] + LEAD_STATUSES,  index=0)
             new_owner   = st.text_input("Owner",         placeholder="Leave blank to keep current")
             new_company = st.text_input("Brand / Company", placeholder="Leave blank to keep current")
+
+        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+        st.markdown("**🏷️ Tags**")
+        tag_c1, tag_c2 = st.columns(2)
+        with tag_c1:
+            add_tags_input = st.text_input(
+                "➕ Add Tag(s)",
+                placeholder="e.g. VIP, Amazon (comma-separated)",
+                help="Appends these tags to selected leads without overwriting existing tags",
+            )
+        with tag_c2:
+            remove_tags_input = st.text_input(
+                "➖ Remove Tag(s)",
+                placeholder="e.g. OldLead, Inactive (comma-separated)",
+                help="Removes these tags from selected leads if present",
+            )
+        clear_all_tags = st.checkbox("🗑️ Clear all tags from selected leads", value=False)
+
         new_notes = st.text_area("Notes", placeholder="Leave blank to keep current")
 
         ca, cc = st.columns([2, 1])
@@ -131,10 +150,25 @@ def render_bulk_edit_dialog(selected_ids: List[int], count: int):
         if new_owner.strip():   updates["owner"]       = new_owner.strip()
         if new_company.strip(): updates["company"]     = new_company.strip()
         if new_notes.strip():   updates["notes"]       = new_notes.strip()
-        if not updates:
-            st.warning("No changes specified — please fill at least one field.")
+
+        has_tag_change = bool(add_tags_input.strip() or remove_tags_input.strip() or clear_all_tags)
+        if not updates and not has_tag_change:
+            st.warning("No changes specified — please fill at least one field or tag action.")
         else:
-            affected = bulk_update_contacts(selected_ids, updates)
+            affected = 0
+            if updates:
+                affected = bulk_update_contacts(selected_ids, updates)
+            if has_tag_change:
+                add_list = [t.strip() for t in add_tags_input.split(",") if t.strip()]
+                rem_list = [t.strip() for t in remove_tags_input.split(",") if t.strip()]
+                tag_affected = bulk_modify_contact_tags(
+                    selected_ids,
+                    add_tags=add_list if add_list else None,
+                    remove_tags=rem_list if rem_list else None,
+                    clear_all=clear_all_tags,
+                )
+                affected = max(affected, tag_affected)
+
             st.session_state["crm_selected_ids"] = set()
             st.session_state.pop("crm_data_editor", None)
             trigger_toast(f"Updated {affected} lead{'s' if affected != 1 else ''}!", icon="✅")

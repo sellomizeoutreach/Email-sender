@@ -1644,7 +1644,7 @@ def bulk_update_contacts(
     if not contact_ids or not updates:
         return 0
     
-    allowed_fields = {"status", "priority", "lead_source", "owner", "contacted", "company", "notes"}
+    allowed_fields = {"status", "priority", "lead_source", "owner", "contacted", "company", "notes", "tags"}
     valid_updates = {k: v for k, v in updates.items() if k in allowed_fields}
     if not valid_updates:
         return 0
@@ -1665,6 +1665,59 @@ def bulk_update_contacts(
     sql = f"UPDATE contacts SET {', '.join(set_clauses)} WHERE id IN ({placeholders})"
     cursor.execute(sql, tuple(params))
     affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def bulk_modify_contact_tags(
+    contact_ids: List[int],
+    add_tags: Optional[List[str]] = None,
+    remove_tags: Optional[List[str]] = None,
+    clear_all: bool = False,
+    db_path: str = DB_FILE,
+) -> int:
+    """
+    Bulk add, remove, or clear tags across multiple contacts.
+    - add_tags: list of tags to append (deduplicated case-insensitively).
+    - remove_tags: list of tags to remove (case-insensitively).
+    - clear_all: if True, wipes all tags from the selected contacts.
+    """
+    if not contact_ids:
+        return 0
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in contact_ids)
+    cursor.execute(f"SELECT id, tags FROM contacts WHERE id IN ({placeholders})", tuple(contact_ids))
+    rows = cursor.fetchall()
+
+    affected = 0
+    clean_add = [t.strip() for t in (add_tags or []) if t.strip()]
+    clean_remove = {t.strip().lower() for t in (remove_tags or []) if t.strip()}
+
+    for r in rows:
+        cid = r["id"]
+        curr_raw = r["tags"] or ""
+        
+        if clear_all:
+            new_tags_str = ""
+        else:
+            existing_tags = [t.strip() for t in curr_raw.split(",") if t.strip()]
+            if clean_remove:
+                existing_tags = [t for t in existing_tags if t.lower() not in clean_remove]
+            if clean_add:
+                lower_existing = {t.lower() for t in existing_tags}
+                for at in clean_add:
+                    if at.lower() not in lower_existing:
+                        existing_tags.append(at)
+                        lower_existing.add(at.lower())
+            new_tags_str = ", ".join(existing_tags)
+
+        if new_tags_str != curr_raw:
+            cursor.execute("UPDATE contacts SET tags = ? WHERE id = ?", (new_tags_str, cid))
+            affected += 1
+
     conn.commit()
     conn.close()
     return affected
