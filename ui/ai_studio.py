@@ -236,6 +236,7 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             image_data_uri: Optional[str] = None
 
             if uploaded_image is not None:
+                uploaded_image.seek(0)
                 image_bytes = uploaded_image.read()
                 try:
                     image_data_uri, _ = prepare_image_for_groq(image_bytes)

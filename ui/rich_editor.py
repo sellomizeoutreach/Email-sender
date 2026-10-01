@@ -169,7 +169,8 @@ def render_rich_editor(
         st.session_state[cursor_tracker_key] = 0
 
     # Sync external HTML updates (e.g. from template loading)
-    if st.session_state.get(last_synced_html) != initial_html and initial_html != st.session_state[state_key]:
+    prev_synced = st.session_state.get(last_synced_html)
+    if prev_synced is not None and prev_synced != initial_html and initial_html != st.session_state[state_key]:
         st.session_state[state_key] = initial_html
         clean_vis, extracted_map = html_to_visual_text(initial_html)
         st.session_state[textarea_key] = clean_vis
@@ -238,6 +239,22 @@ def render_rich_editor(
             pos = len(live_visual)
         return pos
 
+    def _sync_editor_state(new_html: str, new_vis: str, new_pos: Optional[int] = None):
+        st.session_state[state_key] = new_html
+        st.session_state[textarea_key] = new_vis
+        st.session_state[last_synced_html] = new_html
+        if new_pos is not None:
+            st.session_state[cursor_tracker_key] = new_pos
+            if cursor_input_key in st.session_state:
+                st.session_state[cursor_input_key] = str(new_pos)
+        if owner_type == "compose":
+            st.session_state["compose_body_html"] = new_html
+        elif owner_type == "bulk":
+            st.session_state["bulk_body_html"] = new_html
+        elif owner_type == "template":
+            st.session_state["tpl_body_html"] = new_html
+        st.session_state[f"{key}_body_html"] = new_html
+
     # Helper: insert text
     def _insert_text(token: str):
         pos = _get_insertion_pos("end")
@@ -245,14 +262,8 @@ def render_rich_editor(
         after = live_visual[pos:]
         new_vis = f"{before}{token}{after}"
         new_pos = pos + len(token)
-
         new_html = visual_text_to_html(new_vis, img_map)
-        st.session_state[state_key] = new_html
-        st.session_state[textarea_key] = new_vis
-        st.session_state[cursor_tracker_key] = new_pos
-        if cursor_input_key in st.session_state:
-            st.session_state[cursor_input_key] = str(new_pos)
-        st.session_state[last_synced_html] = new_html
+        _sync_editor_state(new_html, new_vis, new_pos)
         st.rerun()
 
     # Helper: insert image tag
@@ -275,13 +286,7 @@ def render_rich_editor(
         new_html = visual_text_to_html(new_vis, img_map)
         new_pos = len(before + prefix + placeholder)
 
-        st.session_state[cursor_tracker_key] = new_pos
-        if cursor_input_key in st.session_state:
-            st.session_state[cursor_input_key] = str(new_pos)
-
-        st.session_state[state_key] = new_html
-        st.session_state[textarea_key] = new_vis
-        st.session_state[last_synced_html] = new_html
+        _sync_editor_state(new_html, new_vis, new_pos)
         st.rerun()
 
     # --------------------------------------------------------------------------
@@ -350,8 +355,20 @@ def render_rich_editor(
                                    f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
                             _insert_image_tag(tag)
                             trigger_toast(f"Pasted image ({w}x{h}px) inserted!", icon="📋")
+                        elif isinstance(clip, list) and clip:
+                            f_path = str(clip[0])
+                            if os.path.exists(f_path) and f_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')):
+                                with open(f_path, 'rb') as fp:
+                                    raw_f = fp.read()
+                                data_uri, fpath, w, h = process_and_store_image(raw_f, mime_type="image/png")
+                                tag = (f'<img src="{data_uri}" alt="Screenshot" '
+                                       f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                                _insert_image_tag(tag)
+                                trigger_toast(f"Clipboard file ({w}x{h}px) inserted!", icon="📋")
+                            else:
+                                st.warning("Clipboard file is not a supported image format.")
                         else:
-                            st.warning("No image found on clipboard. Press Ctrl+V directly in the editor.")
+                            st.warning("No image found on clipboard. You can press Ctrl+V in the editor or upload below.")
                     except Exception as clip_err:
                         st.warning(f"Clipboard access: {clip_err}")
 
@@ -364,13 +381,29 @@ def render_rich_editor(
                 label_visibility="collapsed"
             )
             if up_file:
+                up_file.seek(0)
                 raw_bytes = up_file.read()
-                data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=up_file.type or "image/png")
-                tag = (f'<img src="{data_uri}" alt="Screenshot" '
-                       f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-                if st.button("➕ Insert Uploaded Image", type="primary", key=f"{key}_btn_ins_up_img", use_container_width=True):
-                    _insert_image_tag(tag)
-                    trigger_toast("Image inserted as [Image] token!", icon="🖼️")
+                if raw_bytes:
+                    try:
+                        file_sig = f"{up_file.name}_{len(raw_bytes)}"
+                        last_sig_key = f"{key}_last_uploaded_sig"
+                        is_new_upload = (st.session_state.get(last_sig_key) != file_sig)
+
+                        data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=up_file.type or "image/png")
+                        tag = (f'<img src="{data_uri}" alt="{html.escape(up_file.name)}" '
+                               f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+
+                        btn_manual_ins = st.button("➕ Insert Uploaded Image", type="primary", key=f"{key}_btn_ins_up_img", use_container_width=True)
+
+                        if is_new_upload:
+                            st.session_state[last_sig_key] = file_sig
+                            _insert_image_tag(tag)
+                            trigger_toast(f"Image '{up_file.name}' inserted into email body!", icon="🖼️")
+                        elif btn_manual_ins:
+                            _insert_image_tag(tag)
+                            trigger_toast("Image inserted into email body!", icon="🖼️")
+                    except Exception as img_err:
+                        st.error(f"Error processing image: {img_err}")
 
             with st.expander("🔗 Or Web URL"):
                 img_url = st.text_input("Direct URL", placeholder="https://sellomize.com/logo.png", key=f"{key}_img_url_val")
@@ -473,9 +506,8 @@ def render_rich_editor(
                         cur_vis = st.session_state.get(textarea_key, live_visual)
                         cur_vis = re.sub(rf'\n*{re.escape(ph)}\n*', '\n\n', cur_vis).strip()
                         img_map.pop(ph, None)
-                        st.session_state[textarea_key] = cur_vis
-                        st.session_state[state_key] = visual_text_to_html(cur_vis, img_map)
-                        st.session_state[last_synced_html] = st.session_state[state_key]
+                        new_html = visual_text_to_html(cur_vis, img_map)
+                        _sync_editor_state(new_html, cur_vis)
                         trigger_toast(f"Removed {ph}.", icon="🗑️")
                         st.rerun()
 
@@ -495,14 +527,18 @@ def render_rich_editor(
     st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
     st.session_state[last_synced_html] = st.session_state[state_key]
 
-    # Visually hide the hidden receivers
+    # Visually hide the hidden receivers safely without display:none so synthetic events always propagate
     st.markdown("""
     <style>
     div[data-testid="stTextInput"]:has(input[aria-label*="rich_cursor_tracker"]),
     div[data-testid="stTextInput"]:has(input[aria-label*="rich_pasted_image_receiver"]) {
-        display: none !important;
-        height: 0px !important;
-        min-height: 0px !important;
+        position: absolute !important;
+        opacity: 0 !important;
+        height: 1px !important;
+        width: 1px !important;
+        pointer-events: none !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
         margin: 0px !important;
         padding: 0px !important;
     }
@@ -531,6 +567,9 @@ def render_rich_editor(
                 const trackerInputs = Array.from(pDoc.querySelectorAll('input[aria-label*="rich_cursor_tracker"]'));
                 const inp = trackerInputs.find(i => i.id && i.id.includes('{cursor_input_key}')) || trackerInputs[0];
                 if (inp && inp.value !== String(pos)) {{
+                    if (inp._valueTracker) {{
+                        inp._valueTracker.setValue('');
+                    }}
                     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                     nativeSetter.call(inp, String(pos));
                     inp.dispatchEvent(new Event('input', {{ bubbles: true }}));
@@ -566,6 +605,9 @@ def render_rich_editor(
                         const pInps = Array.from(pDoc.querySelectorAll('input[aria-label*="rich_pasted_image_receiver"]'));
                         const pInp = pInps.find(i => i.id && i.id.includes('{pasted_img_input_key}')) || pInps[0];
                         if (pInp) {{
+                            if (pInp._valueTracker) {{
+                                pInp._valueTracker.setValue('');
+                            }}
                             const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                             nativeSetter.call(pInp, dataUrl);
                             pInp.dispatchEvent(new Event('input', {{ bubbles: true }}));

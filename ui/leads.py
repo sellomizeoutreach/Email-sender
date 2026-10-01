@@ -306,6 +306,7 @@ def render_leads_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                 )
                 up_file = st.file_uploader("Upload CSV", type=["csv"], key="crm_csv_upload")
                 if up_file is not None and st.button("Run Import", type="primary", use_container_width=True):
+                    up_file.seek(0)
                     res = import_contacts_from_csv(up_file.read())
                     trigger_toast(f"Imported {res['inserted']} leads ({res['updated']} updated).", icon="✅")
                     st.rerun()

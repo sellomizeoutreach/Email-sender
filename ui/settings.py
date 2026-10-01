@@ -874,6 +874,7 @@ def render_settings_tab():
         if up_backup:
             if st.button("🚀 Restore Data from File", key="btn_apply_restore_file", type="primary", use_container_width=True):
                 try:
+                    up_backup.seek(0)
                     loaded_data = json.load(up_backup)
                     ok, msg = import_backup_data(loaded_data)
                     if ok:

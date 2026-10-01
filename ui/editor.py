@@ -480,6 +480,12 @@ def render_dual_mode_editor(
             st.session_state[state_key]        = new_html      # persistent HTML
             st.session_state[textarea_key]     = new_visual    # clean visual text
             st.session_state[last_synced_html] = new_html
+            if "compose" in key_prefix:
+                st.session_state["compose_body_html"] = new_html
+            elif "bulk" in key_prefix:
+                st.session_state["bulk_body_html"] = new_html
+            elif "tpl" in key_prefix:
+                st.session_state["tpl_body_html"] = new_html
             st.rerun()
 
         def _insert_html(html_tag: str):
@@ -503,6 +509,12 @@ def render_dual_mode_editor(
             st.session_state[state_key]        = new_html
             st.session_state[textarea_key]     = new_visual
             st.session_state[last_synced_html] = new_html
+            if "compose" in key_prefix:
+                st.session_state["compose_body_html"] = new_html
+            elif "bulk" in key_prefix:
+                st.session_state["bulk_body_html"] = new_html
+            elif "tpl" in key_prefix:
+                st.session_state["tpl_body_html"] = new_html
             st.rerun()
 
         def _insert_image(img_tag: str):
@@ -532,6 +544,12 @@ def render_dual_mode_editor(
             st.session_state[state_key]        = new_html
             st.session_state[textarea_key]     = new_visual
             st.session_state[last_synced_html] = new_html
+            if "compose" in key_prefix:
+                st.session_state["compose_body_html"] = new_html
+            elif "bulk" in key_prefix:
+                st.session_state["bulk_body_html"] = new_html
+            elif "tpl" in key_prefix:
+                st.session_state["tpl_body_html"] = new_html
             st.rerun()
 
         # Handle pasted image data received directly from browser Ctrl+V
@@ -605,26 +623,39 @@ def render_dual_mode_editor(
                     label_visibility="collapsed"
                 )
                 if up_file:
+                    up_file.seek(0)
                     raw_bytes = up_file.read()
-                    try:
-                        pil_img = Image.open(io.BytesIO(raw_bytes))
-                        w, h = pil_img.size
-                        if w > 720:
-                            ratio = 720 / float(w)
-                            pil_img = pil_img.resize((720, int(h * ratio)), Image.Resampling.LANCZOS)
-                            w, h = 720, int(h * ratio)
-                        buf = io.BytesIO()
-                        pil_img.save(buf, format="PNG", optimize=True)
-                        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                    except Exception:
-                        b64 = base64.b64encode(raw_bytes).decode("utf-8")
-                    mime = up_file.type or "image/png"
-                    tag  = (f'<img src="data:{mime};base64,{b64}" alt="Screenshot" '
-                            f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-                    if st.button("➕ Insert Uploaded Screenshot", type="primary",
-                                 key=f"{key_prefix}_btn_ins_up_img", use_container_width=True):
-                        _insert_image(tag)
-                        trigger_toast("Screenshot inserted as [Image] token!", icon="🖼️")
+                    if raw_bytes:
+                        try:
+                            file_sig = f"{up_file.name}_{len(raw_bytes)}"
+                            last_sig_key = f"{key_prefix}_last_uploaded_sig"
+                            is_new_upload = (st.session_state.get(last_sig_key) != file_sig)
+
+                            pil_img = Image.open(io.BytesIO(raw_bytes))
+                            w, h = pil_img.size
+                            if w > 720:
+                                ratio = 720 / float(w)
+                                pil_img = pil_img.resize((720, int(h * ratio)), Image.Resampling.LANCZOS)
+                                w, h = 720, int(h * ratio)
+                            buf = io.BytesIO()
+                            pil_img.save(buf, format="PNG", optimize=True)
+                            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                        except Exception:
+                            b64 = base64.b64encode(raw_bytes).decode("utf-8")
+                        mime = up_file.type or "image/png"
+                        tag  = (f'<img src="data:{mime};base64,{b64}" alt="{html.escape(up_file.name)}" '
+                                f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+
+                        btn_manual = st.button("➕ Insert Uploaded Screenshot", type="primary",
+                                              key=f"{key_prefix}_btn_ins_up_img", use_container_width=True)
+
+                        if is_new_upload:
+                            st.session_state[last_sig_key] = file_sig
+                            _insert_image(tag)
+                            trigger_toast(f"Image '{up_file.name}' inserted into email body!", icon="🖼️")
+                        elif btn_manual:
+                            _insert_image(tag)
+                            trigger_toast("Screenshot inserted as [Image] token!", icon="🖼️")
 
                 st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:10px 0;'>", unsafe_allow_html=True)
 
@@ -807,6 +838,9 @@ def render_dual_mode_editor(
                     const trackerInputs = Array.from(pDoc.querySelectorAll('input[aria-label="cursor_tracker"]'));
                     const inp = trackerInputs.find(i => i.id && i.id.includes('{cursor_input_key}')) || trackerInputs[0];
                     if (inp && inp.value !== String(pos)) {{
+                        if (inp._valueTracker) {{
+                            inp._valueTracker.setValue('');
+                        }}
                         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                         nativeSetter.call(inp, String(pos));
                         inp.dispatchEvent(new Event('input', {{ bubbles: true }}));
@@ -849,6 +883,9 @@ def render_dual_mode_editor(
                                     const pInps = Array.from(pDoc.querySelectorAll('input[aria-label="pasted_image_receiver"]'));
                                     const pInp = pInps.find(i => i.id && i.id.includes('{pasted_img_input_key}')) || pInps[0];
                                     if (pInp) {{
+                                        if (pInp._valueTracker) {{
+                                            pInp._valueTracker.setValue('');
+                                        }}
                                         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                                         nativeSetter.call(pInp, dataUrl);
                                         pInp.dispatchEvent(new Event('input', {{ bubbles: true }}));
