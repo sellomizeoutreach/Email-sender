@@ -314,6 +314,55 @@ def get_db_config_path() -> str:
     return os.path.join(config_dir, "sellomize_db_config.json")
 
 
+def normalize_database_url(url: str) -> str:
+    """
+    Sanitizes and normalizes user-provided PostgreSQL connection URLs:
+    - Strips surrounding brackets from passwords: [Sellomize###0300] -> Sellomize###0300
+    - URL-encodes special characters in passwords (e.g. # -> %23)
+    - If direct Supabase IPv6 host (db.[ref].supabase.co) fails IPv4 DNS, auto-routes via IPv4 pooler
+    """
+    if not url:
+        return ""
+    clean = url.strip()
+    if clean.startswith("postgres://"):
+        clean = "postgresql://" + clean[11:]
+
+    # Match: postgresql://username:password@host:port/dbname
+    m = re.match(r'^(postgresql://)([^:]+):(.*)@([^:/]+)(?::(\d+))?(/.*)$', clean)
+    if m:
+        prefix, user, raw_pw, host, port, db_path = m.groups()
+        port = port or "5432"
+
+        if raw_pw.startswith('[') and raw_pw.endswith(']'):
+            raw_pw = raw_pw[1:-1]
+
+        import urllib.parse
+        unquoted = urllib.parse.unquote(raw_pw)
+        quoted_pw = urllib.parse.quote(unquoted, safe='')
+
+        m_sb = re.match(r'^db\.([a-z0-9]+)\.supabase\.co$', host, re.IGNORECASE)
+        if m_sb:
+            proj_ref = m_sb.group(1)
+            import socket
+            can_resolve_ipv4 = False
+            try:
+                socket.gethostbyname(host)
+                can_resolve_ipv4 = True
+            except Exception:
+                can_resolve_ipv4 = False
+
+            if not can_resolve_ipv4:
+                if '.' not in user:
+                    user = f"{user}.{proj_ref}"
+                pooler_region = "ap-northeast-1" if proj_ref == "ledgdhmagbpmjylywmnm" else "us-east-1"
+                host = f"aws-0-{pooler_region}.pooler.supabase.com"
+                port = "5432"
+
+        return f"{prefix}{user}:{quoted_pw}@{host}:{port}{db_path}"
+
+    return clean
+
+
 def get_database_url() -> str:
     """
     Retrieve configured Cloud PostgreSQL connection URL.
@@ -326,33 +375,37 @@ def get_database_url() -> str:
     if os.environ.get("SELLOMIZE_FORCE_SQLITE", "").lower() in ("1", "true", "yes"):
         return ""
 
+    raw_url = ""
     for env_key in ("DATABASE_URL", "POSTGRES_URL", "SUPABASE_DB_URL", "SELLOMIZE_POSTGRES_URL"):
         val = os.environ.get(env_key)
         if val and val.strip():
-            return val.strip()
+            raw_url = val.strip()
+            break
 
-    try:
-        import streamlit as st
-        if hasattr(st, "secrets"):
-            if "DATABASE_URL" in st.secrets and str(st.secrets["DATABASE_URL"]).strip():
-                return str(st.secrets["DATABASE_URL"]).strip()
-            if "postgres" in st.secrets and isinstance(st.secrets["postgres"], dict) and st.secrets["postgres"].get("url"):
-                return str(st.secrets["postgres"]["url"]).strip()
-    except Exception:
-        pass
-
-    cfg_path = get_db_config_path()
-    if os.path.exists(cfg_path):
+    if not raw_url:
         try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                url = data.get("database_url", "")
-                if url and url.strip():
-                    return url.strip()
+            import streamlit as st
+            if hasattr(st, "secrets"):
+                if "DATABASE_URL" in st.secrets and str(st.secrets["DATABASE_URL"]).strip():
+                    raw_url = str(st.secrets["DATABASE_URL"]).strip()
+                elif "postgres" in st.secrets and isinstance(st.secrets["postgres"], dict) and st.secrets["postgres"].get("url"):
+                    raw_url = str(st.secrets["postgres"]["url"]).strip()
         except Exception:
             pass
 
-    return ""
+    if not raw_url:
+        cfg_path = get_db_config_path()
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    url = data.get("database_url", "")
+                    if url and url.strip():
+                        raw_url = url.strip()
+            except Exception:
+                pass
+
+    return normalize_database_url(raw_url) if raw_url else ""
 
 
 def set_database_url(url: str) -> None:
@@ -397,12 +450,9 @@ def get_postgres_connection(url: Optional[str] = None) -> PostgresConnectionWrap
     if not PSYCOPG2_AVAILABLE:
         raise RuntimeError("psycopg2 is not installed. Please run: pip install psycopg2-binary")
 
-    pg_url = url or get_database_url()
+    pg_url = normalize_database_url(url or get_database_url())
     if not pg_url:
         raise ValueError("No PostgreSQL URL configured.")
-
-    if pg_url.startswith("postgres://"):
-        pg_url = "postgresql://" + pg_url[11:]
 
     # Check cached thread-local connection
     cached: Optional[PostgresConnectionWrapper] = getattr(_thread_local, "pg_conn", None)
@@ -449,12 +499,9 @@ def test_pg_connection(url: Optional[str] = None) -> Tuple[bool, str, float]:
     if not PSYCOPG2_AVAILABLE:
         return False, "Driver missing: psycopg2-binary is not installed.", 0.0
 
-    target_url = url or get_database_url()
+    target_url = normalize_database_url(url or get_database_url())
     if not target_url:
         return False, "No connection URL provided.", 0.0
-
-    if target_url.startswith("postgres://"):
-        target_url = "postgresql://" + target_url[11:]
 
     t0 = time.time()
     try:
@@ -506,8 +553,8 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
         from database import init_db
         pg_conn = get_postgres_connection(target_url)
         
-        # Initialize target schema on PostgreSQL
-        init_db()
+        # Initialize target schema on PostgreSQL using active pg_conn
+        init_db(conn=pg_conn)
 
         cur_sq = sq_conn.cursor()
         cur_pg = pg_conn.cursor()

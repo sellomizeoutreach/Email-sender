@@ -185,9 +185,10 @@ def get_connection(db_path: str = DB_FILE) -> Union[sqlite3.Connection, Postgres
     conn.row_factory = sqlite3.Row
     return conn
 
-def init_db(db_path: str = DB_FILE):
+def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, PostgresConnectionWrapper]] = None):
     """Initialize database tables and default configuration settings."""
-    conn = get_connection(db_path)
+    if conn is None:
+        conn = get_connection(db_path)
     cursor = conn.cursor()
 
     # 1. Configuration table for API keys, models, sender/BCC, spam words, negative keywords
