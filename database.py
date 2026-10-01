@@ -3853,6 +3853,30 @@ def delete_campaign_step(step_id: int, db_path: str = DB_FILE) -> bool:
     return True
 
 
+def sync_campaign_steps(campaign_id: int, steps: List[Dict[str, Any]], db_path: str = DB_FILE) -> bool:
+    """Sync and replace all steps for a campaign (used when updating draft/paused campaigns)."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM campaign_steps WHERE campaign_id = ?", (campaign_id,))
+    conn.commit()
+    conn.close()
+
+    for idx, stp in enumerate(steps, 1):
+        create_campaign_step(
+            campaign_id=campaign_id,
+            position=idx,
+            subject=stp.get("subject", ""),
+            body_html=stp.get("body_html", ""),
+            wait_days=int(stp.get("wait_days", 0)),
+            wait_hours=int(stp.get("wait_hours", 0)),
+            condition=stp.get("condition", "no_reply"),
+            template_id=stp.get("template_id"),
+            is_reply_thread=1 if "Re:" in stp.get("subject", "") else 0,
+            db_path=db_path
+        )
+    return True
+
+
 def enroll_contacts_in_campaign(
     campaign_id: int,
     contact_ids: List[int],

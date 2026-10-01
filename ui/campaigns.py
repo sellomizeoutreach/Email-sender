@@ -27,6 +27,7 @@ from database import (
     get_campaign_steps,
     update_campaign_step,
     delete_campaign_step,
+    sync_campaign_steps,
     get_campaign_contacts,
     enroll_contacts_in_campaign,
     mark_campaign_contact_converted,
@@ -43,6 +44,7 @@ from template_engine import _missing_tokens, inject_variables
 from timezone_helper import TARGET_MARKETS, get_engine_now
 from ui.components import trigger_toast
 from ui.rich_editor import render_rich_editor
+from ui.campaign_sequence import render_sequence_builder, validate_sequence_steps
 
 
 # -----------------------------------------------------------------------------
@@ -376,62 +378,18 @@ def _render_campaign_wizard(all_contacts: List[Dict[str, Any]], all_templates: L
     # WIZARD STEP 3: SEQUENCE BUILDER
     # --------------------------------------------------------------------------
     elif step == 3:
-        st.markdown("#### Step 3: Sequence Steps")
-        st.caption("Build your multi-step sequence. Step 1 dispatches immediately; later steps wait for specified delay.")
-
         steps_list = w_data.get("steps", [])
+        updated_steps = render_sequence_builder(
+            steps=steps_list,
+            all_contacts=all_contacts,
+            all_templates=all_templates,
+            key_prefix="wiz_seq",
+            read_only=False
+        )
+        w_data["steps"] = updated_steps
+        st.session_state["wizard_data"] = w_data
 
-        # Manage step list
-        for idx, stp in enumerate(steps_list):
-            pos = idx + 1
-            with st.container(border=True):
-                s_hdr1, s_hdr2 = st.columns([8, 2], vertical_alignment="center")
-                with s_hdr1:
-                    st.markdown(f"##### ✉️ Step {pos} {'(Day 0 Initial Outreach)' if pos == 1 else f'(Follow-Up {pos-1})'}")
-                with s_hdr2:
-                    if len(steps_list) > 1 and st.button(f"🗑️ Delete Step {pos}", key=f"w_del_step_{pos}"):
-                        steps_list.pop(idx)
-                        w_data["steps"] = steps_list
-                        st.session_state["wizard_data"] = w_data
-                        st.rerun()
-
-                # Wait settings (for follow-ups)
-                if pos > 1:
-                    w_col1, w_col2, w_col3 = st.columns([2, 2, 6], vertical_alignment="center")
-                    with w_col1:
-                        stp["wait_days"] = st.number_input(f"Wait Days after Step {pos-1}", min_value=0, max_value=60, value=int(stp.get("wait_days", 3)), key=f"w_step_wait_d_{pos}")
-                    with w_col2:
-                        stp["wait_hours"] = st.number_input("Wait Hours", min_value=0, max_value=23, value=int(stp.get("wait_hours", 0)), key=f"w_step_wait_h_{pos}")
-                    with w_col3:
-                        stp["condition"] = st.selectbox("Sending Condition", options=["Send only if no reply", "Send unconditionally"], index=0, key=f"w_step_cond_{pos}")
-
-                # Subject and body
-                stp["subject"] = st.text_input(f"Subject Line (Step {pos})", value=stp.get("subject", ""), key=f"w_step_subj_{pos}")
-
-                st.markdown("<div style='font-size:12px; font-weight:700; color:#083731; margin-top:6px;'>Email Body:</div>", unsafe_allow_html=True)
-                # Embedded Rich Editor with native paste & drop
-                updated_body = render_rich_editor(
-                    initial_html=stp.get("body_html", ""),
-                    key=f"w_rich_editor_step_{pos}",
-                    height=200
-                )
-                stp["body_html"] = updated_body
-
-        if st.button("➕ Add Another Follow-Up Step", key="btn_wizard_add_step"):
-            new_pos = len(steps_list) + 1
-            steps_list.append({
-                "position": new_pos,
-                "subject": f"Re: {steps_list[0].get('subject', 'Outreach')}",
-                "body_html": "<p>Hi [First Name],</p><p>Following up on my previous note. Did you have a moment to review?</p>",
-                "wait_days": 3,
-                "wait_hours": 0,
-                "condition": "no_reply"
-            })
-            w_data["steps"] = steps_list
-            st.session_state["wizard_data"] = w_data
-            st.rerun()
-
-        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         w_c1, w_c2, w_c3 = st.columns([2, 6, 2])
         with w_c1:
             if st.button("← Back", use_container_width=True):
@@ -439,18 +397,11 @@ def _render_campaign_wizard(all_contacts: List[Dict[str, Any]], all_templates: L
                 st.rerun()
         with w_c3:
             if st.button("Next: Review →", type="primary", use_container_width=True):
-                # Verify subject and body for each step
-                has_error = False
-                for idx, stp in enumerate(steps_list, 1):
-                    if not stp.get("subject", "").strip():
-                        st.error(f"Step {idx} subject line cannot be empty.")
-                        has_error = True
-                    if not stp.get("body_html", "").strip():
-                        st.error(f"Step {idx} body content cannot be empty.")
-                        has_error = True
-                if not has_error:
-                    w_data["steps"] = steps_list
-                    st.session_state["wizard_data"] = w_data
+                is_valid, errors = validate_sequence_steps(w_data.get("steps", []))
+                if not is_valid:
+                    for err in errors:
+                        st.error(err)
+                else:
                     st.session_state["wizard_step"] = 4
                     st.rerun()
 
@@ -478,26 +429,20 @@ def _render_campaign_wizard(all_contacts: List[Dict[str, Any]], all_templates: L
                 st.markdown("##### 🛡️ Pre-Launch Checklist")
                 steps_list = w_data.get("steps", [])
 
-                # Verify token safety across all steps
-                all_unfilled = []
-                for idx, stp in enumerate(steps_list, 1):
-                    subj_tokens = _missing_tokens(stp.get("subject", ""))
-                    body_tokens = _missing_tokens(stp.get("body_html", ""))
-                    # Known valid lead tokens
-                    valid_tokens = {"[Name]", "[First Name]", "[Company]", "[Email]", "[Website]", "[Tags]"}
-                    unrecognized = [t for t in (subj_tokens + body_tokens) if t not in valid_tokens]
-                    if unrecognized:
-                        all_unfilled.extend([f"Step {idx}: {t}" for t in unrecognized])
+                is_seq_valid, seq_errors = validate_sequence_steps(steps_list)
 
                 chk1 = "✅" if w_data.get("name") else "❌"
                 chk2 = "✅" if len(steps_list) >= 1 else "❌"
-                chk3 = "✅" if not all_unfilled else "⚠️"
+                chk3 = "✅" if is_seq_valid else "❌"
 
                 st.markdown(f"{chk1} Campaign metadata valid")
                 st.markdown(f"{chk2} {len(steps_list)} sequence step(s) configured")
                 st.markdown(f"{chk3} Token syntax and send guard check")
-                if all_unfilled:
-                    st.warning(f"Unrecognized token placeholders detected: {', '.join(all_unfilled)}. Make sure these exist in your contact data.")
+                if seq_errors:
+                    for err in seq_errors:
+                        st.warning(err)
+                else:
+                    st.success("All sequence steps cleared send guard checks.")
 
         # Bottom buttons: Save as Draft vs Launch
         st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
@@ -558,7 +503,12 @@ def _render_campaign_wizard(all_contacts: List[Dict[str, Any]], all_templates: L
 
         with b_c3:
             if st.button("🚀 Launch Campaign", type="primary", use_container_width=True, key="btn_wizard_launch"):
-                _persist_campaign("Active")
+                is_valid, errors = validate_sequence_steps(w_data.get("steps", []))
+                if not is_valid:
+                    for err in errors:
+                        st.error(f"Cannot launch: {err}")
+                else:
+                    _persist_campaign("Active")
 
 
 # -----------------------------------------------------------------------------
@@ -651,16 +601,42 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
         st.markdown("##### Sequence Steps & Content")
         is_read_only = (camp["status"] == "Active")
         if is_read_only:
-            st.info("💡 **Active campaign:** Sequence steps are currently active. Pause the campaign to edit step contents.")
+            st.info("💡 **Active campaign:** Sequence steps are currently active and running. Pause the campaign to edit step contents.")
+            render_sequence_builder(
+                steps=steps,
+                all_contacts=all_contacts,
+                all_templates=all_templates,
+                key_prefix=f"detail_seq_{campaign_id}",
+                read_only=True
+            )
+        else:
+            edit_key = f"camp_detail_steps_{campaign_id}"
+            if edit_key not in st.session_state:
+                st.session_state[edit_key] = [dict(s) for s in steps]
 
-        for stp in steps:
-            pos = stp["position"]
-            with st.container(border=True):
-                st.markdown(f"**Step {pos}: {stp['subject']}**")
-                st.caption(f"Wait: {stp.get('wait_days', 0)} days, {stp.get('wait_hours', 0)} hours after previous step")
-                # Step HTML preview
-                with st.expander("Preview Step Content"):
-                    st.markdown(stp.get("body_html", ""), unsafe_allow_html=True)
+            updated_steps = render_sequence_builder(
+                steps=st.session_state[edit_key],
+                all_contacts=all_contacts,
+                all_templates=all_templates,
+                key_prefix=f"detail_seq_{campaign_id}",
+                read_only=False
+            )
+            st.session_state[edit_key] = updated_steps
+
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+            sc_c1, sc_c2 = st.columns([7, 3])
+            with sc_c2:
+                if st.button("💾 Save Sequence Changes", type="primary", use_container_width=True, key=f"btn_save_seq_{campaign_id}"):
+                    is_valid, errors = validate_sequence_steps(updated_steps)
+                    if not is_valid:
+                        for err in errors:
+                            st.error(err)
+                    else:
+                        sync_campaign_steps(campaign_id, updated_steps)
+                        if edit_key in st.session_state:
+                            del st.session_state[edit_key]
+                        trigger_toast("Sequence steps saved successfully!", icon="💾")
+                        st.rerun()
 
     # TAB 3: CONTACTS
     with d_tab3:
