@@ -866,6 +866,13 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     except Exception as seq_err:
         logger.warning(f"Error processing due sequence rules: {seq_err}")
 
+    # 1.5 Process automated multi-step campaign sequence engine
+    try:
+        from campaign_engine import run_campaign_engine_cycle
+        run_campaign_engine_cycle(dry_run=dry_run, db_path=target_db)
+    except Exception as camp_err:
+        logger.warning(f"Error processing campaign engine cycle: {camp_err}")
+
     # 2. Check sending window (global / office hours mode)
     sched_mode = (get_config("schedule_mode", "adaptive_multi_country", db_path=target_db) or "adaptive_multi_country").strip()
     if sched_mode != "adaptive_multi_country":
