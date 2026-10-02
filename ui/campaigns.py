@@ -49,6 +49,11 @@ from timezone_helper import TARGET_MARKETS, get_engine_now
 from ui.components import trigger_toast
 from ui.rich_editor import render_rich_editor
 from ui.campaign_sequence import render_sequence_builder, validate_sequence_steps
+from ui.lead_selector import (
+    render_campaign_enrollment_interface,
+    extract_lead_column_metadata,
+    filter_leads_by_columns
+)
 
 
 # -----------------------------------------------------------------------------
@@ -338,17 +343,35 @@ def _render_campaign_wizard(all_contacts: List[Dict[str, Any]], all_templates: L
         with col_aud:
             with st.container(border=True):
                 st.markdown("##### 👥 Target Audience")
-                # Group leads by source
-                lead_sources = sorted(list({c.get("lead_source") or "Amazon scrape" for c in all_contacts}))
-                aud_options = ["All leads"] + [f"Source: {s}" for s in lead_sources]
-                sel_aud = st.selectbox("Select Lead Segment", options=aud_options, index=0)
+                aud_meta = extract_lead_column_metadata(all_contacts)
+                aud_options = ["All leads"]
+                for s in aud_meta["sources"]:
+                    aud_options.append(f"Source: {s}")
+                for st_val in aud_meta["statuses"]:
+                    aud_options.append(f"Status: {st_val}")
+                for p in aud_meta["priorities"]:
+                    aud_options.append(f"Priority: {p}")
+                for t in aud_meta["tags"][:15]:
+                    aud_options.append(f"Tag: {t}")
+                sel_aud = st.selectbox("Select Target Lead Column Segment", options=aud_options, index=0)
 
-                # Compute count
+                # Compute count based on column header
                 if sel_aud == "All leads":
                     matching_c = [c for c in all_contacts if (c.get("status") or "").lower() != "do not contact"]
+                elif sel_aud.startswith("Source: "):
+                    s_val = sel_aud.replace("Source: ", "")
+                    matching_c = [c for c in all_contacts if (c.get("lead_source") or "") == s_val and (c.get("status") or "").lower() != "do not contact"]
+                elif sel_aud.startswith("Status: "):
+                    st_v = sel_aud.replace("Status: ", "")
+                    matching_c = [c for c in all_contacts if (c.get("status") or "").lower() == st_v.lower()]
+                elif sel_aud.startswith("Priority: "):
+                    pr_v = sel_aud.replace("Priority: ", "")
+                    matching_c = [c for c in all_contacts if (c.get("priority") or "").lower() == pr_v.lower() and (c.get("status") or "").lower() != "do not contact"]
+                elif sel_aud.startswith("Tag: "):
+                    tg_v = sel_aud.replace("Tag: ", "").lower()
+                    matching_c = [c for c in all_contacts if tg_v in (c.get("tags") or "").lower() and (c.get("status") or "").lower() != "do not contact"]
                 else:
-                    src_val = sel_aud.replace("Source: ", "")
-                    matching_c = [c for c in all_contacts if (c.get("lead_source") or "") == src_val and (c.get("status") or "").lower() != "do not contact"]
+                    matching_c = [c for c in all_contacts if (c.get("status") or "").lower() != "do not contact"]
 
                 st.markdown(
                     f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:10px; margin-top:10px;'>"
@@ -736,38 +759,12 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
             st.caption(f"Showing **{len(camp_contacts)}** enrolled leads in this campaign.")
         with top_act2:
             with st.popover("➕ Enroll / Add Leads", use_container_width=True):
-                st.markdown("##### 👥 Enroll Leads into Campaign")
-                lead_sources = sorted(list({c.get("lead_source") or "Other" for c in all_contacts}))
-                source_options = ["All leads"] + [f"Source: {s}" for s in lead_sources]
-                sel_seg = st.selectbox("Audience Segment", options=source_options, key=f"enroll_seg_{campaign_id}")
-
-                # Filter leads
-                enrolled_ids = {cc["contact_id"] for cc in camp_contacts}
-                if sel_seg == "All leads":
-                    available_leads = [c for c in all_contacts if (c.get("status") or "").lower() != "do not contact" and c["id"] not in enrolled_ids]
-                else:
-                    src_val = sel_seg.replace("Source: ", "")
-                    available_leads = [c for c in all_contacts if (c.get("lead_source") or "") == src_val and (c.get("status") or "").lower() != "do not contact" and c["id"] not in enrolled_ids]
-
-                st.caption(f"Found **{len(available_leads)} eligible leads** not yet enrolled.")
-
-                enroll_mode = st.radio("Enrollment Mode", ["Enroll all eligible in segment", "Pick specific leads"], key=f"enroll_mode_{campaign_id}", horizontal=True)
-
-                leads_to_add = []
-                if enroll_mode == "Enroll all eligible in segment":
-                    leads_to_add = [c["id"] for c in available_leads]
-                else:
-                    lead_pick_map = {f"{c.get('name') or 'Lead'} ({c.get('email')}) — {c.get('company') or 'No Brand'}": c["id"] for c in available_leads}
-                    picked_labels = st.multiselect("Select Contacts", options=list(lead_pick_map.keys()), key=f"enroll_picked_{campaign_id}")
-                    leads_to_add = [lead_pick_map[lbl] for lbl in picked_labels]
-
-                if st.button(f"🚀 Enroll {len(leads_to_add)} Contacts", type="primary", use_container_width=True, key=f"btn_do_enroll_{campaign_id}"):
-                    if not leads_to_add:
-                        st.warning("No contacts selected to enroll.")
-                    else:
-                        cnt_added = enroll_contacts_in_campaign(campaign_id, leads_to_add)
-                        trigger_toast(f"Successfully enrolled {cnt_added} leads into campaign!", icon="👥")
-                        st.rerun()
+                render_campaign_enrollment_interface(
+                    campaign_id=campaign_id,
+                    all_contacts=all_contacts,
+                    camp_contacts=camp_contacts,
+                    key_suffix="top"
+                )
 
         with top_act3:
             if camp_contacts:
@@ -795,20 +792,12 @@ def _render_campaign_detail(campaign_id: int, all_contacts: List[Dict[str, Any]]
                 btn_c1, btn_c2, btn_c3 = st.columns([3, 4, 3])
                 with btn_c2:
                     with st.popover("➕ Enroll Leads Now", use_container_width=True):
-                        st.markdown("##### 👥 Choose Leads to Enroll")
-                        lead_sources = sorted(list({c.get("lead_source") or "Other" for c in all_contacts}))
-                        source_options = ["All leads"] + [f"Source: {s}" for s in lead_sources]
-                        quick_sel_seg = st.selectbox("Audience Segment", options=source_options, key=f"quick_enroll_seg_{campaign_id}")
-                        if quick_sel_seg == "All leads":
-                            quick_avail = [c for c in all_contacts if (c.get("status") or "").lower() != "do not contact"]
-                        else:
-                            quick_src = quick_sel_seg.replace("Source: ", "")
-                            quick_avail = [c for c in all_contacts if (c.get("lead_source") or "") == quick_src and (c.get("status") or "").lower() != "do not contact"]
-                        st.caption(f"Ready to enroll **{len(quick_avail)} contacts**.")
-                        if st.button(f"🚀 Enroll {len(quick_avail)} Leads", type="primary", use_container_width=True, key=f"btn_quick_do_enroll_{campaign_id}"):
-                            cnt = enroll_contacts_in_campaign(campaign_id, [c["id"] for c in quick_avail])
-                            trigger_toast(f"Enrolled {cnt} leads into campaign!", icon="👥")
-                            st.rerun()
+                        render_campaign_enrollment_interface(
+                            campaign_id=campaign_id,
+                            all_contacts=all_contacts,
+                            camp_contacts=camp_contacts,
+                            key_suffix="empty"
+                        )
         else:
             # Filter and search row for enrolled contacts
             fc1, fc2 = st.columns([6, 4], vertical_alignment="center")

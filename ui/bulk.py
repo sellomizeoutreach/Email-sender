@@ -40,6 +40,11 @@ from timezone_helper import get_next_valid_market_datetime, get_engine_now
 from ui.editor import render_dual_mode_editor, html_to_visual_text
 from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
 from ui.components import trigger_toast
+from ui.lead_selector import (
+    extract_lead_column_metadata,
+    filter_leads_by_columns,
+    render_lead_badge_html
+)
 
 
 # ---------------------------------------------------------------------------
@@ -580,70 +585,70 @@ def render_bulk_tab():
     with col_recipients:
         st.markdown("<span class='lbl' style='font-size:14px; font-weight:700; color:#083731;'>2 · Recipients — filter or hand-pick</span>", unsafe_allow_html=True)
 
-        # Collect unique tags
-        all_tags = set()
-        for c in all_leads:
-            for tag in (c.get("tags") or "").split(","):
-                clean = tag.strip().lower()
-                if clean:
-                    all_tags.add(clean)
-        tag_list = sorted(list(all_tags))
+        meta = extract_lead_column_metadata(all_leads)
 
-        # Filter by Tag Pills (Horizontal Scroll showing ALL tags)
-        if tag_list:
-            st.markdown("<div style='font-size:12px; color:#64748B; margin-bottom:4px;'>Filter by tag:</div>", unsafe_allow_html=True)
-            if "bulk_tag_filter" not in st.session_state:
-                st.session_state["bulk_tag_filter"] = "all"
+        # Multi-column filters bar
+        st.markdown("<div style='font-size:12px; font-weight:600; color:#64748B; margin-bottom:4px;'>Filter by Column Headers & Values:</div>", unsafe_allow_html=True)
+        bf_c1, bf_c2 = st.columns(2)
+        with bf_c1:
+            status_opts = ["All"] + meta["statuses"]
+            def_idx = 0
+            if "bulk_status_filter" in st.session_state and st.session_state["bulk_status_filter"] in status_opts:
+                def_idx = status_opts.index(st.session_state["bulk_status_filter"])
+            sel_bulk_status = st.selectbox(
+                "Status / Stage",
+                options=status_opts,
+                index=def_idx,
+                key="bulk_col_status"
+            )
+            st.session_state["bulk_status_filter"] = sel_bulk_status
+        with bf_c2:
+            src_opts = ["All"] + meta["sources"]
+            sel_bulk_source = st.selectbox("Lead Source", options=src_opts, key="bulk_col_source")
 
-            try:
-                tag_box = st.container(horizontal=True, wrap=False)
-            except TypeError:
-                tag_box = st.container()
+        bf_c3, bf_c4 = st.columns(2)
+        with bf_c3:
+            prio_opts = ["All"] + meta["priorities"]
+            sel_bulk_prio = st.selectbox("Priority", options=prio_opts, key="bulk_col_prio")
+        with bf_c4:
+            tag_opts = ["All"] + meta["tags"]
+            sel_bulk_tag = st.selectbox("Tags", options=tag_opts, key="bulk_col_tag")
 
-            with tag_box:
-                if st.button("All tags", key="tag_pill_all",
-                             type="primary" if st.session_state["bulk_tag_filter"] == "all" else "secondary"):
-                    st.session_state["bulk_tag_filter"] = "all"
-                    st.rerun()
-                for idx, tag in enumerate(tag_list):
-                    if st.button(tag, key=f"tag_pill_{idx}_{tag}",
-                                 type="primary" if st.session_state["bulk_tag_filter"] == tag else "secondary"):
-                        st.session_state["bulk_tag_filter"] = tag
-                        st.rerun()
+        bulk_search = st.text_input(
+            "Search Keyword",
+            placeholder="Search company, name, email, or notes...",
+            key="bulk_col_search"
+        )
 
-        # Filter by Status Pills (Horizontal Scroll)
-        st.markdown("<div style='font-size:12px; color:#64748B; margin:8px 0 4px;'>Filter by status / stage:</div>", unsafe_allow_html=True)
-        if "bulk_status_filter" not in st.session_state:
-            st.session_state["bulk_status_filter"] = "New"
-
-        try:
-            st_box = st.container(horizontal=True, wrap=False)
-        except TypeError:
-            st_box = st.container()
-
-        with st_box:
-            if st.button("All", key="st_pill_all",
-                         type="primary" if st.session_state["bulk_status_filter"] == "all" else "secondary"):
-                st.session_state["bulk_status_filter"] = "all"
-                st.rerun()
-            for idx, st_name in enumerate(LEAD_STATUSES):
-                if st.button(st_name, key=f"st_pill_{idx}_{st_name}",
-                             type="primary" if st.session_state["bulk_status_filter"] == st_name else "secondary"):
-                    st.session_state["bulk_status_filter"] = st_name
-                    st.rerun()
+        # Advanced column filters (Contacted, Custom variable / Amazon Research)
+        bulk_custom_k = "None"
+        bulk_custom_v = "All"
+        bulk_contacted = "All"
+        if meta["custom_vars"]:
+            with st.expander("➕ Advanced Column Filters (Research & Contacted)", expanded=False):
+                adv_c1, adv_c2 = st.columns(2)
+                with adv_c1:
+                    bulk_contacted = st.selectbox("Contacted?", options=["All", "No", "Yes"], key="bulk_col_contacted")
+                with adv_c2:
+                    cust_keys = ["None"] + list(meta["custom_vars"].keys())
+                    bulk_custom_k = st.selectbox("Custom Field Column", options=cust_keys, key="bulk_col_cust_k")
+                if bulk_custom_k != "None":
+                    cust_vals = ["All"] + meta["custom_vars"].get(bulk_custom_k, [])
+                    bulk_custom_v = st.selectbox(f"Value for '{bulk_custom_k}'", options=cust_vals, key="bulk_col_cust_v")
 
         # Filter candidates
-        filtered_candidates = []
-        for c in all_leads:
-            lead_tags   = (c.get("tags") or "").lower()
-            lead_status = c.get("status") or "New"
-            if st.session_state.get("bulk_tag_filter", "all") != "all":
-                if st.session_state["bulk_tag_filter"] not in lead_tags:
-                    continue
-            if st.session_state.get("bulk_status_filter", "all") != "all":
-                if lead_status != st.session_state["bulk_status_filter"]:
-                    continue
-            filtered_candidates.append(c)
+        filtered_candidates = filter_leads_by_columns(
+            leads=all_leads,
+            source_filter=sel_bulk_source,
+            status_filter=sel_bulk_status,
+            priority_filter=sel_bulk_prio,
+            tag_filter=sel_bulk_tag,
+            contacted_filter=bulk_contacted,
+            search_query=bulk_search,
+            custom_key=bulk_custom_k,
+            custom_val=bulk_custom_v,
+            exclude_suppressed=True
+        )
 
         # Robust session state initialization for selected lead IDs
         valid_candidate_ids = {c["id"] for c in filtered_candidates if c.get("id") is not None}
@@ -656,53 +661,97 @@ def render_bulk_tab():
         if "bulk_chk_ver" not in st.session_state:
             st.session_state["bulk_chk_ver"] = 0
 
-        # Checkbox selection bar
-        st.markdown("<div style='font-size:12px; color:#64748B; margin:10px 0 4px;'>Then tick or untick individuals:</div>", unsafe_allow_html=True)
-        q_c1, q_c2 = st.columns([1, 1])
+        # Action buttons
+        st.markdown("<div style='font-size:12px; color:#64748B; margin:8px 0 4px;'>Individual lead selection:</div>", unsafe_allow_html=True)
+        q_c1, q_c2, q_c3 = st.columns([1, 1, 1])
         with q_c1:
-            if st.button("☑️ Select All Filtered", key="bulk_btn_sel_all", use_container_width=True):
-                st.session_state["bulk_selected_lead_ids"] = set(valid_candidate_ids)
+            if st.button("☑️ Select All", key="bulk_btn_sel_all", use_container_width=True):
+                st.session_state["bulk_selected_lead_ids"].update(valid_candidate_ids)
                 st.session_state["bulk_chk_ver"] += 1
                 st.rerun()
         with q_c2:
-            if st.button("◻️ Clear Selection", key="bulk_btn_clear_sel", use_container_width=True):
-                st.session_state["bulk_selected_lead_ids"] = set()
+            if st.button("◻️ Clear All", key="bulk_btn_clear_sel", use_container_width=True):
+                st.session_state["bulk_selected_lead_ids"].difference_update(valid_candidate_ids)
+                st.session_state["bulk_chk_ver"] += 1
+                st.rerun()
+        with q_c3:
+            if st.button("🔄 Invert", key="bulk_btn_invert_sel", use_container_width=True):
+                curr = st.session_state["bulk_selected_lead_ids"]
+                st.session_state["bulk_selected_lead_ids"] = {
+                    cid for cid in valid_candidate_ids if cid not in curr
+                } | (curr - valid_candidate_ids)
                 st.session_state["bulk_chk_ver"] += 1
                 st.rerun()
 
         ver = st.session_state["bulk_chk_ver"]
         selected_leads = []
+
+        # Count banner
+        selected_in_filtered = len(st.session_state["bulk_selected_lead_ids"].intersection(valid_candidate_ids))
+        st.markdown(
+            f"<div style='font-size:12px; color:#475569; margin-bottom:6px;'>"
+            f"Selected <strong style='color:#083731;'>{selected_in_filtered}</strong> of {len(filtered_candidates)} matching leads "
+            f"({len(all_leads)} total CRM leads)"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
         if not filtered_candidates:
-            st.caption("No leads match the active filters.")
+            st.caption("No leads match the active column filters. Try broadening the filters above.")
         else:
-            with st.container(height=240):
+            with st.container(height=260):
                 for c in filtered_candidates:
-                    cid   = c.get("id")
+                    cid = c.get("id")
+                    if cid is None:
+                        continue
                     cname = c.get("name") or "Unknown"
                     ccomp = c.get("company") or "Unknown Company"
                     cemail = c.get("email") or ""
-                    ctags  = c.get("tags") or ""
+                    csrc = c.get("lead_source") or ""
+                    cstat = c.get("status") or "New"
+                    cprio = c.get("priority") or "Medium"
+                    ctags = c.get("tags") or ""
 
-                    # Bulletproof membership check — never raises TypeError
+                    # Extract amazon issue if present in custom variables
+                    cissue = ""
+                    cv_dict = c.get("custom_variables_dict")
+                    if isinstance(cv_dict, dict):
+                        cissue = cv_dict.get("amazon_issue") or cv_dict.get("issue") or ""
+
+                    # Bulletproof membership check
                     is_checked = False
                     try:
                         sel_set = st.session_state.get("bulk_selected_lead_ids")
-                        if isinstance(sel_set, set) and cid is not None:
+                        if isinstance(sel_set, set):
                             is_checked = cid in sel_set
                     except Exception:
                         is_checked = True
 
                     check_val = st.checkbox(
-                        f"**{ccomp}** — {cname} (`{cemail}`) {f'· {ctags}' if ctags else ''}",
+                        f"{ccomp} — {cname} ({cemail})",
                         value=is_checked,
                         key=f"lead_chk_{cid}_v{ver}"
                     )
+
+                    badge_html = render_lead_badge_html(
+                        company=ccomp,
+                        name=cname,
+                        email=cemail,
+                        source=csrc,
+                        status=cstat,
+                        priority=cprio,
+                        tags=ctags,
+                        custom_issue=cissue
+                    )
+                    st.markdown(badge_html, unsafe_allow_html=True)
+                    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
                     if check_val:
                         selected_leads.append(c)
-                        if isinstance(st.session_state.get("bulk_selected_lead_ids"), set) and cid is not None:
+                        if isinstance(st.session_state.get("bulk_selected_lead_ids"), set):
                             st.session_state["bulk_selected_lead_ids"].add(cid)
                     else:
-                        if isinstance(st.session_state.get("bulk_selected_lead_ids"), set) and cid is not None:
+                        if isinstance(st.session_state.get("bulk_selected_lead_ids"), set):
                             st.session_state["bulk_selected_lead_ids"].discard(cid)
 
         # Manual address
@@ -715,9 +764,9 @@ def render_bulk_tab():
         )
         if manual_recipient.strip():
             manual_stub = {
-                "id":      -999,
-                "name":    manual_recipient.split("<")[0].strip() if "<" in manual_recipient else manual_recipient.split("@")[0].capitalize(),
-                "email":   manual_recipient.split("<")[-1].replace(">", "").strip() if "<" in manual_recipient else manual_recipient.strip(),
+                "id": -999,
+                "name": manual_recipient.split("<")[0].strip() if "<" in manual_recipient else manual_recipient.split("@")[0].capitalize(),
+                "email": manual_recipient.split("<")[-1].replace(">", "").strip() if "<" in manual_recipient else manual_recipient.strip(),
                 "company": "Prospective Partner",
                 "country_or_timezone": "LOCAL"
             }
