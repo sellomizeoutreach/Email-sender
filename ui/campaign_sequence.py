@@ -213,7 +213,17 @@ def render_sequence_builder(
                     disabled=read_only,
                     placeholder="e.g. Quick question regarding [Company]"
                 )
-            with sub_col2:
+            # Signature & Threading options
+            opt_c1, opt_c2 = st.columns([1.2, 0.8], vertical_alignment="center")
+            with opt_c1:
+                stp["include_signature"] = 1 if st.checkbox(
+                    "🖋️ Include bottom signature in this email",
+                    value=bool(int(stp.get("include_signature", 1 if is_first else 0))),
+                    key=f"{key_prefix}_sig_{pos}",
+                    disabled=read_only,
+                    help="Attach saved corporate signature at the bottom of this sequence email"
+                ) else 0
+            with opt_c2:
                 if not is_first:
                     is_re_thread = bool("Re:" in stp.get("subject", ""))
                     same_thread = st.checkbox("🧵 Same Thread (Re:)", value=is_re_thread, key=f"{key_prefix}_thread_{pos}", disabled=read_only)
@@ -247,6 +257,8 @@ def render_sequence_builder(
                     unsafe_allow_html=True
                 )
 
+            sig_enabled = bool(int(stp.get("include_signature", 1 if is_first else 0)))
+
             with prev_c2:
                 with st.popover("📤 Send Test Email", key=f"{key_prefix}_test_pop_{pos}", use_container_width=True):
                     st.markdown("**Send Test Email to Me**")
@@ -260,7 +272,8 @@ def render_sequence_builder(
                             sig_html = get_config("signature_html", "") or "Best regards,<br>Jack Connor<br>Sellomize"
                             res_subj = resolve_template(stp.get("subject", ""), sample_lead)
                             res_body = resolve_template(stp.get("body_html", ""), sample_lead)
-                            full_payload = f"{res_body}<br><br>{sig_html}"
+                            sig_part = f"<br><br>{sig_html}" if (sig_enabled and sig_html) else ""
+                            full_payload = f"{res_body}{sig_part}"
                             ok, msg = send_smtp_email(
                                 smtp_account=active_acc,
                                 recipient=test_to.strip(),
@@ -277,7 +290,8 @@ def render_sequence_builder(
                 sig_html = get_config("signature_html", "") or "Best regards,<br>Jack Connor<br>Sellomize"
                 resolved_subj = resolve_template(stp.get("subject", ""), sample_lead)
                 resolved_body = resolve_template(stp.get("body_html", ""), sample_lead)
-                full_preview_html = f"{resolved_body}<br><br>{sig_html}"
+                sig_part = f"<br><br>{sig_html}" if (sig_enabled and sig_html) else ""
+                full_preview_html = f"{resolved_body}{sig_part}"
 
                 # Missing tokens check
                 unfilled_subj = _missing_tokens(resolved_subj)

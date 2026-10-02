@@ -253,9 +253,13 @@ def process_campaign_contact_step(
         logger.warning(f"[Campaign #{camp_id}] Unfilled tokens for {lead_email}: {unfilled}. Skipped.")
         return False, f"Unfilled tokens: {', '.join(unfilled)}"
 
-    # Append Corporate Signature
+    # Append Corporate Signature if enabled on this sequence step
+    include_sig = bool(int(target_step.get("include_signature", 1 if target_pos == 1 else 0)))
     sig_html = get_config("signature_html", db_path=db_path) or "<p>Best regards,<br>Jack Connor<br>Sellomize</p>"
-    full_html = f"{resolved_body}<br><br>{sig_html}" if sig_html else resolved_body
+    if include_sig and sig_html and sig_html not in resolved_body:
+        full_html = f"{resolved_body}<br><br>{sig_html}"
+    else:
+        full_html = resolved_body
 
     # 5. PRE-FLIGHT MX VERIFICATION
     enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"

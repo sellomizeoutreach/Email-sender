@@ -952,14 +952,14 @@ class TestComposeAndSendFlow(unittest.TestCase):
         # 2. Single recipient (CRM contact with name & company)
         crm_contact = {"name": "Sarah", "company": "Acme Innovations", "email": "sarah@acme.com"}
         crm_single_copy = _get_default_copy(1, crm_contact, is_single_recipient=True)
-        self.assertNotIn("[Name]", crm_single_copy["body"])
+        self.assertNotIn("{first_name}", crm_single_copy["body"])
         self.assertNotIn("[Company]", crm_single_copy["body"])
         self.assertIn("Hi Sarah,", crm_single_copy["body"])
         self.assertIn("Acme Innovations", crm_single_copy["subj"])
 
         # 3. Campaign (multi-recipient)
         camp_copy = _get_default_copy(1, crm_contact, is_single_recipient=False)
-        self.assertIn("[Name]", camp_copy["body"])
+        self.assertIn("{first_name}", camp_copy["body"])
         self.assertIn("[Company]", camp_copy["body"])
 
         # 4. Rich email formatting with Image & CTA Button

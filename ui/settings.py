@@ -416,11 +416,17 @@ def render_settings_tab():
         with st.expander("Configure Corporate Signature", expanded=False):
             with st.form("form_sig_cfg"):
                 new_sig = st.text_area("HTML Signature Code", value=saved_sig, height=160)
+                new_default_enabled = st.checkbox(
+                    "Include bottom signature by default on initial outreach emails",
+                    value=(get_config("signature_enabled_default", "true") == "true"),
+                    help="When enabled, Compose and Bulk Send will default to attaching this signature at the bottom of the mail"
+                )
                 st.markdown("**Live Preview:**")
                 st.markdown(f"<div style='border:1px solid #E2E8F0; border-radius:6px; padding:10px;'>{new_sig}</div>", unsafe_allow_html=True)
                 if st.form_submit_button("Save Signature", type="primary", use_container_width=True):
                     set_config("signature_html", new_sig.strip())
-                    trigger_toast("Signature updated!", icon="✒️")
+                    set_config("signature_enabled_default", "true" if new_default_enabled else "false")
+                    trigger_toast("Signature settings updated!", icon="✒️")
                     st.rerun()
 
         st.markdown(f"""

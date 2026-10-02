@@ -63,6 +63,7 @@ def render_bulk_schedule_dialog(
     spread_hours: int,
     total_fleet_cap: int,
     followup_steps: List[Dict[str, Any]],
+    include_signature: bool = True,
 ):
     """Modal dialog allowing exact date and time customization for initial batch and each follow-up step separately."""
     recipients_count = len(selected_leads)
@@ -146,6 +147,9 @@ def render_bulk_schedule_dialog(
             fu_queued    = 0
             step_seconds = max(45, int((spread_hours * 3600) / max(1, len(selected_leads))))
 
+            # Fetch signature HTML once
+            sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
+
             # 1. Initial emails
             for i, lead in enumerate(selected_leads):
                 lead_tz = lead.get("country_or_timezone") or "LOCAL"
@@ -157,7 +161,11 @@ def render_bulk_schedule_dialog(
 
                 lead_subj      = inject_variables(parse_spintax(selected_subject), lead)
                 lead_body      = resolve_template(current_body, lead)
-                formatted_body = format_email_html(lead_body)
+                if include_signature and sig_html and sig_html not in lead_body:
+                    lead_body_res = f"{lead_body}<br><br>{sig_html}"
+                else:
+                    lead_body_res = lead_body
+                formatted_body = format_email_html(lead_body_res)
 
                 create_email(
                     email_html=formatted_body,
@@ -174,6 +182,7 @@ def render_bulk_schedule_dialog(
                 step_base_dt = fu_start_dts[idx]
                 fu_body_raw  = step["body"]
                 fu_body_html = "<p>" + fu_body_raw.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+                fu_inc_sig   = step.get("include_signature", False)
 
                 for i, lead in enumerate(selected_leads):
                     lead_tz   = lead.get("country_or_timezone") or "LOCAL"
@@ -181,6 +190,8 @@ def render_bulk_schedule_dialog(
 
                     fu_subj_resolved = inject_variables(parse_spintax(step["subject"]), lead)
                     fu_body_resolved = resolve_template(fu_body_html, lead)
+                    if fu_inc_sig and sig_html and sig_html not in fu_body_resolved:
+                        fu_body_resolved = f"{fu_body_resolved}<br><br>{sig_html}"
 
                     create_email(
                         email_html=format_email_html(fu_body_resolved),
@@ -452,6 +463,15 @@ def render_bulk_tab():
                     )
                 st.session_state["bulk_body_html"] = current_body
 
+                if "bulk_include_sig" not in st.session_state:
+                    st.session_state["bulk_include_sig"] = (get_config("signature_enabled_default", "true") == "true")
+                st.session_state["bulk_include_sig"] = st.checkbox(
+                    "🖋️ Include bottom signature in initial email",
+                    value=st.session_state["bulk_include_sig"],
+                    key="bulk_init_sig_chk",
+                    help="Attach your saved corporate signature at the bottom of the initial email"
+                )
+
         # --- Tab 1+: Follow-up steps ---
         for i, step in enumerate(st.session_state["bulk_followup_steps"]):
             with tabs[i + 1]:
@@ -484,6 +504,15 @@ def render_bulk_tab():
                     height=130,
                     key=f"bulk_fu_{i}_body",
                     label_visibility="collapsed"
+                )
+
+                if "include_signature" not in step:
+                    step["include_signature"] = False
+                step["include_signature"] = st.checkbox(
+                    f"🖋️ Include bottom signature in follow-up #{i + 1}",
+                    value=step.get("include_signature", False),
+                    key=f"bulk_fu_{i}_include_sig_chk",
+                    help="Attach your saved corporate signature at the bottom of this follow-up email"
                 )
 
                 chip_c = st.columns([1.2, 1.5, 1.6, 2.7])
@@ -526,6 +555,7 @@ def render_bulk_tab():
         signature_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
 
         # Toggle preview between initial email and any follow-up steps
+        show_sig_in_prev = False
         if st.session_state["bulk_followup_steps"]:
             prev_sel = st.radio(
                 "Preview Step",
@@ -537,15 +567,20 @@ def render_bulk_tab():
             if prev_sel.startswith("📧"):
                 preview_subj = inject_variables(parse_spintax(selected_subject), sample_lead)
                 preview_body = format_email_html(resolve_template(current_body, sample_lead))
+                show_sig_in_prev = st.session_state.get("bulk_include_sig", True)
             else:
                 fu_idx = int(prev_sel.split("#")[-1]) - 1
                 fu_step = st.session_state["bulk_followup_steps"][fu_idx]
                 preview_subj = inject_variables(parse_spintax(fu_step["subject"]), sample_lead)
                 fu_resolved = resolve_template(fu_step["body"], sample_lead)
                 preview_body = format_email_html(fu_resolved)
+                show_sig_in_prev = fu_step.get("include_signature", False)
         else:
             preview_subj = inject_variables(parse_spintax(selected_subject), sample_lead)
             preview_body = format_email_html(resolve_template(current_body, sample_lead))
+            show_sig_in_prev = st.session_state.get("bulk_include_sig", True)
+
+        sig_box_html = f'<div class="sig">{signature_html}</div>' if (show_sig_in_prev and signature_html) else ''
 
         preview_box_html = (
             '<div class="preview">'
@@ -553,7 +588,7 @@ def render_bulk_tab():
             f'Subject: {html.escape(preview_subj)}'
             f'</div>'
             f'{preview_body}'
-            f'<div class="sig">{signature_html}</div>'
+            f'{sig_box_html}'
             '</div>'
             f'<div class="banner banner-info" style="margin-top:12px;">'
             f'Variables resolved for <b>{html.escape(lead_display_name)}</b>. This exact HTML is what gets sent.'
@@ -907,7 +942,8 @@ def render_bulk_tab():
                     default_time=chosen_time,
                     spread_hours=spread_hours,
                     total_fleet_cap=total_fleet_cap,
-                    followup_steps=st.session_state.get("bulk_followup_steps", [])
+                    followup_steps=st.session_state.get("bulk_followup_steps", []),
+                    include_signature=st.session_state.get("bulk_include_sig", True)
                 )
 
         with col_act2:
@@ -947,5 +983,6 @@ def render_bulk_tab():
                     default_time=chosen_time,
                     spread_hours=spread_hours,
                     total_fleet_cap=total_fleet_cap,
-                    followup_steps=st.session_state.get("bulk_followup_steps", [])
+                    followup_steps=st.session_state.get("bulk_followup_steps", []),
+                    include_signature=st.session_state.get("bulk_include_sig", True)
                 )

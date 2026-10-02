@@ -552,7 +552,13 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
     # Click tracking (if enabled with a public domain) applies ONLY to campaign body links.
     # Corporate signature links (e.g. sellomize.com) remain 100% direct and pristine.
     body_with_links = wrap_links_with_click_tracking(approved_email_html, email_id)
-    combined_body = f"{body_with_links}<br><br>{signature_html}" if signature_html else body_with_links
+    is_followup = int(email_record.get("sequence_step") or 1) > 1
+    if signature_html and (signature_html in approved_email_html or is_followup):
+        combined_body = body_with_links
+    elif signature_html:
+        combined_body = f"{body_with_links}<br><br>{signature_html}"
+    else:
+        combined_body = body_with_links
     final_payload = inject_tracking_pixel(combined_body, email_id)
 
     followup_delay = int(get_config("followup_delay_days", "4", db_path=db_path) or 4)
@@ -675,7 +681,10 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
         # Concatenate approved HTML body with signature HTML and tracking pixel
         # Click tracking applies ONLY to campaign body links, NEVER to corporate signature links
         body_with_links = wrap_links_with_click_tracking(approved_email_html, email_id)
-        if signature_html:
+        is_followup = int(email_record.get("sequence_step") or 1) > 1
+        if signature_html and (signature_html in approved_email_html or is_followup):
+            combined_body = body_with_links
+        elif signature_html:
             combined_body = f"{body_with_links}<br><br>{signature_html}"
         else:
             combined_body = body_with_links

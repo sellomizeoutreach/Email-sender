@@ -579,10 +579,16 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                     condition TEXT DEFAULT 'no_reply',
                     template_id INTEGER DEFAULT NULL,
                     is_reply_thread INTEGER DEFAULT 0,
+                    include_signature INTEGER DEFAULT 1,
                     created_at TEXT NOT NULL
                 )
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_camp_steps_camp ON campaign_steps(campaign_id, position)")
+
+            try:
+                cursor.execute("ALTER TABLE campaign_steps ADD COLUMN include_signature INTEGER DEFAULT 1")
+            except DB_OPERATIONAL_ERRORS:
+                pass
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS campaign_contacts (
@@ -4056,6 +4062,7 @@ def duplicate_campaign(campaign_id: int, db_path: str = DB_FILE) -> int:
             condition=stp.get("condition", "no_reply"),
             template_id=stp.get("template_id"),
             is_reply_thread=stp.get("is_reply_thread", 0),
+            include_signature=int(stp.get("include_signature", 1)),
             db_path=db_path
         )
     return new_id
@@ -4071,6 +4078,7 @@ def create_campaign_step(
     condition: str = "no_reply",
     template_id: Optional[int] = None,
     is_reply_thread: int = 0,
+    include_signature: int = 1,
     db_path: str = DB_FILE,
 ) -> int:
     """Add a sequence step to a campaign."""
@@ -4080,12 +4088,12 @@ def create_campaign_step(
     cursor.execute("""
         INSERT INTO campaign_steps (
             campaign_id, position, subject, body_html, wait_days,
-            wait_hours, condition, template_id, is_reply_thread, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            wait_hours, condition, template_id, is_reply_thread, include_signature, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         campaign_id, int(position), subject.strip(), body_html.strip(),
         int(wait_days), int(wait_hours), condition.strip(),
-        template_id, int(is_reply_thread), now_str
+        template_id, int(is_reply_thread), int(include_signature), now_str
     ))
     step_id = cursor.lastrowid
     conn.commit()
@@ -4105,7 +4113,7 @@ def get_campaign_steps(campaign_id: int, db_path: str = DB_FILE) -> List[Dict[st
 
 def update_campaign_step(step_id: int, db_path: str = DB_FILE, **kwargs) -> bool:
     """Update fields on a campaign step."""
-    allowed = {"position", "subject", "body_html", "wait_days", "wait_hours", "condition", "template_id", "is_reply_thread"}
+    allowed = {"position", "subject", "body_html", "wait_days", "wait_hours", "condition", "template_id", "is_reply_thread", "include_signature"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
@@ -4149,6 +4157,7 @@ def sync_campaign_steps(campaign_id: int, steps: List[Dict[str, Any]], db_path: 
     conn.close()
 
     for idx, stp in enumerate(steps, 1):
+        inc_sig = 1 if stp.get("include_signature", True if idx == 1 else False) else 0
         create_campaign_step(
             campaign_id=campaign_id,
             position=idx,
@@ -4159,6 +4168,7 @@ def sync_campaign_steps(campaign_id: int, steps: List[Dict[str, Any]], db_path: 
             condition=stp.get("condition", "no_reply"),
             template_id=stp.get("template_id"),
             is_reply_thread=1 if "Re:" in stp.get("subject", "") else 0,
+            include_signature=inc_sig,
             db_path=db_path
         )
     return True

@@ -157,6 +157,7 @@ def render_compose_schedule_dialog(
     final_body: str,
     followup_steps: List[Dict[str, Any]],
     bcc_email: str = "",
+    include_signature: bool = True,
 ):
     """Modal popup allowing exact custom date and time setting for initial email and each follow-up separately."""
     recipient_clean = (current_lead.get("email") or "").strip()
@@ -250,10 +251,16 @@ def render_compose_schedule_dialog(
         trigger_toast("Outreach dismissed without sending.", icon="ℹ️")
         st.rerun()
 
+    sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
+    if include_signature and sig_html and sig_html not in final_body:
+        full_initial_body = f"{final_body}<br><br>{sig_html}"
+    else:
+        full_initial_body = final_body
+    initial_email_html = format_email_html(full_initial_body)
+
     if save_draft_clicked:
-        email_html = format_email_html(final_body)
         create_email(
-            email_html=email_html,
+            email_html=initial_email_html,
             subject=final_subj,
             recipient=recipient_clean,
             status="Pending",
@@ -268,12 +275,10 @@ def render_compose_schedule_dialog(
 
     if submit_clicked:
         with st.spinner("Processing outreach..."):
-            email_html = format_email_html(final_body)
-
             # 1. Initial Email
             if init_dt is None:
                 email_id = create_email(
-                    email_html=email_html,
+                    email_html=initial_email_html,
                     subject=final_subj,
                     recipient=recipient_clean,
                     status="Approved",
@@ -286,7 +291,7 @@ def render_compose_schedule_dialog(
                         "id": email_id,
                         "recipient": recipient_clean,
                         "subject": final_subj,
-                        "email_html": email_html,
+                        "email_html": initial_email_html,
                         "smtp_account_id": selected_mb["id"],
                         "target_timezone": lead_tz,
                         "bcc_email": bcc_email
@@ -298,7 +303,7 @@ def render_compose_schedule_dialog(
             else:
                 sched_str = init_dt.strftime("%Y-%m-%d %H:%M:%S")
                 create_email(
-                    email_html=email_html,
+                    email_html=initial_email_html,
                     subject=final_subj,
                     recipient=recipient_clean,
                     status="Approved",
@@ -308,13 +313,17 @@ def render_compose_schedule_dialog(
                 )
                 ok = True
 
-            # 2. Follow-ups with individually customized timing
+            # 2. Follow-ups with individually customized timing and signature option
             for idx, fu in enumerate(followup_steps):
                 fu_target_dt = fu_dts[idx]
                 fu_sched_str = fu_target_dt.strftime("%Y-%m-%d %H:%M:%S")
                 fu_subj_res  = inject_variables(parse_spintax(fu["subject"]), current_lead)
                 fu_body_raw  = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
                 fu_body_res  = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
+
+                # Attach signature if enabled for this follow-up step
+                if fu.get("include_signature", False) and sig_html and sig_html not in fu_body_res:
+                    fu_body_res = f"{fu_body_res}<br><br>{sig_html}"
 
                 create_email(
                     email_html=format_email_html(fu_body_res),
@@ -617,6 +626,15 @@ def render_compose_tab(contacts=None, templates=None):
                 )
             st.session_state["compose_body_html"] = current_body
 
+            if "compose_include_sig" not in st.session_state:
+                st.session_state["compose_include_sig"] = (get_config("signature_enabled_default", "true") == "true")
+            st.session_state["compose_include_sig"] = st.checkbox(
+                "🖋️ Include bottom signature in this email",
+                value=st.session_state["compose_include_sig"],
+                key="comp_init_sig_chk",
+                help="Attach your saved corporate signature at the bottom of the email"
+            )
+
         # --- Tab 1+: Follow-up steps ---
         for idx, fu in enumerate(st.session_state["compose_followups"]):
             with tabs[idx + 1]:
@@ -658,6 +676,15 @@ def render_compose_tab(contacts=None, templates=None):
                         key=f"comp_fu_{idx}_body_in",
                         label_visibility="collapsed"
                     )
+
+                if "include_signature" not in fu:
+                    fu["include_signature"] = False
+                fu["include_signature"] = st.checkbox(
+                    f"🖋️ Include bottom signature in follow-up #{idx+1}",
+                    value=fu.get("include_signature", False),
+                    key=f"comp_fu_{idx}_include_sig_chk",
+                    help="Attach your saved corporate signature at the bottom of this follow-up email"
+                )
 
                 # Quick token insertion buttons for follow-up
                 c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3], vertical_alignment="center")
@@ -741,7 +768,8 @@ def render_compose_tab(contacts=None, templates=None):
                         final_subj=final_subj,
                         final_body=final_body,
                         followup_steps=st.session_state.get("compose_followups", []),
-                        bcc_email=st.session_state.get("compose_bcc_email", "").strip()
+                        bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
+                        include_signature=st.session_state.get("compose_include_sig", True)
                     )
 
         with c_act2:
@@ -760,13 +788,17 @@ def render_compose_tab(contacts=None, templates=None):
                         final_subj=final_subj,
                         final_body=final_body,
                         followup_steps=st.session_state.get("compose_followups", []),
-                        bcc_email=st.session_state.get("compose_bcc_email", "").strip()
+                        bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
+                        include_signature=st.session_state.get("compose_include_sig", True)
                     )
 
         with c_act3:
             if st.button("💾 Save draft", use_container_width=True):
+                inc_sig = st.session_state.get("compose_include_sig", True)
+                sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
+                draft_body = f"{final_body}<br><br>{sig_html}" if (inc_sig and sig_html and sig_html not in final_body) else final_body
                 create_email(
-                    email_html=format_email_html(final_body),
+                    email_html=format_email_html(draft_body),
                     subject=final_subj,
                     recipient=current_lead.get("email", "").strip(),
                     status="Pending",
@@ -812,6 +844,7 @@ def render_compose_tab(contacts=None, templates=None):
         signature_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
 
         # If follow-ups exist, allow selecting which email to preview
+        show_sig_in_preview = False
         if st.session_state["compose_followups"]:
             prev_choice = st.radio(
                 "Preview selection",
@@ -823,15 +856,18 @@ def render_compose_tab(contacts=None, templates=None):
             if prev_choice.startswith("📧"):
                 preview_subj = final_subj
                 preview_body = format_email_html(final_body)
+                show_sig_in_preview = st.session_state.get("compose_include_sig", True)
             else:
                 fu_idx = int(prev_choice.split("#")[-1]) - 1
                 fu_obj = st.session_state["compose_followups"][fu_idx]
                 preview_subj = inject_variables(parse_spintax(fu_obj["subject"]), current_lead)
                 fu_resolved = resolve_template(fu_obj["body"], current_lead)
                 preview_body = format_email_html(fu_resolved)
+                show_sig_in_preview = fu_obj.get("include_signature", False)
         else:
             preview_subj = final_subj
             preview_body = format_email_html(final_body)
+            show_sig_in_preview = st.session_state.get("compose_include_sig", True)
 
         bcc_active_str = st.session_state.get("compose_bcc_email", "").strip() if st.session_state.get("compose_show_bcc") else ""
         bcc_preview_html = (
@@ -840,6 +876,8 @@ def render_compose_tab(contacts=None, templates=None):
             f'</div>'
         ) if bcc_active_str else ''
 
+        sig_box_html = f'<div class="sig">{signature_html}</div>' if (show_sig_in_preview and signature_html) else ''
+
         preview_box_html = (
             '<div class="preview">'
             f'<div style="font-weight:700; color:#083731; margin-bottom:8px; font-size:13px; border-bottom:1px solid #E2E8F0; padding-bottom:6px;">'
@@ -847,7 +885,7 @@ def render_compose_tab(contacts=None, templates=None):
             f'</div>'
             f'{bcc_preview_html}'
             f'{preview_body}'
-            f'<div class="sig">{signature_html}</div>'
+            f'{sig_box_html}'
             '</div>'
             f'<div class="banner banner-info" style="margin-top:12px;">'
             f'Variables resolved for this recipient. This exact HTML is what gets sent.'
