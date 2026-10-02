@@ -210,7 +210,9 @@ def render_bulk_schedule_dialog(
                         recipient=lead["email"].strip(),
                         status="Approved",
                         scheduled_time=fu_target.strftime("%Y-%m-%d %H:%M:%S"),
-                        target_timezone=lead_tz
+                        target_timezone=lead_tz,
+                        sequence_step=idx + 2,
+                        variation_num=idx + 2
                     )
                     fu_queued += 1
 

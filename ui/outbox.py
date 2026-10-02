@@ -657,6 +657,34 @@ def render_outbox_tab():
                     trigger_toast(f"Dispatched {dispatched} email(s)!", icon="🚀")
                     st.rerun()
 
+    if current_filter == "Paused / failed":
+        replied_paused_items = [
+            e for e in items
+            if "replied" in (e.get("error_message") or "").lower()
+            or "reply" in (e.get("error_message") or "").lower()
+            or "replied" in (e.get("revision_notes") or "").lower()
+            or (lead_map.get((e.get("recipient") or "").lower().strip()) and lead_map[(e.get("recipient") or "").lower().strip()].get("status") == "Replied")
+        ]
+        if replied_paused_items:
+            r_c1, r_c2, r_c3 = st.columns([2.6, 1.2, 1.2], vertical_alignment="center")
+            with r_c1:
+                st.info(f"💬 **{len(replied_paused_items)} email(s) auto-paused because prospects replied.** Choose whether to reply, send anyway, or cancel.")
+            with r_c2:
+                if st.button("🚀 Send All Anyway", use_container_width=True, key="btn_send_all_replied_anyway", help="Force send all paused follow-ups despite replies"):
+                    with st.spinner("Dispatching follow-ups..."):
+                        sent_ct = 0
+                        for r_em in replied_paused_items:
+                            if dispatch_email_hostinger(r_em):
+                                sent_ct += 1
+                        trigger_toast(f"Dispatched {sent_ct} email(s) anyway!", icon="🚀")
+                        st.rerun()
+            with r_c3:
+                if st.button("🗑️ Do Not Send Any", use_container_width=True, key="btn_cancel_all_replied", help="Delete and cancel all follow-ups paused due to replies"):
+                    for r_em in replied_paused_items:
+                        delete_email(r_em["id"])
+                    trigger_toast(f"Cancelled {len(replied_paused_items)} follow-up(s).", icon="🗑️")
+                    st.rerun()
+
     st.markdown(f"<div style='font-size:12px; color:#64748B; margin-bottom:8px;'>Showing {len(items)} {current_filter.lower()} email(s):</div>", unsafe_allow_html=True)
 
     for e in items:
@@ -682,19 +710,32 @@ def render_outbox_tab():
             when_display = "Immediate"
 
         status_raw = e.get("status") or "Scheduled"
+        err_msg = e.get("error_message") or ""
+        rev_notes = e.get("revision_notes") or ""
+        is_reply_paused = (
+            "replied" in err_msg.lower()
+            or "reply" in err_msg.lower()
+            or "replied" in rev_notes.lower()
+            or (matched_lead and matched_lead.get("status") == "Replied")
+        )
+
         if status_raw in ["Approved", "Pending", "Scheduled"]:
             if is_overdue:
                 pill_html = '<span class="pill" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-weight:700;">⚡ Due to Send</span>'
             else:
                 pill_html = '<span class="pill p-sent">Scheduled</span>'
         elif status_raw == "Paused":
-            err_msg = e.get("error_message") or ""
-            reason = "replied" if "replied" in err_msg.lower() or "reply" in err_msg.lower() else "manual"
-            pill_html = f'<span class="pill p-warm">Paused · {reason}</span>'
+            if is_reply_paused:
+                pill_html = '<span class="pill" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-weight:700;">💬 Paused · Lead Replied</span>'
+            else:
+                pill_html = f'<span class="pill p-warm">Paused · manual</span>'
         elif status_raw == "Bounced":
             pill_html = '<span class="pill p-bounce">Bounced</span>'
         elif status_raw == "Cancelled":
-            pill_html = '<span class="pill" style="background:#FEE2E2; color:#991B1B; border:1px solid #FECACA;">Cancelled · DNC</span>'
+            if is_reply_paused:
+                pill_html = '<span class="pill" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-weight:700;">💬 Cancelled · Lead Replied</span>'
+            else:
+                pill_html = '<span class="pill" style="background:#FEE2E2; color:#991B1B; border:1px solid #FECACA;">Cancelled · DNC</span>'
         else:
             pill_html = f'<span class="pill p-fail">{html.escape(status_raw)}</span>'
 
@@ -751,32 +792,71 @@ def render_outbox_tab():
                         st.rerun()
 
             elif current_filter == "Paused / failed":
-                with btn_col1:
-                    if st.button("✏️ Edit", key=f"outbox_pf_edit_{eid}", use_container_width=True):
-                        render_edit_email_dialog(e)
-                with btn_col2:
-                    if st.button("▶️ Resume", key=f"outbox_res_{eid}", use_container_width=True, type="primary"):
-                        update_email(email_id=eid, status="Approved")
-                        trigger_toast(f"Email #{eid} unpaused & queued.", icon="▶️")
-                        st.rerun()
-                with btn_col3:
-                    if st.button("🔄 Retry", key=f"outbox_retry_{eid}", use_container_width=True):
-                        with st.spinner("Retrying dispatch..."):
-                            try:
-                                ok = dispatch_email_hostinger(e)
-                                if ok:
-                                    trigger_toast(f"Email #{eid} sent successfully!", icon="✅")
-                                    st.rerun()
-                                else:
-                                    updated_e = get_email_by_id(eid)
-                                    err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox credentials."
-                                    st.error(f"Retry failed: {err_reason}")
-                            except Exception as ex:
-                                st.error(f"Retry exception: {ex}")
-                with btn_col4:
-                    if st.button("🗑️ Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
-                        delete_email(eid)
-                        trigger_toast(f"Email #{eid} deleted.", icon="🗑️")
-                        st.rerun()
+                if is_reply_paused:
+                    b_rep, b_send, b_queue, b_edit, b_del = st.columns([1.5, 1.4, 1.1, 1.0, 1.3], vertical_alignment="center")
+                    with b_rep:
+                        if st.button("💬 Reply to Lead", key=f"outbox_pf_reply_{eid}", type="primary", use_container_width=True, help="Compose a manual direct response to this prospect"):
+                            st.session_state["compose_recipient"] = recipient
+                            clean_subj = e.get("subject") or "Outreach"
+                            st.session_state["compose_subject"] = clean_subj if clean_subj.lower().startswith("re:") else f"Re: {clean_subj}"
+                            st.session_state["active_screen"] = "compose"
+                            st.session_state["main_app_tabs"] = "✍️ Compose"
+                            trigger_toast(f"Opening Compose to reply to {recipient}...", icon="💬")
+                            st.rerun()
+                    with b_send:
+                        if st.button("🚀 Send Anyway", key=f"outbox_pf_send_{eid}", use_container_width=True, help="Force send this scheduled mail anyway"):
+                            with st.spinner("Dispatching via Hostinger..."):
+                                try:
+                                    ok = dispatch_email_hostinger(e)
+                                    if ok:
+                                        trigger_toast(f"Dispatched email to {recipient}!", icon="🚀")
+                                        st.rerun()
+                                    else:
+                                        updated_e = get_email_by_id(eid)
+                                        err_reason = (updated_e.get("error_message") if updated_e else "") or "Unknown error"
+                                        st.error(f"Dispatch failed: {err_reason}")
+                                except Exception as ex:
+                                    st.error(f"Dispatch exception: {ex}")
+                    with b_queue:
+                        if st.button("▶️ Re-queue", key=f"outbox_pf_queue_{eid}", use_container_width=True, help="Move back to scheduled queue"):
+                            update_email(email_id=eid, status="Approved")
+                            trigger_toast(f"Email #{eid} moved to Scheduled queue.", icon="▶️")
+                            st.rerun()
+                    with b_edit:
+                        if st.button("✏️ Edit", key=f"outbox_pf_edit_{eid}", use_container_width=True):
+                            render_edit_email_dialog(e)
+                    with b_del:
+                        if st.button("❌ Do Not Send", key=f"outbox_pf_del_{eid}", use_container_width=True, help="Cancel and remove this email"):
+                            delete_email(eid)
+                            trigger_toast(f"Email for {recipient} cancelled.", icon="🗑️")
+                            st.rerun()
+                else:
+                    with btn_col1:
+                        if st.button("✏️ Edit", key=f"outbox_pf_edit_{eid}", use_container_width=True):
+                            render_edit_email_dialog(e)
+                    with btn_col2:
+                        if st.button("▶️ Resume", key=f"outbox_res_{eid}", use_container_width=True, type="primary"):
+                            update_email(email_id=eid, status="Approved")
+                            trigger_toast(f"Email #{eid} unpaused & queued.", icon="▶️")
+                            st.rerun()
+                    with btn_col3:
+                        if st.button("🔄 Retry", key=f"outbox_retry_{eid}", use_container_width=True):
+                            with st.spinner("Retrying dispatch..."):
+                                try:
+                                    ok = dispatch_email_hostinger(e)
+                                    if ok:
+                                        trigger_toast(f"Email #{eid} sent successfully!", icon="✅")
+                                        st.rerun()
+                                    else:
+                                        updated_e = get_email_by_id(eid)
+                                        err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox credentials."
+                                        st.error(f"Retry failed: {err_reason}")
+                                except Exception as ex:
+                                    st.error(f"Retry exception: {ex}")
+                    with btn_col4:
+                        if st.button("🗑️ Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
+                            delete_email(eid)
+                            trigger_toast(f"Email #{eid} deleted.", icon="🗑️")
+                            st.rerun()
 
     st.markdown("<p class='sec' style='margin-top:16px;'>Scheduled follow-ups auto-pause here when a lead replies — cancel or edit before they fire.</p>", unsafe_allow_html=True)

@@ -2982,12 +2982,11 @@ def record_email_reply(
         WHERE LOWER(TRIM(recipient)) = ? AND status = 'Sent'
     """, (now_iso, (reply_subject or "")[:120], clean_email))
 
-    # 2. Pause pending / scheduled follow-up emails for this lead
+    # 2. Pause all pending / scheduled follow-up and future emails for this lead
     cursor.execute("""
         SELECT id FROM emails
         WHERE LOWER(TRIM(recipient)) = ? 
           AND status IN ('Pending', 'Approved', 'Scheduled', 'Draft', 'Flagged')
-          AND sequence_step > 1
     """, (clean_email,))
     pending_emails = cursor.fetchall()
     paused_ids = [r["id"] for r in pending_emails]

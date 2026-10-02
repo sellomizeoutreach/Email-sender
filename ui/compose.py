@@ -341,7 +341,9 @@ def render_compose_schedule_dialog(
                     status="Approved",
                     scheduled_time=fu_sched_str,
                     target_timezone=lead_tz,
-                    bcc_email=bcc_email
+                    bcc_email=bcc_email,
+                    sequence_step=idx + 2,
+                    variation_num=idx + 2
                 )
 
             # Update lead outreach dates in CRM database
