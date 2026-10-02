@@ -21,10 +21,48 @@ This document establishes the copywriting constraints, template structures, tone
 13. **Competitor / Market Opportunity**: Exploiting competitor out-of-stock windows or price mismatches.
 14. **Brand Story → Amazon**: Bridging direct-to-consumer brand prestige into Amazon's ecosystem.
 15. **Product / SKU Opportunity**: Unlocking neglected secondary SKUs in the catalog.
+16. **Follow Up — Friendly Reminder**: First follow-up after the initial cold email.
 
 ---
 
-## 2. Fact Safety & Anti-Hallucination Constraints
+## 2. Template 16: Follow Up — Friendly Reminder
+
+Specifically designed for the first follow-up after the initial cold email:
+
+**Template name:** Follow Up — Friendly Reminder  
+**Subject:** `Re: [Company] + Sellomize`  
+
+**Body:**
+```
+Hi [Name],
+
+Just popping this back up before it gets lost in the inbox shuffle. 😄
+
+Wanted to see if you had a chance to look at my note about [AmazonIssue] for [Company].
+
+I still think it’s worth a quick look.
+
+Would you be open to taking a look together? Let me know what works and I’ll send a calendar invite.
+```
+
+### Strict Follow-Up Rules:
+- Keep this much shorter than the original email (under 50 words).
+- Do not repeat the original pitch.
+- Do not repeat the full client case study.
+- Do not repeat all Amazon research.
+- Mention the topic of the previous email only.
+- Keep the tone friendly and human.
+- A light joke/opening is allowed (e.g. inbox shuffle 😄 or algorithm 😅).
+- Do not introduce new claims or facts.
+- Use `[AmazonIssue]` only when it was used and verified in the original email.
+- If `[AmazonIssue]` is unavailable, remove it rather than inventing one (e.g. *"my note for [Company]"*).
+- Stop the follow-up sequence immediately if the prospect replies.
+- Keep the same subject thread using `"Re:"`.
+- Do not add the Jack Conner / Sellomize signature automatically.
+
+---
+
+## 3. Fact Safety & Anti-Hallucination Constraints
 
 - **Zero Invention Rule**: NEVER invent contact names, job titles, locations, revenue numbers, ROAS, reviews, or unverified claims.
 - **Location Rule**: Only insert `[Location]` in subject lines (`[Company] + [Location] + Sellomize`) if explicitly verified. If unverified, fall back cleanly to `[Company] + Sellomize`.

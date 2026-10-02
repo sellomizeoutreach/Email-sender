@@ -239,6 +239,11 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any], client_st
     result = re.sub(r'\[([a-zA-Z0-9_\s-]+)\]', replacer, text)
     result = re.sub(r'\{([a-zA-Z0-9_\s-]+)\}', curly_replacer, result)
 
+    # If [AmazonIssue] is missing/omitted, smooth out awkward phrasing like "note about for [Company]"
+    if not var_map.get("amazonissue"):
+        result = re.sub(r'note about\s+for\s+', 'note about ', result, flags=re.IGNORECASE)
+        result = re.sub(r'note regarding\s+for\s+', 'note regarding ', result, flags=re.IGNORECASE)
+
     # Clean up double spaces caused by clean variable omission
     result = re.sub(r'[ \t]{2,}', ' ', result)
     result = re.sub(r' \n', '\n', result)

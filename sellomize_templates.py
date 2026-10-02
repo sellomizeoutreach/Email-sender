@@ -687,6 +687,35 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 )
             }
         ]
+    },
+    {
+        "id": 16,
+        "name": "16. Follow Up — Friendly Reminder",
+        "category": "Follow Up — Friendly Reminder",
+        "subject": "Re: [Company] + Sellomize",
+        "body": (
+            "Hi [Name],\n\n"
+            "Just popping this back up before it gets lost in the inbox shuffle. 😄\n\n"
+            "Wanted to see if you had a chance to look at my note about [AmazonIssue] for [Company].\n\n"
+            "I still think it’s worth a quick look.\n\n"
+            "Would you be open to taking a look together? Let me know what works and I’ll send a calendar invite."
+        ),
+        "recommended_services": "Follow-Up Outreach, Quick Account Alignment",
+        "recommended_signals": "Follow-up after initial cold email, bump note, unanswered initial outreach",
+        "allowed_variables": ["[Name]", "[Company]", "[AmazonIssue]"],
+        "client_story_allowed": False,
+        "followups": [
+            {
+                "delay_days": 4,
+                "subject": "Re: [Company] + Sellomize",
+                "body": (
+                    "Hi [Name],\n\n"
+                    "Assuming you didn't get eaten by the Amazon algorithm this week... 😅\n\n"
+                    "Wanted to check in one last time on whether you'd like a quick fresh set of eyes on the Amazon account.\n\n"
+                    "Let me know if next Tuesday or Wednesday works for a brief 10-minute chat."
+                )
+            }
+        ]
     }
 ]
 
@@ -711,6 +740,16 @@ def recommend_template_for_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
 
     cv_text = " ".join(f"{k} {v}" for k, v in custom_vars.items()).lower()
     combined_signal = f"{notes} {tags} {cv_text}"
+
+    # 0. Follow Up / Friendly Reminder signals
+    if any(k in combined_signal for k in ["follow up", "follow-up", "reminder", "bump", "second email", "no reply", "unanswered"]) or lead.get("contacted") == "Yes" or int(lead.get("follow_ups_sent") or 0) > 0:
+        return {
+            "template_id": 16,
+            "category": "Follow Up — Friendly Reminder",
+            "reason": "Lead previously contacted or follow-up bump requested. Short, friendly reminder note.",
+            "confidence": 0.96,
+            "recommended_service": "Follow-Up Outreach, Quick Account Alignment"
+        }
 
     # 1. Reconciliation signals
     if any(k in combined_signal for k in ["reconcil", "discrepanc", "fba lost", "cubiscan", "reimburse", "lost inventory"]):
@@ -988,6 +1027,11 @@ def resolve_sellomize_email(
     for k, v in var_map.items():
         pattern = re.compile(rf'\[{re.escape(k)}\]', re.IGNORECASE)
         body = pattern.sub(v, body)
+
+    # If [AmazonIssue] is missing/omitted, smooth out awkward phrasing like "note about for [Company]"
+    if not var_map.get("amazonissue"):
+        body = re.sub(r'note about\s+for\s+', 'note about ', body, flags=re.IGNORECASE)
+        body = re.sub(r'note regarding\s+for\s+', 'note regarding ', body, flags=re.IGNORECASE)
 
     # Clean unverified tokens cleanly so no broken brackets remain
     body = re.sub(r'\[[a-zA-Z0-9_\s-]+\]', '', body)
