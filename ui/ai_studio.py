@@ -266,7 +266,15 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             rec_tpl = None
             rec_reason = ""
             if selected_lead_data:
-                rec_tpl, rec_reason = recommend_template_for_lead(selected_lead_data)
+                rec_res = recommend_template_for_lead(selected_lead_data)
+                if isinstance(rec_res, dict):
+                    t_id = rec_res.get("template_id")
+                    rec_tpl = next((t for t in CORE_15_TEMPLATES if t.get("id") == t_id), None)
+                    if not rec_tpl:
+                        rec_tpl = {"id": t_id, "category": rec_res.get("category", "")}
+                    rec_reason = rec_res.get("reason", "")
+                elif isinstance(rec_res, (list, tuple)) and len(rec_res) == 2:
+                    rec_tpl, rec_reason = rec_res
 
             st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
             st.markdown("<span class='lbl'>2. Sellomize Core Template / Framework</span>", unsafe_allow_html=True)
