@@ -32,6 +32,7 @@ from database import (
     upsert_contact_by_email,
     create_template,
     update_template,
+    update_contact,
     mark_email_error,
     DB_FILE,
 )
