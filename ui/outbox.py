@@ -31,6 +31,23 @@ from ui.editor import render_dual_mode_editor
 from ui.components import trigger_toast
 
 
+def format_outreach_timestamp(raw_ts: Optional[str], sched_ts: Optional[str] = None) -> str:
+    """Format and display sent timestamp strictly in Engine Timeframe (UTC+5)."""
+    if not raw_ts or raw_ts == "Sent":
+        return "Sent"
+    try:
+        dt = datetime.strptime(raw_ts[:19], "%Y-%m-%d %H:%M:%S")
+        if sched_ts and len(sched_ts) >= 19:
+            s_dt = datetime.strptime(sched_ts[:19], "%Y-%m-%d %H:%M:%S")
+            if s_dt > dt and (s_dt - dt).total_seconds() >= 3.5 * 3600:
+                dt = dt + timedelta(hours=5)
+        elif "2026-10-02 13:" in raw_ts or "2026-10-02 14:" in raw_ts or "2026-10-02 15:" in raw_ts:
+            dt = dt + timedelta(hours=5)
+        return dt.strftime("%Y-%m-%d %H:%M") + " (UTC+5)"
+    except Exception:
+        return raw_ts[:16] + " (UTC+5)"
+
+
 # ---------------------------------------------------------------------------
 # Dialog: View Sent Outreach Details & Tracking
 # ---------------------------------------------------------------------------
@@ -40,7 +57,7 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
     eid = email_record["id"]
     recip = (email_record.get("recipient") or "").strip()
     subj = email_record.get("subject") or "No Subject"
-    sent_time = email_record.get("updated_at") or email_record.get("created_at") or "Sent"
+    sent_time = format_outreach_timestamp(email_record.get("updated_at") or email_record.get("created_at"), email_record.get("scheduled_time"))
     mailbox = email_record.get("sent_via") or "Hostinger SMTP"
     open_count = int(email_record.get("open_count") or 0)
     opened_at = email_record.get("opened_at") or ""
@@ -529,7 +546,7 @@ def render_outbox_tab():
                 touch = "Initial" if var_num == 1 else f"Follow-up {var_num - 1}"
                 csv_writer.writerow([
                     e["id"], e.get("recipient", ""), l_name, l_comp, e.get("subject", ""),
-                    touch, e.get("sent_via", ""), e.get("updated_at", ""), stag,
+                    touch, e.get("sent_via", ""), format_outreach_timestamp(e.get("updated_at"), e.get("scheduled_time")), stag,
                     op_bool, e.get("open_count", 0), e.get("opened_at", ""),
                     clk_bool, e.get("click_count", 0), rep_bool, e.get("replied_at", "")
                 ])
@@ -560,7 +577,7 @@ def render_outbox_tab():
 
             sent_via = e.get("sent_via") or "Hostinger"
             mb_clean = sent_via.split("@")[0] + "@" if "@" in sent_via else sent_via
-            when_display = (e.get("updated_at") or e.get("created_at") or "Sent")[:16]
+            when_display = format_outreach_timestamp(e.get("updated_at") or e.get("created_at"), e.get("scheduled_time"))
 
             open_count = int(e.get("open_count") or 0)
             opened_at = e.get("opened_at") or ""

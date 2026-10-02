@@ -702,6 +702,31 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                     VALUES (?, ?, ?, ?, ?, 'New', ?)
                 """, ("Marcus Brody", "marcus@minoribeauty.com", "Minori Beauty", "Beauty Brands, Listing Audit", json.dumps({"Niche": "Cosmetics", "Role": "E-commerce Head"}), now_iso))
 
+            # One-time normalization: normalize legacy sent emails recorded with server UTC timestamps to engine timeframe (UTC+5)
+            try:
+                cursor.execute("SELECT id, updated_at, created_at, scheduled_time FROM emails WHERE status = 'Sent'")
+                sent_rows = cursor.fetchall()
+                for r in sent_rows:
+                    ts = r.get("updated_at") or r.get("created_at") or ""
+                    sched = r.get("scheduled_time") or ""
+                    if ts and len(ts) >= 19:
+                        try:
+                            dt = datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
+                            should_shift = False
+                            if sched and len(sched) >= 19:
+                                s_dt = datetime.strptime(sched[:19], "%Y-%m-%d %H:%M:%S")
+                                if s_dt > dt and (s_dt - dt).total_seconds() >= 3.5 * 3600:
+                                    should_shift = True
+                            elif "2026-10-02 13:" in ts or "2026-10-02 14:" in ts or "2026-10-02 15:" in ts:
+                                should_shift = True
+                            if should_shift:
+                                new_ts = (dt + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+                                cursor.execute("UPDATE emails SET updated_at = ? WHERE id = ?", (new_ts, r["id"]))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         finally:
             # Release PostgreSQL advisory lock
             if has_advisory_lock:
@@ -2379,7 +2404,7 @@ def create_email(
     db_path: str = DB_FILE,
     **kwargs
 ) -> int:
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = get_engine_now_str()
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -2446,7 +2471,7 @@ def update_email(
 ):
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = get_engine_now_str()
 
     fields = ["updated_at = ?"]
     values = [now_iso]
@@ -2572,7 +2597,7 @@ def get_approved_due_emails(current_time_str: Optional[str] = None, db_path: str
     return [dict(row) for row in rows]
 
 def mark_email_sent(email_id: int, sent_at: Optional[str] = None, message_id: Optional[str] = None, db_path: str = DB_FILE):
-    now_iso = sent_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = sent_at or get_engine_now_str()
     update_email(
         email_id=email_id,
         status="Sent",
@@ -2694,7 +2719,7 @@ def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
     Called when an email tracking pixel is loaded.
     Records timestamp, increments open_count, and flags contact as 'Opened / Interested'.
     """
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = get_engine_now_str()
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM emails WHERE id = ?", (email_id,))
@@ -2746,8 +2771,8 @@ def record_email_click(email_id: int, clicked_url: str = "", db_path: str = DB_F
     Records timestamp, increments click_count, stores last_clicked_url,
     and updates associated contact with 'Clicked Link' tag and audit note.
     """
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    now_iso = get_engine_now_str()
+    today_str = get_engine_now_str("%Y-%m-%d")
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM emails WHERE id = ?", (email_id,))
@@ -2924,8 +2949,8 @@ def record_email_reply(
     if not clean_email:
         return {"contact_found": False, "paused_drafts_count": 0, "paused_email_ids": [], "cancelled_drafts_count": 0, "cancelled_email_ids": []}
 
-    now_iso = received_at or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
+    now_iso = received_at or get_engine_now_str()
+    today_str = get_engine_now_str("%Y-%m-%d")
 
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -3119,7 +3144,7 @@ def create_notification(
     db_path: str = DB_FILE
 ) -> int:
     """Create a persistent notification record in SQLite."""
-    now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = get_engine_now_str()
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -3297,7 +3322,7 @@ def trigger_sequence_rules_for_sent_email(email_id: int, sent_at_iso: Optional[s
     Calculates due_at based on the configured delay (days or hours) from the actual send time.
     """
     if not sent_at_iso:
-        sent_at_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        sent_at_iso = get_engine_now_str()
 
     try:
         sent_dt = datetime.strptime(sent_at_iso[:19], "%Y-%m-%d %H:%M:%S")
