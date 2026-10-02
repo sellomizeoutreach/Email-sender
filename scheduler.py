@@ -526,7 +526,16 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
         return False
 
-    # Pre-flight MX record and domain sanity check
+    # 1. Pre-flight Compliance Guard: Strictly suppress Do Not Contact / Unsubscribed recipients
+    from database import get_contact_by_email
+    contact_rec = get_contact_by_email(recipient, db_path=db_path)
+    if contact_rec and (contact_rec.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
+        suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{recipient}' is marked as 'Do Not Contact'."
+        logger.info(f"Email ID #{email_id}: {suppress_msg}")
+        mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
+        return False
+
+    # 2. Pre-flight MX record and domain sanity check
     enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"
     if enforce_mx:
         is_valid, mx_reason, _ = verify_email_domain_mx(recipient)
@@ -559,6 +568,13 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         combined_body = f"{body_with_links}<br><br>{signature_html}"
     else:
         combined_body = body_with_links
+
+    # Legal & Compliance: Opt-out footer notice if enabled in Settings
+    opt_out_on = (get_config("append_opt_out_footer", "false", db_path=db_path) or "false").lower() in ["true", "1", "yes"]
+    if opt_out_on:
+        opt_msg = get_config("opt_out_footer_text", "If you prefer not to receive future emails from us, simply reply with 'unsubscribe'.", db_path=db_path)
+        combined_body += f"<br><br><p style='font-size:11px; color:#94A3B8; margin-top:16px;'>{opt_msg}</p>"
+
     final_payload = inject_tracking_pixel(combined_body, email_id)
 
     followup_delay = int(get_config("followup_delay_days", "4", db_path=db_path) or 4)
@@ -650,6 +666,15 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
         advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
         return
 
+    # Pre-flight Compliance Guard: Strictly suppress Do Not Contact / Unsubscribed recipients
+    from database import get_contact_by_email
+    contact_rec = get_contact_by_email(recipient, db_path=db_path)
+    if contact_rec and (contact_rec.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
+        suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{recipient}' is marked as 'Do Not Contact'."
+        logger.info(f"Email ID #{email_id}: {suppress_msg}")
+        mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
+        return
+
     # 1. Connect to Outlook with explicit COM initialization
     try:
         outlook_app = get_outlook_application()
@@ -688,6 +713,13 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
             combined_body = f"{body_with_links}<br><br>{signature_html}"
         else:
             combined_body = body_with_links
+
+        # Legal & Compliance: Opt-out footer notice if enabled in Settings
+        opt_out_on = (get_config("append_opt_out_footer", "false", db_path=db_path) or "false").lower() in ["true", "1", "yes"]
+        if opt_out_on:
+            opt_msg = get_config("opt_out_footer_text", "If you prefer not to receive future emails from us, simply reply with 'unsubscribe'.", db_path=db_path)
+            combined_body += f"<br><br><p style='font-size:11px; color:#94A3B8; margin-top:16px;'>{opt_msg}</p>"
+
         final_payload = inject_tracking_pixel(combined_body, email_id)
 
         # Assign directly to HTMLBody

@@ -154,6 +154,11 @@ def send_smtp_email(
     elif references and str(references).strip():
         msg["References"] = sanitize_header(str(references).strip())
 
+    # Legal & Compliance Header: RFC 2369 / RFC 8058 List-Unsubscribe
+    # Ensures compliance with Gmail / Yahoo 2024+ sender guidelines & CAN-SPAM opt-out standards
+    msg["List-Unsubscribe"] = f"<mailto:{user}?subject=Unsubscribe>"
+    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+
     # -------------------------------------------------------------------------
     # Inline image handling: Convert base64 data URIs into CID attachments.
     # Gmail clips messages when the HTML payload exceeds 102 KB (base64 is huge).

@@ -143,15 +143,23 @@ def render_bulk_schedule_dialog(
     st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
     if st.button("🚀 Confirm & Launch Campaign Batch", type="primary", use_container_width=True, key="bulk_dlg_confirm_cta"):
         with st.spinner("Scheduling batch outreach and sequences..."):
-            queued_count = 0
-            fu_queued    = 0
-            step_seconds = max(45, int((spread_hours * 3600) / max(1, len(selected_leads))))
+            # Compliance Filter: Strictly exclude Do Not Contact / Unsubscribed leads
+            clean_leads = [
+                l for l in selected_leads
+                if (l.get("status") not in ["Do Not Contact", "unsubscribed", "Unsubscribed"])
+            ]
+            suppressed_dnc = len(selected_leads) - len(clean_leads)
+            if not clean_leads:
+                st.error("All selected leads are marked as 'Do Not Contact' (Opt-Out). Batch dispatch aborted.")
+                return
+
+            step_seconds = max(45, int((spread_hours * 3600) / max(1, len(clean_leads))))
 
             # Fetch signature HTML once
             sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
 
             # 1. Initial emails
-            for i, lead in enumerate(selected_leads):
+            for i, lead in enumerate(clean_leads):
                 lead_tz = lead.get("country_or_timezone") or "LOCAL"
                 if i < total_fleet_cap:
                     target_dt = init_start_dt + timedelta(seconds=(i * step_seconds))
@@ -184,7 +192,7 @@ def render_bulk_schedule_dialog(
                 fu_body_html = "<p>" + fu_body_raw.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
                 fu_inc_sig   = step.get("include_signature", False)
 
-                for i, lead in enumerate(selected_leads):
+                for i, lead in enumerate(clean_leads):
                     lead_tz   = lead.get("country_or_timezone") or "LOCAL"
                     fu_target = step_base_dt + timedelta(seconds=(i * step_seconds))
 
@@ -207,6 +215,8 @@ def render_bulk_schedule_dialog(
             msg = f"Scheduled {queued_count} initial + {fu_queued} follow-up email(s)!"
         else:
             msg = f"Successfully scheduled batch of {queued_count} emails!"
+        if suppressed_dnc > 0:
+            msg += f" (Suppressed {suppressed_dnc} DNC lead{'s' if suppressed_dnc != 1 else ''})"
 
         st.session_state["bulk_followup_steps"] = []
         trigger_toast(msg, icon="🚀")

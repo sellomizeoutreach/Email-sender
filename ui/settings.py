@@ -527,6 +527,73 @@ def render_settings_tab():
                     trigger_toast("Anti-spam pacing updated & saved!", icon="⏱️")
                     st.rerun()
 
+    # Row 4: Legal & Compliance Guardrails (CAN-SPAM / Opt-Out / DNC Suppression)
+    card_c5, card_c6 = st.columns(2)
+    opt_out_enabled = (get_config("append_opt_out_footer", "false") or "false").lower() in ["true", "1", "yes"]
+    opt_out_text = get_config("opt_out_footer_text", "If you prefer not to receive future emails from us, simply reply with 'unsubscribe'.") or "If you prefer not to receive future emails from us, simply reply with 'unsubscribe'."
+    compliance_summary = "Opt-out footer enabled" if opt_out_enabled else "RFC List-Unsubscribe + DNC suppression active"
+
+    with card_c5:
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">⚖️ Legal &amp; Compliance (CAN-SPAM)</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{compliance_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Legal & Compliance Guardrails", expanded=False):
+            with st.form("form_legal_cfg"):
+                st.caption(
+                    "Enforces compliance with international anti-spam regulations (CAN-SPAM Act, GDPR, and 2024+ Gmail/Yahoo sender requirements). "
+                    "All dispatches include standard RFC 2369 / RFC 8058 `List-Unsubscribe` headers automatically."
+                )
+                new_opt_out_on = st.checkbox(
+                    "Append compliant opt-out footer notice to cold outreach emails",
+                    value=opt_out_enabled,
+                    help="Automatically adds a discreet opt-out notice at the bottom of cold outreach messages."
+                )
+                new_opt_out_msg = st.text_area(
+                    "Opt-Out Notice Text",
+                    value=opt_out_text,
+                    height=70,
+                    help="Text displayed at the very bottom of the email."
+                )
+                st.markdown("""
+                <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 12px; font-size:12px; color:#475569; margin:8px 0;">
+                    <b>🛡️ Active Protections:</b><br>
+                    • <b>0-Second Suppression:</b> Leads marked 'Do Not Contact' are strictly blocked across Compose, Bulk, and Campaigns.<br>
+                    • <b>Auto-Unsubscribe Detection:</b> Inbound replies containing 'unsubscribe', 'stop', or 'opt out' automatically set contact to 'Do Not Contact'.<br>
+                    • <b>Physical Address Requirement:</b> Ensure your corporate signature contains your registered company address or P.O. Box.
+                </div>
+                """, unsafe_allow_html=True)
+                if st.form_submit_button("Save Compliance Settings", type="primary", use_container_width=True):
+                    set_config("append_opt_out_footer", "true" if new_opt_out_on else "false")
+                    set_config("opt_out_footer_text", new_opt_out_msg.strip())
+                    auto_save_backup()
+                    trigger_toast("Compliance settings updated & saved!", icon="⚖️")
+                    st.rerun()
+
+    with card_c6:
+        enforce_mx = (get_config("enforce_mx_check", "true") or "true").lower() in ["true", "1", "yes"]
+        mx_summary = "Active (Dead domains auto-intercepted)" if enforce_mx else "Disabled"
+        st.markdown(f"""
+        <div class="card" style="margin-bottom:12px;">
+            <div style="font-weight:600; color:#083731;">🌐 Pre-flight deliverability &amp; MX verification</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">{mx_summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander("Configure Pre-Flight MX & Deliverability Guards", expanded=False):
+            with st.form("form_mx_cfg"):
+                st.caption(
+                    "Verifies recipient domain DNS MX records before queuing or dispatching. "
+                    "Intercepts dead domains, bad mail servers, and invalid addresses before they trigger hard ISP bounces."
+                )
+                new_enforce_mx = st.checkbox("Enforce pre-flight MX verification before dispatch", value=enforce_mx)
+                if st.form_submit_button("Save Deliverability Settings", type="primary", use_container_width=True):
+                    set_config("enforce_mx_check", "true" if new_enforce_mx else "false")
+                    auto_save_backup()
+                    trigger_toast("Deliverability settings updated!", icon="🌐")
+                    st.rerun()
+
     # =========================================================================
     # SECTION 3: INDEPENDENT DISPATCH WORKER STATUS
     # =========================================================================

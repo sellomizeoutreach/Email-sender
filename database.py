@@ -401,7 +401,9 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                 ("lead_local_time", "TEXT DEFAULT ''"),
                 ("thread_refs", "TEXT DEFAULT ''"),
                 ("sequence_group", "TEXT DEFAULT ''"),
-                ("bcc_email", "TEXT DEFAULT ''")
+                ("bcc_email", "TEXT DEFAULT ''"),
+                ("replied_at", "TEXT DEFAULT ''"),
+                ("reply_subject", "TEXT DEFAULT ''")
             ]
             for col_name, col_def in email_migrations:
                 try:
@@ -2500,7 +2502,8 @@ def update_email(
             "opened_at", "open_count", "is_bounced", "bounce_reason",
             "clicked_at", "click_count", "last_clicked_url", "target_country",
             "market_key", "lead_id", "mailbox_id", "body_html_resolved",
-            "scheduled_time_utc", "lead_local_time", "thread_refs", "sequence_group"
+            "scheduled_time_utc", "lead_local_time", "thread_refs", "sequence_group",
+            "replied_at", "reply_subject"
         ]:
             fields.append(f"{k} = ?")
             values.append(v)
@@ -2961,6 +2964,23 @@ def record_email_reply(
             WHERE id = ?
         """, (today_str, now_iso, (reply_subject or "")[:120], tags_str, updated_notes, cid))
 
+    # Compliance: If prospect asks to unsubscribe / stop, mark Do Not Contact
+    sub_text = (reply_subject or "").lower()
+    snip_text = (reply_body_snippet or "").lower()
+    is_unsub = any(w in sub_text or w in snip_text for w in [
+        "unsubscribe", "opt out", "opt-out", "remove me", "stop emailing",
+        "please remove", "don't email", "do not email", "take me off"
+    ])
+    if is_unsub:
+        cursor.execute("UPDATE contacts SET status = 'Do Not Contact' WHERE LOWER(TRIM(email)) = ?", (clean_email,))
+
+    # Update sent email records for this recipient to reflect replied status
+    cursor.execute("""
+        UPDATE emails SET
+            replied_at = ?,
+            reply_subject = ?
+        WHERE LOWER(TRIM(recipient)) = ? AND status = 'Sent'
+    """, (now_iso, (reply_subject or "")[:120], clean_email))
 
     # 2. Pause pending / scheduled follow-up emails for this lead
     cursor.execute("""
@@ -2971,7 +2991,6 @@ def record_email_reply(
     """, (clean_email,))
     pending_emails = cursor.fetchall()
     paused_ids = [r["id"] for r in pending_emails]
-
 
     if paused_ids:
         placeholders = ",".join("?" * len(paused_ids))
@@ -3023,6 +3042,69 @@ def record_email_reply(
         "status": "Replied",
         "category": "replied"
     }
+
+def mark_contact_do_not_contact(email_or_id: Union[str, int], reason: str = "Manual opt-out / DNC", db_path: str = DB_FILE) -> bool:
+    """
+    Legal & Compliance Function (CAN-SPAM / Opt-Out Enforcement):
+    Flags contact as 'Do Not Contact', cancels any pending/scheduled emails,
+    and suppresses future dispatches to this email across the entire platform.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    target_email = ""
+    if isinstance(email_or_id, int) or (isinstance(email_or_id, str) and email_or_id.isdigit()):
+        cursor.execute("SELECT email FROM contacts WHERE id = ?", (int(email_or_id),))
+        row = cursor.fetchone()
+        if row:
+            target_email = (row["email"] or "").strip().lower()
+            cursor.execute("UPDATE contacts SET status = 'Do Not Contact' WHERE id = ?", (int(email_or_id),))
+    else:
+        target_email = str(email_or_id).strip().lower()
+        cursor.execute("UPDATE contacts SET status = 'Do Not Contact' WHERE LOWER(TRIM(email)) = ?", (target_email,))
+
+    if target_email:
+        # Cancel all pending, scheduled, or approved emails for this recipient
+        cursor.execute("""
+            UPDATE emails SET
+                status = 'Cancelled',
+                error_message = ?
+            WHERE LOWER(TRIM(recipient)) = ? AND status IN ('Pending', 'Approved', 'Scheduled', 'Draft')
+        """, (f"Suppressed (DNC / Opt-Out): {reason}", target_email))
+        # Cancel any pending sequence rules
+        cursor.execute("""
+            UPDATE sequence_rules SET status = 'Cancelled'
+            WHERE LOWER(TRIM(contact_email)) = ? AND status IN ('Waiting_Trigger', 'Scheduled')
+        """, (target_email,))
+
+    conn.commit()
+    conn.close()
+    return True
+
+def mark_contact_replied_manual(email_or_id: Union[str, int], reply_subject: str = "Manual reply flag", db_path: str = DB_FILE) -> Dict[str, Any]:
+    """
+    Logical Function:
+    Manually flags a lead as 'Replied' (e.g. prospect contacted via phone, LinkedIn, or external inbox),
+    auto-pausing any remaining scheduled follow-up touches.
+    """
+    target_email = ""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    if isinstance(email_or_id, int) or (isinstance(email_or_id, str) and email_or_id.isdigit()):
+        cursor.execute("SELECT email FROM contacts WHERE id = ?", (int(email_or_id),))
+        row = cursor.fetchone()
+        if row:
+            target_email = (row["email"] or "").strip().lower()
+    else:
+        target_email = str(email_or_id).strip().lower()
+    conn.close()
+
+    if target_email:
+        return record_email_reply(
+            sender_email=target_email,
+            reply_subject=reply_subject,
+            db_path=db_path
+        )
+    return {"contact_found": False, "paused_drafts_count": 0}
 
 
 # ------------------------------------------------------------------------------

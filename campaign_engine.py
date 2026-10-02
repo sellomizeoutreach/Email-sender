@@ -172,7 +172,7 @@ def process_campaign_contact_step(
     lead_tags = (contact_rec.get("lead_tags") or "").lower()
 
     # Rule A: Unsubscribe / Suppression
-    if lead_status in ["do not contact", "opted-out", "suppressed"] or "do not contact" in lead_tags:
+    if lead_status in ["do not contact", "opted-out", "suppressed", "unsubscribed"] or "do not contact" in lead_tags:
         _update_contact_state(cc_id, "unsubscribed", now_str, db_path)
         record_campaign_event(camp_id, lead_id, None, "unsubscribed", {"reason": "Suppressed status in CRM"}, db_path=db_path)
         logger.info(f"[Campaign #{camp_id}] Suppressed contact {lead_email} marked unsubscribed.")
