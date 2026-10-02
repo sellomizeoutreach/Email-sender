@@ -274,7 +274,12 @@ def render_compose_schedule_dialog(
         st.rerun()
 
     if submit_clicked:
-        if target_contact and (target_contact.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
+        c_status = (current_lead.get("status") or "")
+        if not c_status and recipient_clean:
+            c_db = get_contact_by_email(recipient_clean)
+            if c_db:
+                c_status = c_db.get("status") or ""
+        if c_status.lower() in ["do not contact", "unsubscribed"]:
             st.error("🚫 Legal Compliance Block: This recipient is marked as 'Do Not Contact' (Opt-Out). Cannot dispatch outreach to suppressed contacts.")
             return
 
