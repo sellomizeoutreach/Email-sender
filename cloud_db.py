@@ -579,125 +579,241 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
         cur_sq = sq_conn.cursor()
         cur_pg = pg_conn.cursor()
 
-        stats = {}
+        def table_exists_sq(tbl: str) -> bool:
+            cur_sq.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (tbl,))
+            return cur_sq.fetchone() is not None
+
+        def safe_reset_seq(tbl: str, col: str = 'id'):
+            try:
+                cur_pg.execute(f"""
+                    DO $$
+                    DECLARE
+                        seq_name text;
+                        max_id bigint;
+                    BEGIN
+                        seq_name := pg_get_serial_sequence('{tbl}', '{col}');
+                        IF seq_name IS NOT NULL THEN
+                            EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %I', '{col}', '{tbl}') INTO max_id;
+                            IF max_id > 0 THEN
+                                EXECUTE format('SELECT setval(%L, %s, true)', seq_name, max_id);
+                            ELSE
+                                EXECUTE format('SELECT setval(%L, 1, false)', seq_name);
+                            END IF;
+                        END IF;
+                    END $$;
+                """)
+            except Exception as ex_seq:
+                logger.warning(f"Sequence reset warning for {tbl}.{col}: {ex_seq}")
+
+        stats = {
+            "configs": 0, "contacts": 0, "templates": 0, "smtp_accounts": 0,
+            "emails": 0, "notifications": 0, "sequence_rules": 0, "inbox_messages": 0,
+            "campaigns": 0, "campaign_steps": 0, "campaign_contacts": 0
+        }
 
         # 1. system_config
-        cur_sq.execute("SELECT key, value FROM system_config")
-        cfg_rows = cur_sq.fetchall()
-        for r in cfg_rows:
-            cur_pg.execute("""
-                INSERT INTO system_config (key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-            """, (r["key"], r["value"]))
-        stats["configs"] = len(cfg_rows)
+        if table_exists_sq("system_config"):
+            cur_sq.execute("SELECT key, value FROM system_config")
+            cfg_rows = cur_sq.fetchall()
+            for r in cfg_rows:
+                cur_pg.execute("""
+                    INSERT INTO system_config (key, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """, (r["key"], r["value"]))
+            stats["configs"] = len(cfg_rows)
 
         # 2. contacts
-        cur_sq.execute("SELECT * FROM contacts")
-        c_rows = cur_sq.fetchall()
-        for r in c_rows:
-            cols = list(r.keys())
-            placeholders = ", ".join(["%s"] * len(cols))
-            col_str = ", ".join(cols)
-            cur_pg.execute(f"""
-                INSERT INTO contacts ({col_str})
-                VALUES ({placeholders})
-                ON CONFLICT (id) DO NOTHING
-            """, tuple(r[k] for k in cols))
-        stats["contacts"] = len(c_rows)
-        cur_pg.execute("SELECT setval(pg_get_serial_sequence('contacts', 'id'), COALESCE((SELECT MAX(id) FROM contacts), 1))")
+        if table_exists_sq("contacts"):
+            cur_sq.execute("SELECT * FROM contacts")
+            c_rows = cur_sq.fetchall()
+            for r in c_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO contacts ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["contacts"] = len(c_rows)
+            safe_reset_seq("contacts")
 
         # 3. templates
-        cur_sq.execute("SELECT * FROM templates")
-        t_rows = cur_sq.fetchall()
-        for r in t_rows:
-            cols = list(r.keys())
-            placeholders = ", ".join(["%s"] * len(cols))
-            col_str = ", ".join(cols)
-            cur_pg.execute(f"""
-                INSERT INTO templates ({col_str})
-                VALUES ({placeholders})
-                ON CONFLICT (id) DO NOTHING
-            """, tuple(r[k] for k in cols))
-        stats["templates"] = len(t_rows)
-        cur_pg.execute("SELECT setval(pg_get_serial_sequence('templates', 'id'), COALESCE((SELECT MAX(id) FROM templates), 1))")
+        if table_exists_sq("templates"):
+            cur_sq.execute("SELECT * FROM templates")
+            t_rows = cur_sq.fetchall()
+            for r in t_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO templates ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["templates"] = len(t_rows)
+            safe_reset_seq("templates")
 
         # 4. smtp_accounts
-        cur_sq.execute("SELECT * FROM smtp_accounts")
-        s_rows = cur_sq.fetchall()
-        for r in s_rows:
-            cols = list(r.keys())
-            placeholders = ", ".join(["%s"] * len(cols))
-            col_str = ", ".join(cols)
-            cur_pg.execute(f"""
-                INSERT INTO smtp_accounts ({col_str})
-                VALUES ({placeholders})
-                ON CONFLICT (id) DO NOTHING
-            """, tuple(r[k] for k in cols))
-        stats["smtp_accounts"] = len(s_rows)
-        cur_pg.execute("SELECT setval(pg_get_serial_sequence('smtp_accounts', 'id'), COALESCE((SELECT MAX(id) FROM smtp_accounts), 1))")
+        if table_exists_sq("smtp_accounts"):
+            cur_sq.execute("SELECT * FROM smtp_accounts")
+            s_rows = cur_sq.fetchall()
+            for r in s_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO smtp_accounts ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["smtp_accounts"] = len(s_rows)
+            safe_reset_seq("smtp_accounts")
 
         # 5. emails
-        cur_sq.execute("SELECT * FROM emails")
-        e_rows = cur_sq.fetchall()
-        for r in e_rows:
-            cols = list(r.keys())
-            placeholders = ", ".join(["%s"] * len(cols))
-            col_str = ", ".join(cols)
-            cur_pg.execute(f"""
-                INSERT INTO emails ({col_str})
-                VALUES ({placeholders})
-                ON CONFLICT (id) DO NOTHING
-            """, tuple(r[k] for k in cols))
-        stats["emails"] = len(e_rows)
-        cur_pg.execute("SELECT setval(pg_get_serial_sequence('emails', 'id'), COALESCE((SELECT MAX(id) FROM emails), 1))")
+        if table_exists_sq("emails"):
+            cur_sq.execute("SELECT * FROM emails")
+            e_rows = cur_sq.fetchall()
+            for r in e_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO emails ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["emails"] = len(e_rows)
+            safe_reset_seq("emails")
 
         # 6. notifications
-        cur_sq.execute("SELECT * FROM notifications")
-        n_rows = cur_sq.fetchall()
-        for r in n_rows:
-            cols = list(r.keys())
-            placeholders = ", ".join(["%s"] * len(cols))
-            col_str = ", ".join(cols)
-            cur_pg.execute(f"""
-                INSERT INTO notifications ({col_str})
-                VALUES ({placeholders})
-                ON CONFLICT (id) DO NOTHING
-            """, tuple(r[k] for k in cols))
-        stats["notifications"] = len(n_rows)
-        cur_pg.execute("SELECT setval(pg_get_serial_sequence('notifications', 'id'), COALESCE((SELECT MAX(id) FROM notifications), 1))")
+        if table_exists_sq("notifications"):
+            cur_sq.execute("SELECT * FROM notifications")
+            n_rows = cur_sq.fetchall()
+            for r in n_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO notifications ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["notifications"] = len(n_rows)
+            safe_reset_seq("notifications")
 
         # 7. sequence_rules
-        cur_sq.execute("SELECT * FROM sequence_rules")
-        sr_rows = cur_sq.fetchall()
-        for r in sr_rows:
-            cols = list(r.keys())
-            placeholders = ", ".join(["%s"] * len(cols))
-            col_str = ", ".join(cols)
-            cur_pg.execute(f"""
-                INSERT INTO sequence_rules ({col_str})
-                VALUES ({placeholders})
-                ON CONFLICT (id) DO NOTHING
-            """, tuple(r[k] for k in cols))
-        stats["sequence_rules"] = len(sr_rows)
-        cur_pg.execute("SELECT setval(pg_get_serial_sequence('sequence_rules', 'id'), COALESCE((SELECT MAX(id) FROM sequence_rules), 1))")
+        if table_exists_sq("sequence_rules"):
+            cur_sq.execute("SELECT * FROM sequence_rules")
+            sr_rows = cur_sq.fetchall()
+            for r in sr_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO sequence_rules ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["sequence_rules"] = len(sr_rows)
+            safe_reset_seq("sequence_rules")
 
         # 8. processed_inbox_messages
-        cur_sq.execute("SELECT * FROM processed_inbox_messages")
-        pm_rows = cur_sq.fetchall()
-        for r in pm_rows:
-            cur_pg.execute("""
-                INSERT INTO processed_inbox_messages (message_id, sender_email, subject, mailbox, processed_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (message_id) DO NOTHING
-            """, (r["message_id"], r["sender_email"], r["subject"], r["mailbox"], r["processed_at"]))
-        stats["inbox_messages"] = len(pm_rows)
+        if table_exists_sq("processed_inbox_messages"):
+            cur_sq.execute("SELECT * FROM processed_inbox_messages")
+            pm_rows = cur_sq.fetchall()
+            for r in pm_rows:
+                cur_pg.execute("""
+                    INSERT INTO processed_inbox_messages (message_id, sender_email, subject, mailbox, processed_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (message_id) DO NOTHING
+                """, (r["message_id"], r["sender_email"], r["subject"], r["mailbox"], r["processed_at"]))
+            stats["inbox_messages"] = len(pm_rows)
+
+        # 9. campaign_campaigns
+        if table_exists_sq("campaign_campaigns"):
+            cur_sq.execute("SELECT * FROM campaign_campaigns")
+            camp_rows = cur_sq.fetchall()
+            for r in camp_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO campaign_campaigns ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["campaigns"] = len(camp_rows)
+            safe_reset_seq("campaign_campaigns")
+
+        # 10. campaign_steps
+        if table_exists_sq("campaign_steps"):
+            cur_sq.execute("SELECT * FROM campaign_steps")
+            cs_rows = cur_sq.fetchall()
+            for r in cs_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO campaign_steps ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["campaign_steps"] = len(cs_rows)
+            safe_reset_seq("campaign_steps")
+
+        # 11. campaign_contacts
+        if table_exists_sq("campaign_contacts"):
+            cur_sq.execute("SELECT * FROM campaign_contacts")
+            cc_rows = cur_sq.fetchall()
+            for r in cc_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO campaign_contacts ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["campaign_contacts"] = len(cc_rows)
+            safe_reset_seq("campaign_contacts")
+
+        # 12. campaign_events
+        if table_exists_sq("campaign_events"):
+            cur_sq.execute("SELECT * FROM campaign_events")
+            ce_rows = cur_sq.fetchall()
+            for r in ce_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO campaign_events ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            safe_reset_seq("campaign_events")
+
+        # 13. campaign_images
+        if table_exists_sq("campaign_images"):
+            cur_sq.execute("SELECT * FROM campaign_images")
+            ci_rows = cur_sq.fetchall()
+            for r in ci_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO campaign_images ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            safe_reset_seq("campaign_images")
 
         pg_conn.commit()
         return True, (
             f"Successfully migrated to Cloud PostgreSQL! "
             f"Transferred {stats['contacts']} contacts, {stats['templates']} templates, "
-            f"{stats['smtp_accounts']} mailboxes, and {stats['emails']} emails."
+            f"{stats['smtp_accounts']} mailboxes, {stats['emails']} emails, and {stats['campaigns']} campaigns."
         )
     except Exception as e:
         logger.error(f"Migration error: {e}", exc_info=True)
