@@ -143,6 +143,9 @@ def render_bulk_schedule_dialog(
     st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
     if st.button("🚀 Confirm & Launch Campaign Batch", type="primary", use_container_width=True, key="bulk_dlg_confirm_cta"):
         with st.spinner("Scheduling batch outreach and sequences..."):
+            queued_count = 0
+            fu_queued    = 0
+
             # Compliance Filter: Strictly exclude Do Not Contact / Unsubscribed leads
             clean_leads = [
                 l for l in selected_leads
