@@ -693,10 +693,10 @@ def render_dual_mode_editor(
         chip_cols = st.columns([1.3, 1.5, 1.6, 1.5, 1.1])
 
         with chip_cols[0]:
-            if st.button("👤 Name", key=f"{key_prefix}_chip_name",
-                         help="Insert [Name] token — automatically resolves to recipient's contact name",
+            if st.button("👤 First Name", key=f"{key_prefix}_chip_name",
+                         help="Insert {first_name} token — automatically resolves to recipient's contact first name",
                          use_container_width=True):
-                _insert(" [Name]")
+                _insert(" {first_name}")
 
         with chip_cols[1]:
             if st.button("🏢 Company", key=f"{key_prefix}_chip_comp",

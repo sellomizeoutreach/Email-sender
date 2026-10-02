@@ -81,7 +81,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Amazon Growth — General",
         "subject": "[Company] + Sellomize",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I spent some time looking through your Amazon presence and noticed there’s room to get more from the account.\n\n"
             "The products are there, but Amazon growth usually comes down to a few things working together — search visibility, listing content, PPC, and how the products are positioned.\n\n"
@@ -91,14 +91,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Full-Service Amazon Growth, Listing & PPC Optimization",
         "recommended_signals": "General Amazon account audit, room for growth across catalog, products present but underperforming",
-        "allowed_variables": ["[Name]", "[Company]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: [Company] + Sellomize",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Just popping this back up before it gets lost in the inbox shuffle. 😄\n\n"
                     "I still think there's good room to unlock more sales on your Amazon catalog with a few targeted adjustments.\n\n"
                     "Would you be open to taking a look together over the next week or two? Let me know what works and I'll send a calendar invite."
@@ -108,7 +108,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: [Company] + Sellomize",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Assuming you didn't get eaten by the Amazon algorithm this week... 😅\n\n"
                     "Wanted to check in one last time on whether you'd like a quick fresh set of eyes on the Amazon account.\n\n"
                     "Let me know if next Tuesday or Wednesday works for a brief 10-minute chat."
@@ -122,7 +122,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Listing — SEO & Copy",
         "subject": "A closer look at your Amazon listings",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon listings and noticed a few areas where the titles, bullets, and product copy could do more work.\n\n"
             "Getting a product found is only half the job.\n\n"
@@ -132,14 +132,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Listing SEO, Title & Bullet Optimization, Backend Keyword Indexing",
         "recommended_signals": "Weak titles, short or generic bullet points, poor keyword indexing, low search rank",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[ASIN]", "[Keyword]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[ASIN]", "[Keyword]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: A closer look at your Amazon listings",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Bringing this back to the top before your inbox buries it deeper than page 5 of Amazon search. 🔍\n\n"
                     "Wanted to see if you had a chance to look over my note on tightening up your Amazon titles and listing copy.\n\n"
                     "Would you have 10 minutes next week to take a look together?"
@@ -149,7 +149,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: A closer look at your Amazon listings",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Quick bump between cups of coffee ☕.\n\n"
                     "If you're already happy with your search indexing and conversion rates, no worries at all. But if you'd like a quick breakdown of where keywords are getting dropped, let me know and I'll send over a calendar invite."
                 )
@@ -162,7 +162,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Listing — Images & Video",
         "subject": "Your Amazon images could do more",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon listings and noticed some of the product pages could use stronger visual content.\n\n"
             "Images have to do more than show the product.\n\n"
@@ -172,14 +172,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Infographic Design, Mobile Image Optimization, Product Video Production",
         "recommended_signals": "Fewer than 6 images, plain white background only, missing mobile infographics, no video on listing",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[ASIN]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[ASIN]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: Your Amazon images could do more",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Checking in before this email ends up in the lost-and-found bin of your inbox. 📦\n\n"
                     "Over 70% of Amazon mobile shoppers only look at image carousels before buying without ever scrolling to the text.\n\n"
                     "Would you be open to taking a look at a couple visual tweaks together next week?"
@@ -189,7 +189,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Your Amazon images could do more",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "I promise this is my last nudge before I assume you're secretly a fan of plain white background photos. 😉\n\n"
                     "If you'd like to take a look at how stronger infographics could lift conversions on [Company], let me know what day works and I'll send an invite."
                 )
@@ -202,7 +202,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Listing — A+ Content",
         "subject": "A+ content for your Amazon listings",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I spent some time looking through your Amazon listings and noticed there’s room to make the A+ experience do more.\n\n"
             "A+ should help shoppers understand the product and the brand without making them dig through the page.\n\n"
@@ -211,14 +211,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "A+ Content Design, Brand Story Modules, Comparison Charts",
         "recommended_signals": "Missing A+ content, standard text description only, generic low-res A+, missing comparison table",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[ASIN]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[ASIN]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: A+ content for your Amazon listings",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Just popping this back up before Monday turns into Friday again. ⏳\n\n"
                     "Wanted to see if you had a second to think about upgrading the A+ modules on your listings.\n\n"
                     "Would you have some time next week to take a look together?"
@@ -228,7 +228,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: A+ content for your Amazon listings",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Final quick check-in. If updating your Amazon A+ modules isn't on your radar this quarter, completely understood!\n\n"
                     "Otherwise, happy to share a couple of comparison layouts that have worked well for similar brands. Just let me know."
                 )
@@ -241,7 +241,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Listing — Multiple Gaps",
         "subject": "A few Amazon listing gaps",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon catalog and noticed a few different areas that could be improved across the listings.\n\n"
             "Some are content related.\n\n"
@@ -252,14 +252,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Full Listing Overhaul, Conversion Rate Optimization, Catalog Cleanup",
         "recommended_signals": "Multiple listing issues (e.g. weak copy + few images + missing A+), low listing score",
-        "allowed_variables": ["[Name]", "[Company]", "[ListingScore]", "[SpecificObservation]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[ListingScore]", "[SpecificObservation]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: A few Amazon listing gaps",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Floating this back to the top of your stack. 📄\n\n"
                     "Fixing small listing gaps usually creates a noticeable compounding effect on both organic rank and ad spend efficiency.\n\n"
                     "Would you have 10 minutes next week to take a look together?"
@@ -269,7 +269,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: A few Amazon listing gaps",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "One last polite ping before I clear your name from my notepad. 📝\n\n"
                     "If you ever want an honest second opinion on your listings, the door is always open. Wishing you a great rest of the week!"
                 )
@@ -282,7 +282,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "PPC — Organic + Sponsored Overlap",
         "subject": "Your Amazon ads caught my eye",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I noticed some of your products are already showing up organically while also receiving paid placement.\n\n"
             "That can be useful, but it can also mean part of the ad budget is going toward products that already have strong organic visibility.\n\n"
@@ -291,14 +291,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "PPC Cannibalization Audit, Budget Reallocation, Sponsored Ads Optimization",
         "recommended_signals": "Sponsored product appearing alongside top organic rank on brand or generic keywords",
-        "allowed_variables": ["[Name]", "[Company]", "[Keyword]", "[OrganicRank]", "[AdRank]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Keyword]", "[OrganicRank]", "[AdRank]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: Your Amazon ads caught my eye",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Quick follow-up before Amazon bills another click for a customer who was already going to buy organically anyway. 💸\n\n"
                     "Would you be open to taking a look at your ad-to-organic overlap together next week?"
                 )
@@ -307,7 +307,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Your Amazon ads caught my eye",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Assuming you're deep in campaign management mode right now! 📊\n\n"
                     "Whenever you have a moment, I'd still be glad to share how we trim ad cannibalization. Let me know what works for your calendar."
                 )
@@ -320,7 +320,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "PPC — Ranking Gaps",
         "subject": "A few Amazon ranking gaps",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon search visibility and noticed some products are showing up for relevant searches, but there are still gaps in where they appear.\n\n"
             "That’s where SEO and PPC need to work together.\n\n"
@@ -329,14 +329,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Keyword Ranking Strategy, Sponsored Products Push, Organic & Paid Synergy",
         "recommended_signals": "Indexed on relevant search terms but ranking on bottom of page 1 or page 2, inconsistent rank",
-        "allowed_variables": ["[Name]", "[Company]", "[Keyword]", "[OrganicRank]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Keyword]", "[OrganicRank]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: A few Amazon ranking gaps",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Bringing this back up before the keyword gap widens. 📈\n\n"
                     "Using targeted PPC to intentionally force organic rank velocity usually pays for itself fast.\n\n"
                     "Would you have 10 minutes next week to take a look together?"
@@ -346,7 +346,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: A few Amazon ranking gaps",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Final note from me! If search rank isn't a priority right now, no problem.\n\n"
                     "If you do want to review the keyword gaps we flagged, let me know and I'll send over an invite."
                 )
@@ -359,7 +359,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "PPC — Scaling",
         "subject": "More from your Amazon PPC",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I spent some time looking at your Amazon presence and thought there may be room to get more from the PPC side.\n\n"
             "We recently worked with a client brand that was doing four- to five-figure sales on Amazon.\n\n"
@@ -371,7 +371,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "PPC Account Restructuring, Bid Management, Campaign Scaling",
         "recommended_signals": "Active PPC advertising present, high review count or solid catalog, ready to scale spend",
-        "allowed_variables": ["[Name]", "[Company]", "[Location]", "[ClientStory]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Location]", "[ClientStory]"],
         "client_story_allowed": True,
         "client_story_id": "ppc_scaling_growth",
         "followups": [
@@ -379,7 +379,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 3,
                 "subject": "Re: More from your Amazon PPC",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Just floating this back up before it gets lost in the inbox shuffle. 😄\n\n"
                     "Wanted to see if you had a chance to look at my note about scaling Amazon ad spend without killing ROAS.\n\n"
                     "Would you be open to taking a look together? Let me know what works and I'll send a calendar invite."
@@ -389,7 +389,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: More from your Amazon PPC",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Quick check-in before I stop bugging you about PPC. 🎯\n\n"
                     "I'd still be glad to share our PPC audit checklist with you if you're interested. Let me know if you have 10 minutes next week."
                 )
@@ -402,7 +402,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Customer Feedback — Conversion",
         "subject": "Something I noticed in your Amazon feedback",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon listings and noticed some customer feedback that caught my attention.\n\n"
             "Negative feedback doesn’t always mean there’s something wrong with the product itself.\n\n"
@@ -413,14 +413,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Review Sentiment Analysis, Listing Clarification, Customer Expectation Alignment",
         "recommended_signals": "Reviews mentioning misunderstanding of size/usage/ingredients, return rate signals, listing confusion",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[Rating]", "[ReviewCount]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[Rating]", "[ReviewCount]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: Something I noticed in your Amazon feedback",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Nudging this back up before another shopper misreads the product dimensions. 📏\n\n"
                     "Updating one infographic or bullet point often cuts return rates and negative reviews in half.\n\n"
                     "Would you have 10 minutes next week to take a look together?"
@@ -430,7 +430,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Something I noticed in your Amazon feedback",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Final quick note on this. If customer questions and review expectations are already under control, no worries at all!\n\n"
                     "If you ever want an audit of review trends on your listings, feel free to reach back out."
                 )
@@ -443,7 +443,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Reconciliation — FBA",
         "subject": "Something worth checking on Amazon",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I wanted to reach out about something that can easily get overlooked on Amazon — reconciliation.\n\n"
             "We recently found 161 shipment discrepancies for a client.\n\n"
@@ -457,7 +457,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "FBA Inbound Reconciliation, Cubiscan Fee Audit, Amazon Reimbursement Recovery",
         "recommended_signals": "FBA seller, heavy shipment volume, high inventory velocity, potential fee discrepancies",
-        "allowed_variables": ["[Name]", "[Company]", "[Location]", "[ClientStory]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Location]", "[ClientStory]"],
         "client_story_allowed": True,
         "client_story_id": "fba_reconciliation_audit",
         "followups": [
@@ -465,7 +465,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 3,
                 "subject": "Re: Something worth checking on Amazon",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Just popping this back up before it gets lost in the inbox shuffle. 😄\n\n"
                     "Wanted to see if you had a chance to look at my note about reconciliation.\n\n"
                     "Amazon warehouse errors happen to every brand, and I still think it's worth a quick look to see if you have funds sitting on the table.\n\n"
@@ -476,7 +476,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Something worth checking on Amazon",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Checking in one last time before Amazon's 18-month claim window quietly rolls forward. ⏳\n\n"
                     "If you already reconcile your FBA shipments regularly, you're ahead of 90% of sellers. If not, happy to take a quick look whenever you have 10 minutes."
                 )
@@ -489,7 +489,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Amazon Account — Technical / Buy Box",
         "subject": "A quick look at your Amazon account",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon presence and noticed a few areas that may need attention on the account side.\n\n"
             "Things like Buy Box issues, listing availability, variations, suppressed products, and other Amazon account problems can quietly affect sales.\n\n"
@@ -498,14 +498,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Buy Box Suppression Fixes, ASIN Reinstatement, Variation Theme Cleanup",
         "recommended_signals": "Currently unavailable ASINs, lost Buy Box to 3P sellers, broken variation branches, suppressed listings",
-        "allowed_variables": ["[Name]", "[Company]", "[ASIN]", "[AmazonIssue]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[ASIN]", "[AmazonIssue]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: A quick look at your Amazon account",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Bringing this back up before Seller Central decides to invent another mystery warning badge. 🛠️\n\n"
                     "Technical account hiccups and suppressed variations quietly bleed sales every day they stay unresolved.\n\n"
                     "Would you have 10 minutes next week to take a look together?"
@@ -515,7 +515,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: A quick look at your Amazon account",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Last ping from me! Hope your Buy Box and variation trees are in good shape.\n\n"
                     "If you ever hit an account roadblock with Amazon support that won't budge, feel free to give us a shout."
                 )
@@ -528,7 +528,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Full Amazon Growth / Catalog",
         "subject": "Your Amazon catalog",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I spent some time looking through your Amazon catalog and noticed there are several areas where the account could be working harder.\n\n"
             "That can mean listing content on one product, PPC on another, SEO on another, and operational issues somewhere else.\n\n"
@@ -537,14 +537,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Full Catalog Strategy, Holistic Amazon Channel Management",
         "recommended_signals": "Large multi-SKU catalog, mixed performance (some top sellers, many lagging SKUs), complex operations",
-        "allowed_variables": ["[Name]", "[Company]", "[SpecificObservation]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[SpecificObservation]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: Your Amazon catalog",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Floating this back up before the weekend! 📬\n\n"
                     "When catalog issues are scattered across multiple products, fixing the top 20% of levers usually produces 80% of the revenue lift.\n\n"
                     "Would you have some time next week to take a look together?"
@@ -554,7 +554,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Your Amazon catalog",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Final follow-up on my end. If managing the Amazon catalog is already completely humming along, that's great to hear.\n\n"
                     "If you'd ever like a bird's-eye breakdown of the catalog, let me know what works and I'll send an invite."
                 )
@@ -567,7 +567,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Competitor / Market Opportunity",
         "subject": "Something I noticed around your Amazon category",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking at your Amazon category and noticed competitors are taking up space around your products.\n\n"
             "Some of that comes through organic rankings.\n\n"
@@ -577,14 +577,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Competitor Conquesting, Defensive Ad Targeting, Category Share Expansion",
         "recommended_signals": "Competitor ads running directly on product page carousel, competitors ranking above brand on key terms",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[Keyword]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[Keyword]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: Something I noticed around your Amazon category",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Bumping this before your competitors buy up any more ad space on your own branded search terms. 🥊\n\n"
                     "Defending your product pages while conquering category search terms is usually one of our fastest wins.\n\n"
                     "Would you be open to taking a look together next week?"
@@ -594,7 +594,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Something I noticed around your Amazon category",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Quick last check-in. If you're already holding the category line against competitors, kudos to your team!\n\n"
                     "If you ever want to see where competitors are bidding on your products, feel free to give me a shout."
                 )
@@ -607,7 +607,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Brand Story → Amazon",
         "subject": "Your brand story on Amazon",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I spent some time looking at your brand and then your Amazon presence.\n\n"
             "There’s a clear story behind the products, but some of that gets lost once shoppers reach the Amazon listing.\n\n"
@@ -618,14 +618,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Brand Story Module Setup, Amazon Storefront Architecture, D2C-to-Amazon Translation",
         "recommended_signals": "Strong DTC website or social brand identity, but Amazon listings look generic or incomplete",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[Location]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[Location]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 3,
                 "subject": "Re: Your brand story on Amazon",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Popping this back up before the inbox waves wash it away. 🌊\n\n"
                     "You've clearly built a distinct brand identity off Amazon, and translating that into the Amazon storefront usually lifts average order value right away.\n\n"
                     "Would you have 10 minutes next week to take a look together?"
@@ -635,7 +635,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: Your brand story on Amazon",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Last note from me! If you prefer keeping the Amazon presence low-key for now, totally understand.\n\n"
                     "If you ever want to see examples of how we've brought brand stories to life on Amazon Storefronts, let me know and I'll send an invite."
                 )
@@ -648,7 +648,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Product / SKU Opportunity",
         "subject": "One product caught my attention",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven’t been properly introduced, but I’m Jack with Sellomize.\n\n"
             "I was looking through your Amazon catalog and one product caught my attention.\n\n"
             "It looks like there’s a good product there, but it may not be getting the same level of attention as some of the other SKUs.\n\n"
@@ -661,7 +661,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Secondary SKU Repositioning, Catalog Long-Tail Optimization",
         "recommended_signals": "Good review ratings on a secondary SKU, but low sales volume / overlooked positioning",
-        "allowed_variables": ["[Name]", "[Company]", "[Product]", "[ASIN]", "[Rating]", "[Location]", "[ClientStory]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[Product]", "[ASIN]", "[Rating]", "[Location]", "[ClientStory]"],
         "client_story_allowed": True,
         "client_story_id": "sku_listing_revamp",
         "followups": [
@@ -669,7 +669,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 3,
                 "subject": "Re: One product caught my attention",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Just popping this back up before it gets lost in the inbox shuffle. 😄\n\n"
                     "Wanted to see if you had a moment to consider that secondary SKU on your catalog.\n\n"
                     "I still think with a few listing tweaks it could become a serious revenue driver.\n\n"
@@ -680,7 +680,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
                 "delay_days": 7,
                 "subject": "Re: One product caught my attention",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Final friendly ping from me! ☕\n\n"
                     "If your hero products are already keeping your team at 110% capacity, I completely understand.\n\n"
                     "Whenever you're ready to explore that SKU, let me know and I'll send over a calendar invite."
@@ -694,7 +694,7 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         "category": "Follow Up — Friendly Reminder",
         "subject": "Re: [Company] + Sellomize",
         "body": (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "Just popping this back up before it gets lost in the inbox shuffle. 😄\n\n"
             "Wanted to see if you had a chance to look at my note about [AmazonIssue] for [Company].\n\n"
             "I still think it’s worth a quick look.\n\n"
@@ -702,14 +702,14 @@ CORE_15_TEMPLATES: List[Dict[str, Any]] = [
         ),
         "recommended_services": "Follow-Up Outreach, Quick Account Alignment",
         "recommended_signals": "Follow-up after initial cold email, bump note, unanswered initial outreach",
-        "allowed_variables": ["[Name]", "[Company]", "[AmazonIssue]"],
+        "allowed_variables": ["{first_name}", "[Company]", "[AmazonIssue]"],
         "client_story_allowed": False,
         "followups": [
             {
                 "delay_days": 4,
                 "subject": "Re: [Company] + Sellomize",
                 "body": (
-                    "Hi [Name],\n\n"
+                    "Hi {first_name},\n\n"
                     "Assuming you didn't get eaten by the Amazon algorithm this week... 😅\n\n"
                     "Wanted to check in one last time on whether you'd like a quick fresh set of eyes on the Amazon account.\n\n"
                     "Let me know if next Tuesday or Wednesday works for a brief 10-minute chat."
@@ -916,7 +916,7 @@ def resolve_sellomize_email(
        - If Location is verified: Subject format is '[Company] + [Location] + Sellomize'.
        - If unverified/empty: Subject format is '[Company] + Sellomize'. Never invent city/state.
     2. Contact Name Rule:
-       - If contact name is unavailable, replaces 'Hi [Name],' with 'Hi,' (no fake names).
+       - If contact name is unavailable, replaces 'Hi {first_name},' with 'Hi,' (no fake names).
     3. Unverified Variables:
        - Omitted cleanly without leaving dangling brackets or broken spacing.
     4. Client Proof:
@@ -1019,14 +1019,19 @@ def resolve_sellomize_email(
 
     # Contact greeting fallback
     if not var_map["name"]:
+        body = re.sub(r'Hi\s+\{first_name\},', 'Hi,', body, flags=re.IGNORECASE)
+        body = re.sub(r'Hi\s+\{firstname\},', 'Hi,', body, flags=re.IGNORECASE)
+        body = re.sub(r'Hi\s+\{name\},', 'Hi,', body, flags=re.IGNORECASE)
         body = re.sub(r'Hi\s+\[Name\],', 'Hi,', body, flags=re.IGNORECASE)
         body = re.sub(r'Hi\s+\[First Name\],', 'Hi,', body, flags=re.IGNORECASE)
         body = re.sub(r'Hi\s+\[firstname\],', 'Hi,', body, flags=re.IGNORECASE)
 
-    # Token replacements for body
+    # Token replacements for body (both [token] and {token} formats)
     for k, v in var_map.items():
-        pattern = re.compile(rf'\[{re.escape(k)}\]', re.IGNORECASE)
-        body = pattern.sub(v, body)
+        pattern_bracket = re.compile(rf'\[{re.escape(k)}\]', re.IGNORECASE)
+        body = pattern_bracket.sub(v, body)
+        pattern_curly = re.compile(rf'\{{{re.escape(k)}\}}', re.IGNORECASE)
+        body = pattern_curly.sub(v, body)
 
     # If [AmazonIssue] is missing/omitted, smooth out awkward phrasing like "note about for [Company]"
     if not var_map.get("amazonissue"):

@@ -191,8 +191,11 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any], client_st
     if "[Company] + [Location] + Sellomize" in text and not is_verified_loc:
         text = text.replace("[Company] + [Location] + Sellomize", "[Company] + Sellomize")
 
-    # Name Fallback: "Hi [Name]," or "Hi [First Name]," -> "Hi," if no name
+    # Name Fallback: "Hi {first_name}," or "Hi [Name]," -> "Hi," if no name
     if not full_name:
+        text = re.sub(r'Hi\s+\{first_name\},', 'Hi,', text, flags=re.IGNORECASE)
+        text = re.sub(r'Hi\s+\{firstname\},', 'Hi,', text, flags=re.IGNORECASE)
+        text = re.sub(r'Hi\s+\{name\},', 'Hi,', text, flags=re.IGNORECASE)
         text = re.sub(r'Hi\s+\[Name\],', 'Hi,', text, flags=re.IGNORECASE)
         text = re.sub(r'Hi\s+\[First Name\],', 'Hi,', text, flags=re.IGNORECASE)
         text = re.sub(r'Hi\s+\[firstname\],', 'Hi,', text, flags=re.IGNORECASE)

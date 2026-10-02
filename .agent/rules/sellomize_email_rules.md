@@ -34,7 +34,7 @@ Specifically designed for the first follow-up after the initial cold email:
 
 **Body:**
 ```
-Hi [Name],
+Hi {first_name},
 
 Just popping this back up before it gets lost in the inbox shuffle. 😄
 
@@ -66,7 +66,7 @@ Would you be open to taking a look together? Let me know what works and I’ll s
 
 - **Zero Invention Rule**: NEVER invent contact names, job titles, locations, revenue numbers, ROAS, reviews, or unverified claims.
 - **Location Rule**: Only insert `[Location]` in subject lines (`[Company] + [Location] + Sellomize`) if explicitly verified. If unverified, fall back cleanly to `[Company] + Sellomize`.
-- **Contact Name Fallback**: If the prospect's name is missing or unknown, fall back to `"Hi,"`. NEVER write `"Hi [Name],"` or insert a fictitious name.
+- **Contact Name Fallback**: If the prospect's name is missing or unknown, fall back to `"Hi,"`. NEVER write `"Hi {first_name},"` or insert a fictitious name.
 - **Client Stories Separation**:
   - All metrics (e.g. 161 shipments, $8,145.91 reimbursement, 6.99 ROAS) must strictly be attributed to Sellomize client engagements, NEVER the prospect.
   - Stored strictly in 3-part structure:
@@ -82,7 +82,7 @@ Would you be open to taking a look together? Let me know what works and I’ll s
 - **Micro-Paragraphs**: 1 to 2 sentences per paragraph with clean blank lines between.
 - **Opening**: Direct and natural:
   ```
-  Hi [Name],
+  Hi {first_name},
 
   We haven’t been properly introduced, but I’m Jack with Sellomize.
   ```

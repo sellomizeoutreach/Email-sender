@@ -55,15 +55,15 @@ _TOKEN_RE = re.compile(r'\[([A-Za-z0-9_]+)\]|\{([A-Za-z0-9_]+)\}')
 DEFAULT_COPIES = {
     1: {
         "subj": "Quick observation for [Company]",
-        "body": "Hi [Name],\n\nI noticed [Company] and wanted to reach out regarding your growth.\n\nBest regards,",
+        "body": "Hi {first_name},\n\nI noticed [Company] and wanted to reach out regarding your growth.\n\nBest regards,",
     },
     2: {
         "subj": "Re: Quick observation for [Company]",
-        "body": "Hi [Name],\n\nJust following up on my previous note.\n\nBest,",
+        "body": "Hi {first_name},\n\nJust following up on my previous note.\n\nBest,",
     },
     3: {
         "subj": "Final note for [Company]",
-        "body": "Hi [Name],\n\nI haven't heard back, so I'll assume the timing isn't right. Wishing you success!",
+        "body": "Hi {first_name},\n\nI haven't heard back, so I'll assume the timing isn't right. Wishing you success!",
     },
 }
 
@@ -392,7 +392,7 @@ def render_compose_tab(contacts=None, templates=None):
     # Default body / subject
     if "compose_body_html" not in st.session_state:
         st.session_state["compose_body_html"] = (
-            "Hi [Name],\n\n"
+            "Hi {first_name},\n\n"
             "We haven't been properly introduced, but I was looking through [Company] on Amazon and noticed a number of listings showing currently unavailable.\n\n"
             "When a customer searches and finds it unavailable, the sale simply stops there. I'd be glad to take a look together."
         )
@@ -555,7 +555,7 @@ def render_compose_tab(contacts=None, templates=None):
                     st.session_state["compose_followups"].append({
                         "delay_days": default_delay,
                         "subject": re_subj,
-                        "body": "Hi [Name],\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
+                        "body": "Hi {first_name},\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
                     })
                     st.rerun()
             with seq_hdr3:
@@ -579,7 +579,7 @@ def render_compose_tab(contacts=None, templates=None):
                     st.session_state["compose_followups"].append({
                         "delay_days": default_delay,
                         "subject": re_subj,
-                        "body": "Hi [Name],\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
+                        "body": "Hi {first_name},\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
                     })
                     st.rerun()
 
@@ -662,8 +662,8 @@ def render_compose_tab(contacts=None, templates=None):
                 # Quick token insertion buttons for follow-up
                 c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3], vertical_alignment="center")
                 with c_tok1:
-                    if st.button("👤 [Name]", key=f"comp_fu_tok_name_{idx}", use_container_width=True):
-                        fu["body"] = fu["body"] + " [Name]"
+                    if st.button("👤 {first_name}", key=f"comp_fu_tok_name_{idx}", use_container_width=True):
+                        fu["body"] = fu["body"] + " {first_name}"
                         st.session_state[f"comp_fu_{idx}_body_in"] = fu["body"]
                         st.rerun()
                 with c_tok2:

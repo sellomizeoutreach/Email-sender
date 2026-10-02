@@ -260,7 +260,7 @@ def render_bulk_tab():
                         "delay_days": delay,
                         "subject":    f"{re_prefix}{init_subj}",
                         "body":       (
-                            "Hi [Name],\n\n"
+                            "Hi {first_name},\n\n"
                             "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
                             "Would love to connect if the timing works.\n\n"
                             "Best regards,"
@@ -304,7 +304,7 @@ def render_bulk_tab():
                         "delay_days": delay,
                         "subject":    f"{re_prefix}{init_subj}",
                         "body":       (
-                            "Hi [Name],\n\n"
+                            "Hi {first_name},\n\n"
                             "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
                             "Would love to connect if the timing works.\n\n"
                             "Best regards,"
@@ -430,7 +430,7 @@ def render_bulk_tab():
                 st.markdown("<span class='lbl'>Body</span>", unsafe_allow_html=True)
                 init_cust_body = st.session_state.get(
                     "bulk_body_html",
-                    "Hi [Name],\n\nI noticed [Company] and wanted to connect."
+                    "Hi {first_name},\n\nI noticed [Company] and wanted to connect."
                 )
                 if is_rich_editor_enabled():
                     current_body = render_rich_editor(
@@ -483,8 +483,8 @@ def render_bulk_tab():
 
                 chip_c = st.columns([1.2, 1.5, 1.6, 2.7])
                 with chip_c[0]:
-                    if st.button("👤 Name", key=f"bulk_fu_{i}_chip_name", help="Insert [Name] token", use_container_width=True):
-                        step["body"] = step["body"] + " [Name]"
+                    if st.button("👤 {first_name}", key=f"bulk_fu_{i}_chip_name", help="Insert {first_name} token", use_container_width=True):
+                        step["body"] = step["body"] + " {first_name}"
                         st.session_state[f"bulk_fu_{i}_body"] = step["body"]
                         st.rerun()
                 with chip_c[1]:

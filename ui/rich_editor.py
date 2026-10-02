@@ -476,8 +476,8 @@ def render_rich_editor(
     chip_cols = st.columns([1.3, 1.5, 1.6, 1.5, 1.1], vertical_alignment="center")
 
     with chip_cols[0]:
-        if st.button("👤 Name", key=f"{key}_chip_name", help="Insert [Name] token", use_container_width=True):
-            _insert_text(" [Name]")
+        if st.button("👤 First Name", key=f"{key}_chip_name", help="Insert {first_name} token", use_container_width=True):
+            _insert_text(" {first_name}")
 
     with chip_cols[1]:
         if st.button("🏢 Company", key=f"{key}_chip_comp", help="Insert [Company] token", use_container_width=True):
