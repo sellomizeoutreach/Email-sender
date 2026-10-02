@@ -52,29 +52,40 @@ def sanitize_email_html(html_str: str) -> str:
     return html.escape(str(html_str))
 
 
-def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
+def inject_variables(template_text: str, contact_data: Dict[str, Any], client_story_key: Optional[str] = None) -> str:
     """
-    Replace bracketed variables in a template (e.g., [Name], [Company], [Email], [Role])
-    with the corresponding data from the contact record.
-    Supports case-insensitive replacement and custom variables stored in JSON.
+    Replace bracketed variables in a template (e.g., [Name], [Company], [Location], [Product], [ASIN], etc.)
+    with corresponding contact/research data.
+    Supports 21 Sellomize prospect/Amazon research variables:
+    [Name], [First Name], [Company], [Product], [ASIN], [AmazonIssue], [RelevantService],
+    [SpecificObservation], [SupportingObservation], [Location], [Role], [Keyword],
+    [OrganicRank], [AdRank], [ListingScore], [Rating], [ReviewCount], [BoughtPastMonth],
+    [BSR], [ClientStory], [ClientStoryFound], [ClientStorySolved], [ClientStoryRewarded].
+
+    Strict Fact-Safety Rules:
+    - Fallback 'Hi [Name],' -> 'Hi,' if contact name is empty or missing (never invent a name).
+    - Location is only populated if verified; otherwise omitted cleanly.
+    - [Company] + [Location] + Sellomize falls back to [Company] + Sellomize if location unverified.
+    - Missing variables are omitted cleanly without leaving dangling brackets or broken spacing.
     """
     if not template_text:
         return ""
 
     # Build mapping from contact data
-    var_map = {}
-    if "name" in contact_data and contact_data["name"]:
-        full_n = str(contact_data["name"]).strip()
-        var_map["name"] = full_n
-        first_n = full_n.split()[0] if full_n else ""
-        var_map["firstname"] = first_n
-        var_map["first_name"] = first_n
+    var_map: Dict[str, str] = {}
+    full_name = str(contact_data.get("name") or "").strip()
+    first_name = full_name.split()[0] if full_name else ""
+    if full_name:
+        var_map["name"] = full_name
+        var_map["firstname"] = first_name
+        var_map["first_name"] = first_name
+
     if "email" in contact_data and contact_data["email"]:
         var_map["email"] = str(contact_data["email"]).strip()
     if "company" in contact_data and contact_data["company"]:
         var_map["company"] = str(contact_data["company"]).strip()
 
-    # Include custom variables
+    # Extract custom variables
     custom_vars = contact_data.get("custom_variables_dict") or {}
     if not custom_vars and "custom_variables" in contact_data:
         cv_val = contact_data["custom_variables"]
@@ -88,10 +99,48 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
                 custom_vars = {}
 
     for k, v in custom_vars.items():
-        var_map[k.lower()] = str(v)
-        var_map[k.lower().replace(" ", "").replace("_", "")] = str(v)
+        val_str = str(v).strip()
+        if val_str:
+            var_map[k.lower()] = val_str
+            var_map[k.lower().replace(" ", "").replace("_", "")] = val_str
 
-    # Aliases for 1:1 targeted research fields and legacy variables
+    # Strict Location Handling
+    raw_loc = (
+        custom_vars.get("Verified Location") or
+        custom_vars.get("verified_location") or
+        custom_vars.get("Location") or
+        custom_vars.get("location") or
+        contact_data.get("country_or_timezone") or
+        ""
+    ).strip()
+    is_verified_loc = bool(
+        raw_loc and
+        raw_loc.upper() not in ["LOCAL", "UTC", "UTC+5", "UNKNOWN", "N/A", "NONE", ""] and
+        not raw_loc.startswith("GMT") and
+        not raw_loc.startswith("UTC")
+    )
+    if is_verified_loc:
+        var_map["location"] = raw_loc
+        var_map["verifiedlocation"] = raw_loc
+
+    # Amazon Research 21 Variables Mapping
+    var_map["product"] = str(custom_vars.get("Product") or custom_vars.get("product") or "").strip()
+    var_map["asin"] = str(custom_vars.get("ASIN") or custom_vars.get("asin") or "").strip()
+    var_map["amazonissue"] = str(custom_vars.get("Amazon Issues") or custom_vars.get("amazon_issue") or custom_vars.get("Listing Issues") or custom_vars.get("pain_point") or "").strip()
+    var_map["relevantservice"] = str(custom_vars.get("Relevant Service") or custom_vars.get("relevant_service") or "").strip()
+    var_map["specificobservation"] = str(custom_vars.get("Brand Observation") or custom_vars.get("specific_observation") or contact_data.get("notes") or "").strip()
+    var_map["supportingobservation"] = str(custom_vars.get("Supporting Observation") or custom_vars.get("supporting_observation") or "").strip()
+    var_map["role"] = str(custom_vars.get("Role") or custom_vars.get("role") or "").strip()
+    var_map["keyword"] = str(custom_vars.get("Keyword") or custom_vars.get("keyword") or "").strip()
+    var_map["organicrank"] = str(custom_vars.get("Organic Rank") or custom_vars.get("organic_rank") or "").strip()
+    var_map["adrank"] = str(custom_vars.get("Ad Rank") or custom_vars.get("ad_rank") or "").strip()
+    var_map["listingscore"] = str(custom_vars.get("Listing Score") or custom_vars.get("listing_score") or "").strip()
+    var_map["rating"] = str(custom_vars.get("Rating") or custom_vars.get("rating") or "").strip()
+    var_map["reviewcount"] = str(custom_vars.get("Review Count") or custom_vars.get("review_count") or "").strip()
+    var_map["boughtpastmonth"] = str(custom_vars.get("Bought Past Month") or custom_vars.get("bought_past_month") or "").strip()
+    var_map["bsr"] = str(custom_vars.get("BSR") or custom_vars.get("bsr") or "").strip()
+
+    # Aliases
     aliases = {
         "observation": ["specific_observation", "specificobservation", "brandobservation", "amazonobservation", "listingissue", "listingissues"],
         "specific_observation": ["observation", "specificobservation", "brandobservation", "amazonobservation"],
@@ -102,32 +151,73 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
         "offerangle": ["offer_angle", "angle"],
         "trigger_event": ["triggerevent", "trigger"],
         "triggerevent": ["trigger_event", "trigger"],
-        "proof_story": ["proofstory", "case_study", "casestudy"],
-        "proofstory": ["proof_story", "case_study", "casestudy"],
+        "proof_story": ["proofstory", "case_study", "casestudy", "clientstory"],
+        "proofstory": ["proof_story", "case_study", "casestudy", "clientstory"],
+        "client_story": ["clientstory", "proof_story", "proofstory"],
         "first_name": ["firstname", "first"],
         "firstname": ["first_name", "first"]
     }
     for canon, syns in aliases.items():
-        if canon in var_map:
+        if canon in var_map and var_map[canon]:
             for s in syns:
-                if s not in var_map:
+                if s not in var_map or not var_map[s]:
                     var_map[s] = var_map[canon]
         else:
             for s in syns:
-                if s in var_map:
+                if s in var_map and var_map[s]:
                     var_map[canon] = var_map[s]
                     break
 
+    # Client story resolution if passed
+    if client_story_key:
+        try:
+            from sellomize_templates import APPROVED_CLIENT_STORIES
+            if client_story_key in APPROVED_CLIENT_STORIES:
+                cs = APPROVED_CLIENT_STORIES[client_story_key]
+                var_map["clientstoryfound"] = cs["found"]
+                var_map["clientstorysolved"] = cs["solved"]
+                var_map["clientstoryrewarded"] = cs["rewarded"]
+                var_map["clientstory"] = (
+                    f"What we found: {cs['found']}\n"
+                    f"How we solved it: {cs['solved']}\n"
+                    f"What it rewarded: {cs['rewarded']}"
+                )
+        except Exception as e:
+            logger.debug(f"Could not load APPROVED_CLIENT_STORIES: {e}")
+
+    # Special Location subject line logic:
+    # [Company] + [Location] + Sellomize -> [Company] + Sellomize if location missing
+    text = template_text
+    if "[Company] + [Location] + Sellomize" in text and not is_verified_loc:
+        text = text.replace("[Company] + [Location] + Sellomize", "[Company] + Sellomize")
+
+    # Name Fallback: "Hi [Name]," or "Hi [First Name]," -> "Hi," if no name
+    if not full_name:
+        text = re.sub(r'Hi\s+\[Name\],', 'Hi,', text, flags=re.IGNORECASE)
+        text = re.sub(r'Hi\s+\[First Name\],', 'Hi,', text, flags=re.IGNORECASE)
+        text = re.sub(r'Hi\s+\[firstname\],', 'Hi,', text, flags=re.IGNORECASE)
+
+    # Known variables set to cleanly omit if unverified
+    KNOWN_CLEAN_OMIT = {
+        "location", "verifiedlocation", "product", "asin", "amazonissue", "relevantservice",
+        "specificobservation", "supportingobservation", "role", "keyword", "organicrank",
+        "adrank", "listingscore", "rating", "reviewcount", "boughtpastmonth", "bsr",
+        "clientstory", "clientstoryfound", "clientstorysolved", "clientstoryrewarded"
+    }
+
     # Regex to match [variable_name]
     def replacer(match):
-        token = match.group(1).strip().lower().replace(" ", "").replace("_", "")
+        raw_key = match.group(1).strip()
+        token = raw_key.lower().replace(" ", "").replace("_", "")
         # Check standard token lookup
-        if token in var_map:
+        if token in var_map and var_map[token]:
             return var_map[token]
-        # Also check with original formatting
-        raw_tok = match.group(1).strip().lower()
-        if raw_tok in var_map:
+        raw_tok = raw_key.lower()
+        if raw_tok in var_map and var_map[raw_tok]:
             return var_map[raw_tok]
+        # If it's a known Sellomize variable that is empty/unverified, omit cleanly
+        if token in KNOWN_CLEAN_OMIT or raw_tok in KNOWN_CLEAN_OMIT:
+            return ""
         # Return original token if no matching variable found
         return match.group(0)
 
@@ -137,15 +227,21 @@ def inject_variables(template_text: str, contact_data: Dict[str, Any]) -> str:
         if "|" in inner:
             return match.group(0)
         token = inner.lower().replace(" ", "").replace("_", "")
-        if token in var_map:
+        if token in var_map and var_map[token]:
             return var_map[token]
         raw_tok = inner.lower()
-        if raw_tok in var_map:
+        if raw_tok in var_map and var_map[raw_tok]:
             return var_map[raw_tok]
+        if token in KNOWN_CLEAN_OMIT or raw_tok in KNOWN_CLEAN_OMIT:
+            return ""
         return match.group(0)
 
-    result = re.sub(r'\[([a-zA-Z0-9_\s-]+)\]', replacer, template_text)
+    result = re.sub(r'\[([a-zA-Z0-9_\s-]+)\]', replacer, text)
     result = re.sub(r'\{([a-zA-Z0-9_\s-]+)\}', curly_replacer, result)
+
+    # Clean up double spaces caused by clean variable omission
+    result = re.sub(r'[ \t]{2,}', ' ', result)
+    result = re.sub(r' \n', '\n', result)
     return result
 
 def parse_spintax(text: str) -> str:

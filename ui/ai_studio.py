@@ -35,34 +35,51 @@ from ui.editor import html_to_visual_text
 from ui.components import trigger_toast
 
 
-# Default Bot Training Configuration
+# Default Bot Training Configuration (Trained on Sellomize 15 Core Templates & Rules)
 DEFAULT_SYSTEM_PROMPT = (
-    "You are an elite B2B cold email copywriter for Sellomize Reach. "
-    "Your objective is to craft high-converting, human, concise cold outreach emails. "
-    "Rules:\n"
-    "1. Keep emails under 90 words. Short paragraphs (1-2 sentences each).\n"
-    "2. If an image is provided (such as an Amazon listing or product screenshot), "
-    "specifically cite 1-2 real visual details you notice in the image (e.g. title flaws, missing badges, image angles, pricing, unavailable status).\n"
-    "3. Never use generic corporate jargon like 'leverage', 'delve', 'synergy', 'game-changing', 'in today's fast-paced world'.\n"
-    "4. Use variable tokens where appropriate: [Name], [Company].\n"
-    "5. End with a low-friction call-to-action asking for thoughts or a quick 2-minute review.\n"
-    "6. Format your response strictly as:\n"
-    "SUBJECT: <concise 3-6 word subject line>\n"
+    "You are an elite B2B cold email copywriter for Sellomize, an Amazon & E-commerce growth agency.\n"
+    "Your objective is to craft high-converting, deeply human, concise outreach emails that get opened and replied to.\n\n"
+    "CRITICAL COPYWRITING RULES:\n"
+    "1. Structure & Flow:\n"
+    "   - Keep emails phone-friendly (60–100 words max).\n"
+    "   - 1-2 sentences per paragraph with clean line breaks.\n"
+    "   - Opening: If cold initial email, start with: 'Hi [Name],\\n\\nWe haven’t been properly introduced, but I’m Jack with Sellomize.'\n"
+    "     If prospect name is missing or unknown, fall back to: 'Hi,\\n\\n'\n"
+    "   - Subject Line: Use verified patterns: '[Company] + Sellomize' or '[Company] + [Location] + Sellomize' (ONLY use location if verified, otherwise omit cleanly).\n"
+    "   - Call-to-Action: Always use the low-friction CTA:\n"
+    "     'Would you have some time over the next week or two to take a look together? Let me know what works for you and I’ll send a calendar invite.'\n"
+    "   - Do NOT include automated signature blocks unless requested.\n\n"
+    "2. Strict Fact-Safety (NEVER Hallucinate):\n"
+    "   - NEVER invent contact names, locations, revenue figures, ROAS, reviews, or unverified claims.\n"
+    "   - Any client outcome or case study numbers (e.g. 161 shipments, $8,145.91 reimbursement, 6.99 ROAS) must strictly be labeled as SELLOMIZE CLIENT RESULTS, never prospect data.\n\n"
+    "3. Follow-Ups & Humor:\n"
+    "   - If generating a follow-up or bump, keep it distinct and short (under 50 words).\n"
+    "   - Include a small, tasteful, human joke (e.g. 'bringing this back before your inbox buries it deeper than page 5 of Amazon search 🔍', or 'Assuming you didn't get eaten by the Amazon algorithm this week... 😅').\n"
+    "   - Never repeat the full pitch or case study in a follow-up.\n\n"
+    "4. FORBIDDEN CORPORATE JARGON (Strictly Banned):\n"
+    "   - NEVER use: leverage, utilize, robust, seamless, delve, streamline, unlock, elevate, game-changer, unparalleled, comprehensive, facilitate, additionally, numerous, significant, ensure, optimal, holistic, cutting-edge, innovative, dynamic, foster, underscore, testament, landscape, realm, tapestry, endeavor, ascertain, commence, procure.\n"
+    "   - Banned openings: 'I hope this email finds you well', 'I wanted to reach out', 'I noticed you may be', 'Great opportunity'.\n\n"
+    "5. Format strictly as:\n"
+    "SUBJECT: <subject line>\n"
     "BODY:\n"
     "<email body text>"
 )
 
 DEFAULT_AGENCY_SERVICES = (
-    "Sellomize is an Amazon & E-commerce growth agency. We specialize in: "
-    "Amazon listing optimization, fixing unavailable/suppressed ASINs, A+ Content & Storefront design, "
-    "PPC optimization, and improving click-through and conversion rates."
+    "Sellomize is an Amazon & E-commerce growth partner. Core expertise:\n"
+    "- Full-Service Amazon Growth: listing content, PPC, SEO, and catalog positioning.\n"
+    "- Listing Conversion: SEO, titles, bullets, product images, infographics, video, and A+ Content.\n"
+    "- PPC Optimization: trimming organic/sponsored overlap, keyword rank expansion, scaling budget to high-converting ASINs.\n"
+    "- FBA Inventory & Reconciliation: auditing lost shipments and Cubiscan measurement errors for cash reimbursements.\n"
+    "- Technical Account Health: Buy Box suppression, stranded inventory, variation cleanup, and competitor conquesting."
 )
 
 DEFAULT_GUIDELINES = (
-    "- Do: Reference specific observations from the attached screenshot.\n"
-    "- Do: Sound like a friendly peer or specialist, not a pushy sales pitch.\n"
-    "- Don't: Introduce yourself with 'My name is X and I work at Y'. Jump straight to the point.\n"
-    "- Don't: Write walls of text or include multiple links."
+    "- Do: Write like a specialist sending a quick, thoughtful note from an iPhone.\n"
+    "- Do: Reference concrete observations from the attached screenshot or Amazon research.\n"
+    "- Do: Add light, witty humor to follow-ups.\n"
+    "- Don't: Sound like generic AI or corporate marketing copy.\n"
+    "- Don't: Invent unverified statistics or make false promises."
 )
 
 
@@ -193,6 +210,7 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
             target_name = ""
             target_notes = ""
 
+            selected_lead_data = None
             if lead_source_choice == "From CRM Leads":
                 if all_contacts:
                     lead_map = {
@@ -207,6 +225,7 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                     )
                     chosen_lead = lead_map[chosen_lbl]
                     selected_lead_id = chosen_lead["id"]
+                    selected_lead_data = chosen_lead
                     target_company = chosen_lead.get("company") or ""
                     target_name = chosen_lead.get("name") or ""
                     target_notes = chosen_lead.get("notes") or ""
@@ -221,8 +240,56 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                 with c2:
                     target_name = st.text_input("Contact Name", placeholder="e.g. Danielle Nadick", key="ai_custom_name")
 
+            # -----------------------------------------------------------------
+            # Template Recommendation & Selection
+            # -----------------------------------------------------------------
+            from sellomize_templates import (
+                CORE_15_TEMPLATES,
+                APPROVED_CLIENT_STORIES,
+                recommend_template_for_lead
+            )
+
+            rec_tpl = None
+            rec_reason = ""
+            if selected_lead_data:
+                rec_tpl, rec_reason = recommend_template_for_lead(selected_lead_data)
+
             st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-            st.markdown("<span class='lbl'>2. Multimodal Image Analysis (Amazon Listing / Audit Screenshot)</span>", unsafe_allow_html=True)
+            st.markdown("<span class='lbl'>2. Sellomize Core Template / Framework</span>", unsafe_allow_html=True)
+
+            tpl_choices = ["AI Custom Framework (Write from scratch)"] + [
+                f"{t['id']}. {t['category']}" for t in CORE_15_TEMPLATES
+            ]
+
+            def_idx = 0
+            if rec_tpl:
+                match_label = f"{rec_tpl['id']}. {rec_tpl['category']}"
+                if match_label in tpl_choices:
+                    def_idx = tpl_choices.index(match_label)
+                    st.success(f"🎯 **Auto-Recommended Template:** {rec_tpl['category']}\n*{rec_reason}*")
+
+            chosen_tpl_option = st.selectbox(
+                "Framework / Template Base",
+                tpl_choices,
+                index=def_idx,
+                key="ai_tpl_framework_select"
+            )
+
+            # Optional 3-Part Client Proof selection
+            selected_story_key = None
+            if "PPC" in chosen_tpl_option or "Reconciliation" in chosen_tpl_option or "Product" in chosen_tpl_option:
+                st.caption("Include verified 3-part Sellomize Client Proof:")
+                story_opts = ["None", "PPC Scaling ($100k sales / 6.99 ROAS)", "FBA Reconciliation ($9,602 recovered)", "Overlooked SKU Repositioning"]
+                chosen_story_opt = st.selectbox("Client Proof", story_opts, key="ai_story_opt")
+                if "PPC" in chosen_story_opt:
+                    selected_story_key = "ppc_scaling"
+                elif "FBA" in chosen_story_opt:
+                    selected_story_key = "reconciliation_fba"
+                elif "Overlooked" in chosen_story_opt:
+                    selected_story_key = "overlooked_sku"
+
+            st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+            st.markdown("<span class='lbl'>3. Multimodal Image Analysis (Amazon Listing / Audit Screenshot)</span>", unsafe_allow_html=True)
             st.caption("Upload a screenshot of their Amazon product listing, storefront, search results, or competitor audit.")
 
             uploaded_image = st.file_uploader(
@@ -254,13 +321,14 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                     st.error(f"Image processing error: {img_err}")
 
             st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-            st.markdown("<span class='lbl'>3. Pitch Objective &amp; Angles</span>", unsafe_allow_html=True)
+            st.markdown("<span class='lbl'>4. Pitch Objective &amp; Angles</span>", unsafe_allow_html=True)
 
             pitch_angles = [
-                "Listing Audit Flaw (Identify 1-2 real flaws in title/images/A+ and offer free audit)",
-                "Currently Unavailable / Suppressed ASIN (Point out lost sales on unavailable listings)",
-                "Competitor Comparison (Point out where competitors are outranking or out-converting)",
-                "Follow-Up / Bump (Referencing the audit observation with a fresh bump)",
+                "Initial Outreach (Cold Introduction with Specific Observation)",
+                "Follow-Up / Bump (Short, human note with light humor)",
+                "Listing Audit Flaw (Identify 1-2 real flaws in title/images/A+)",
+                "Currently Unavailable / Suppressed ASIN (Point out lost sales)",
+                "Competitor Comparison (Point out where competitors are outranking)",
                 "Custom Directive (Describe your own prompt below)"
             ]
 
@@ -272,7 +340,7 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
 
             custom_prompt_input = st.text_area(
                 "Specific Instructions or Context (Optional)",
-                placeholder="e.g. Focus on their missing A+ content and low review velocity. Offer a 3-minute video teardown.",
+                placeholder="e.g. Reference their low review velocity and offer a quick 5-minute Loom breakdown.",
                 key="ai_custom_directive",
                 height=70
             )
@@ -306,7 +374,17 @@ def render_ai_studio_tab(all_contacts: Optional[List[Dict[str, Any]]] = None):
                         if target_name:
                             user_prompt += f"Target Contact: {target_name}\n"
                         if target_notes:
-                            user_prompt += f"CRM Notes on Lead: {target_notes}\n"
+                            user_prompt += f"CRM Notes / Research: {target_notes}\n"
+                        if chosen_tpl_option and "AI Custom Framework" not in chosen_tpl_option:
+                            user_prompt += f"Base Sellomize Category / Template: {chosen_tpl_option}\n"
+                        if selected_story_key and selected_story_key in APPROVED_CLIENT_STORIES:
+                            st_item = APPROVED_CLIENT_STORIES[selected_story_key]
+                            user_prompt += (
+                                f"Client Proof Story (Label as agency outcome, never prospect data):\n"
+                                f"- Found: {st_item['found']}\n"
+                                f"- Solved: {st_item['solved']}\n"
+                                f"- Rewarded: {st_item['rewarded']}\n"
+                            )
                         user_prompt += f"Pitch Angle: {selected_angle}\n"
                         if custom_prompt_input.strip():
                             user_prompt += f"Additional Directives: {custom_prompt_input.strip()}\n"

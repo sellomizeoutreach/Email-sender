@@ -312,7 +312,19 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                 ("name", "TEXT DEFAULT ''"),
                 ("subject", "TEXT DEFAULT ''"),
                 ("body_html", "TEXT DEFAULT ''"),
-                ("updated_at", "TEXT DEFAULT ''")
+                ("updated_at", "TEXT DEFAULT ''"),
+                ("template_category", "TEXT DEFAULT 'General'"),
+                ("allowed_variables", "TEXT DEFAULT '[]'"),
+                ("recommended_services", "TEXT DEFAULT ''"),
+                ("recommended_signals", "TEXT DEFAULT ''"),
+                ("client_story_allowed", "INTEGER DEFAULT 0"),
+                ("client_story_found", "TEXT DEFAULT ''"),
+                ("client_story_solved", "TEXT DEFAULT ''"),
+                ("client_story_rewarded", "TEXT DEFAULT ''"),
+                ("followup_templates_json", "TEXT DEFAULT '[]'"),
+                ("is_system_template", "INTEGER DEFAULT 0"),
+                ("active", "INTEGER DEFAULT 1"),
+                ("version", "INTEGER DEFAULT 1")
             ]
             for col_name, col_def in template_migrations:
                 try:
@@ -645,20 +657,11 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                     VALUES (?, ?)
                 """, (key, val))
 
-            # Add sample template if none exist
-            cursor.execute("SELECT COUNT(*) as count FROM templates")
-            if cursor.fetchone()["count"] == 0:
-                now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-                sample_template = (
-                    "{Hi|Hello|Hey} [Name],<br><br>"
-                    "I was looking into [Company]'s current product catalog and noticed a few {quick opportunities|easy optimizations|high-impact improvements} on your mobile listings.<br><br>"
-                    "We recently prepared a 3-point listing teardown showing how {enhancing bullet clarity|optimizing infographics|refining backend keywords} helped similar brands boost conversion rates by 18-24%.<br><br>"
-                    "Would you be {open to|interested in} reviewing a quick 3-minute video breakdown for [Company] this week?"
-                )
-                cursor.execute("""
-                    INSERT INTO templates (template_name, body_content, created_at)
-                    VALUES (?, ?, ?)
-                """, ("E-Commerce Listing Audit Outreach", sample_template, now_iso))
+            # Ensure Core 15 Sellomize templates are seeded and active
+            try:
+                seed_sellomize_core_templates(conn)
+            except Exception as seed_err:
+                logger.warning(f"Error seeding Sellomize core templates: {seed_err}")
 
             # Add sample contacts with tags if none exist
             cursor.execute("SELECT COUNT(*) as count FROM contacts")
@@ -1875,6 +1878,18 @@ def create_template(
     name: Optional[str] = None,
     subject: Optional[str] = None,
     body_html: Optional[str] = None,
+    template_category: str = "General",
+    allowed_variables: Optional[Union[List[str], str]] = None,
+    recommended_services: str = "",
+    recommended_signals: str = "",
+    client_story_allowed: int = 0,
+    client_story_found: str = "",
+    client_story_solved: str = "",
+    client_story_rewarded: str = "",
+    followup_templates_json: Optional[Union[List[Dict[str, Any]], str]] = None,
+    is_system_template: int = 0,
+    active: int = 1,
+    version: int = 1,
     db_path: str = DB_FILE
 ) -> int:
     final_name = (name or template_name or "New Template").strip()
@@ -1882,25 +1897,69 @@ def create_template(
     final_subj = (subject or "").strip()
     now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
+    vars_str = json.dumps(allowed_variables) if isinstance(allowed_variables, list) else (allowed_variables or "[]")
+    fu_str = json.dumps(followup_templates_json) if isinstance(followup_templates_json, list) else (followup_templates_json or "[]")
+
     conn = get_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO templates (template_name, name, subject, body_content, body_html, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (final_name, final_name, final_subj, final_body, final_body, now_iso, now_iso))
+        INSERT INTO templates (
+            template_name, name, subject, body_content, body_html,
+            template_category, allowed_variables, recommended_services,
+            recommended_signals, client_story_allowed, client_story_found,
+            client_story_solved, client_story_rewarded, followup_templates_json,
+            is_system_template, active, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        final_name, final_name, final_subj, final_body, final_body,
+        template_category or "General", vars_str, recommended_services or "",
+        recommended_signals or "", int(client_story_allowed or 0),
+        client_story_found or "", client_story_solved or "", client_story_rewarded or "",
+        fu_str, int(is_system_template or 0), int(active if active is not None else 1),
+        int(version or 1), now_iso, now_iso
+    ))
     tpl_id = cursor.lastrowid
     conn.commit()
     conn.close()
     auto_save_backup(db_path)
     return tpl_id
 
-def get_templates(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+def get_templates(db_path: str = DB_FILE, active_only: bool = False, category: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM templates ORDER BY id DESC")
+    query = "SELECT * FROM templates WHERE 1=1"
+    params = []
+    if active_only:
+        query += " AND (active = 1 OR active IS NULL)"
+    if category and category.strip() and category != "All Categories":
+        query += " AND template_category = ?"
+        params.append(category.strip())
+    query += " ORDER BY is_system_template DESC, id ASC"
+
+    cursor.execute(query, tuple(params))
     rows = cursor.fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    res = []
+    for r in rows:
+        d = dict(r)
+        # Parse allowed_variables if JSON
+        if isinstance(d.get("allowed_variables"), str):
+            try:
+                d["allowed_variables_list"] = json.loads(d["allowed_variables"])
+            except Exception:
+                d["allowed_variables_list"] = []
+        else:
+            d["allowed_variables_list"] = d.get("allowed_variables") or []
+        # Parse followup_templates_json if JSON
+        if isinstance(d.get("followup_templates_json"), str):
+            try:
+                d["followup_templates_list"] = json.loads(d["followup_templates_json"])
+            except Exception:
+                d["followup_templates_list"] = []
+        else:
+            d["followup_templates_list"] = d.get("followup_templates_json") or []
+        res.append(d)
+    return res
 
 def get_template_by_id(template_id: int, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
     conn = get_connection(db_path)
@@ -1908,7 +1967,24 @@ def get_template_by_id(template_id: int, db_path: str = DB_FILE) -> Optional[Dic
     cursor.execute("SELECT * FROM templates WHERE id = ?", (template_id,))
     row = cursor.fetchone()
     conn.close()
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    if isinstance(d.get("allowed_variables"), str):
+        try:
+            d["allowed_variables_list"] = json.loads(d["allowed_variables"])
+        except Exception:
+            d["allowed_variables_list"] = []
+    else:
+        d["allowed_variables_list"] = d.get("allowed_variables") or []
+    if isinstance(d.get("followup_templates_json"), str):
+        try:
+            d["followup_templates_list"] = json.loads(d["followup_templates_json"])
+        except Exception:
+            d["followup_templates_list"] = []
+    else:
+        d["followup_templates_list"] = d.get("followup_templates_json") or []
+    return d
 
 def update_template(
     template_id: int,
@@ -1917,6 +1993,16 @@ def update_template(
     name: Optional[str] = None,
     subject: Optional[str] = None,
     body_html: Optional[str] = None,
+    template_category: Optional[str] = None,
+    allowed_variables: Optional[Union[List[str], str]] = None,
+    recommended_services: Optional[str] = None,
+    recommended_signals: Optional[str] = None,
+    client_story_allowed: Optional[int] = None,
+    client_story_found: Optional[str] = None,
+    client_story_solved: Optional[str] = None,
+    client_story_rewarded: Optional[str] = None,
+    followup_templates_json: Optional[Union[List[Dict[str, Any]], str]] = None,
+    active: Optional[int] = None,
     db_path: str = DB_FILE
 ):
     final_name = (name or template_name or "").strip()
@@ -1926,11 +2012,43 @@ def update_template(
 
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE templates 
-        SET template_name = ?, name = ?, body_content = ?, body_html = ?, subject = ?, updated_at = ?
-        WHERE id = ?
-    """, (final_name, final_name, final_body, final_body, final_subj, now_str, template_id))
+
+    fields = ["template_name = ?", "name = ?", "body_content = ?", "body_html = ?", "subject = ?", "updated_at = ?"]
+    values = [final_name, final_name, final_body, final_body, final_subj, now_str]
+
+    if template_category is not None:
+        fields.append("template_category = ?")
+        values.append(template_category)
+    if allowed_variables is not None:
+        fields.append("allowed_variables = ?")
+        values.append(json.dumps(allowed_variables) if isinstance(allowed_variables, list) else str(allowed_variables))
+    if recommended_services is not None:
+        fields.append("recommended_services = ?")
+        values.append(recommended_services)
+    if recommended_signals is not None:
+        fields.append("recommended_signals = ?")
+        values.append(recommended_signals)
+    if client_story_allowed is not None:
+        fields.append("client_story_allowed = ?")
+        values.append(int(client_story_allowed))
+    if client_story_found is not None:
+        fields.append("client_story_found = ?")
+        values.append(client_story_found)
+    if client_story_solved is not None:
+        fields.append("client_story_solved = ?")
+        values.append(client_story_solved)
+    if client_story_rewarded is not None:
+        fields.append("client_story_rewarded = ?")
+        values.append(client_story_rewarded)
+    if followup_templates_json is not None:
+        fields.append("followup_templates_json = ?")
+        values.append(json.dumps(followup_templates_json) if isinstance(followup_templates_json, list) else str(followup_templates_json))
+    if active is not None:
+        fields.append("active = ?")
+        values.append(int(active))
+
+    values.append(template_id)
+    cursor.execute(f"UPDATE templates SET {', '.join(fields)} WHERE id = ?", tuple(values))
     conn.commit()
     conn.close()
     auto_save_backup(db_path)
@@ -1942,6 +2060,90 @@ def delete_template(template_id: int, db_path: str = DB_FILE):
     conn.commit()
     conn.close()
     auto_save_backup(db_path)
+
+def seed_sellomize_core_templates(conn=None, db_path: str = DB_FILE) -> int:
+    """
+    Seeds or updates all 15 core Sellomize outreach templates in the database.
+    Ensures they are present, properly categorized, and equipped with follow-ups.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_connection(db_path)
+        should_close = True
+
+    try:
+        from sellomize_templates import CORE_15_TEMPLATES, APPROVED_CLIENT_STORIES
+        cursor = conn.cursor()
+        now_iso = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        seeded_count = 0
+
+        for tpl in CORE_15_TEMPLATES:
+            t_name = tpl["name"]
+            t_cat = tpl["category"]
+            t_subj = tpl["subject"]
+            t_body = tpl["body"]
+            t_serv = tpl.get("recommended_services", "")
+            t_sig = tpl.get("recommended_signals", "")
+            t_vars = json.dumps(tpl.get("allowed_variables", []))
+            t_cs_allowed = 1 if tpl.get("client_story_allowed") else 0
+            
+            cs_id = tpl.get("client_story_id")
+            cs_found = ""
+            cs_solved = ""
+            cs_rewarded = ""
+            if cs_id and cs_id in APPROVED_CLIENT_STORIES:
+                cs = APPROVED_CLIENT_STORIES[cs_id]
+                cs_found = cs["found"]
+                cs_solved = cs["solved"]
+                cs_rewarded = cs["rewarded"]
+
+            t_fu = json.dumps(tpl.get("followups", []))
+
+            # Check if this system template exists by category or name
+            cursor.execute("""
+                SELECT id FROM templates 
+                WHERE template_category = ? OR template_name = ? OR name = ?
+            """, (t_cat, t_name, t_name))
+            row = cursor.fetchone()
+
+            if row:
+                t_id = row["id"]
+                cursor.execute("""
+                    UPDATE templates SET
+                        template_name = ?, name = ?, subject = ?, body_content = ?, body_html = ?,
+                        template_category = ?, allowed_variables = ?, recommended_services = ?,
+                        recommended_signals = ?, client_story_allowed = ?, client_story_found = ?,
+                        client_story_solved = ?, client_story_rewarded = ?, followup_templates_json = ?,
+                        is_system_template = 1, active = 1, updated_at = ?
+                    WHERE id = ?
+                """, (
+                    t_name, t_name, t_subj, t_body, t_body,
+                    t_cat, t_vars, t_serv, t_sig, t_cs_allowed,
+                    cs_found, cs_solved, cs_rewarded, t_fu,
+                    now_iso, t_id
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO templates (
+                        template_name, name, subject, body_content, body_html,
+                        template_category, allowed_variables, recommended_services,
+                        recommended_signals, client_story_allowed, client_story_found,
+                        client_story_solved, client_story_rewarded, followup_templates_json,
+                        is_system_template, active, version, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?)
+                """, (
+                    t_name, t_name, t_subj, t_body, t_body,
+                    t_cat, t_vars, t_serv, t_sig, t_cs_allowed,
+                    cs_found, cs_solved, cs_rewarded, t_fu,
+                    now_iso, now_iso
+                ))
+            seeded_count += 1
+
+        conn.commit()
+        return seeded_count
+    finally:
+        if should_close:
+            conn.close()
 
 # ------------------------------------------------------------------------------
 # PROOF / CLIENT STORY LIBRARY HELPERS (Phase 2)
