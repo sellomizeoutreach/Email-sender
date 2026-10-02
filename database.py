@@ -682,6 +682,7 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
             # Ensure Core 15 Sellomize templates are seeded and active
             try:
                 seed_sellomize_core_templates(conn)
+                deduplicate_templates(conn)
             except Exception as seed_err:
                 logger.warning(f"Error seeding Sellomize core templates: {seed_err}")
 
@@ -2057,8 +2058,83 @@ def create_template(
     auto_save_backup(db_path)
     return tpl_id
 
+
+def deduplicate_templates(conn=None, db_path: str = DB_FILE) -> int:
+    """
+    Find and remove duplicate templates with identical or normalized names/categories.
+    Preserves custom user edits and re-links campaign steps to the retained template ID.
+    Returns the number of duplicate template rows removed.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_connection(db_path)
+        should_close = True
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, template_name, name, template_category, body_content, body_html, updated_at, is_system_template FROM templates ORDER BY id ASC")
+        rows = cursor.fetchall()
+        if not rows or len(rows) <= 1:
+            return 0
+
+        # Group by normalized identity key:
+        # Strip leading numbers like "1. ", "16. ", lowercase and trim
+        groups: Dict[str, List[Any]] = {}
+        for r in rows:
+            d = dict(r)
+            raw_title = d.get("name") or d.get("template_name") or d.get("template_category") or ""
+            clean_name = re.sub(r'^\d+[\.\)]\s*', '', raw_title.strip()).lower().strip()
+            if not clean_name:
+                clean_name = str(d["id"])
+            groups.setdefault(clean_name, []).append(d)
+
+        deleted_count = 0
+        for norm_key, t_list in groups.items():
+            if len(t_list) <= 1:
+                continue
+
+            # Pick the best record to KEEP:
+            # 1. Prefer custom templates (is_system_template == 0)
+            # 2. Prefer templates with longer body or customizations
+            # 3. Prefer records with updated_at set
+            # 4. Fallback to lowest ID
+            def score_template(t):
+                body_len = len(t.get("body_html") or t.get("body_content") or "")
+                has_update = 1 if t.get("updated_at") else 0
+                is_custom = 1 if int(t.get("is_system_template") or 0) == 0 else 0
+                return (is_custom, has_update, body_len, -int(t["id"]))
+
+            sorted_t = sorted(t_list, key=score_template, reverse=True)
+            keep_t = sorted_t[0]
+            keep_id = keep_t["id"]
+            remove_ids = [t["id"] for t in sorted_t[1:]]
+
+            for dup_id in remove_ids:
+                try:
+                    cursor.execute("UPDATE campaign_steps SET template_id = ? WHERE template_id = ?", (keep_id, dup_id))
+                except Exception:
+                    pass
+                cursor.execute("DELETE FROM templates WHERE id = ?", (dup_id,))
+                deleted_count += 1
+
+        if deleted_count > 0:
+            conn.commit()
+            logger.info(f"Deduplicated templates: purged {deleted_count} duplicate row(s).")
+        return deleted_count
+    except Exception as e:
+        logger.error(f"Error deduplicating templates: {e}", exc_info=True)
+        return 0
+    finally:
+        if should_close:
+            conn.close()
+
+
 def get_templates(db_path: str = DB_FILE, active_only: bool = False, category: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection(db_path)
+    try:
+        deduplicate_templates(conn=conn, db_path=db_path)
+    except Exception:
+        pass
     cursor = conn.cursor()
     query = "SELECT * FROM templates WHERE 1=1"
     params = []
@@ -2273,6 +2349,10 @@ def seed_sellomize_core_templates(conn=None, db_path: str = DB_FILE) -> int:
             seeded_count += 1
 
         conn.commit()
+        try:
+            deduplicate_templates(conn)
+        except Exception:
+            pass
         return seeded_count
     finally:
         if should_close:

@@ -16,6 +16,7 @@ from database import (
     create_template,
     update_template,
     delete_template,
+    deduplicate_templates,
     get_contacts,
     get_config,
     DB_FILE,
@@ -41,7 +42,11 @@ from sellomize_templates import (
 
 def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
     """Render the Templates screen matching sellomize_reference.html."""
-    if all_templates is None:
+    purged_dups = deduplicate_templates()
+    if purged_dups > 0:
+        trigger_toast(f"Removed {purged_dups} duplicate template(s)!", icon="🧹")
+
+    if all_templates is None or purged_dups > 0:
         all_templates = get_templates()
 
     all_leads = get_contacts()

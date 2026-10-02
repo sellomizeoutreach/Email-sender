@@ -644,14 +644,29 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
             cur_sq.execute("SELECT * FROM templates")
             t_rows = cur_sq.fetchall()
             for r in t_rows:
-                cols = list(r.keys())
-                placeholders = ", ".join(["%s"] * len(cols))
-                col_str = ", ".join(cols)
-                cur_pg.execute(f"""
-                    INSERT INTO templates ({col_str})
-                    VALUES ({placeholders})
-                    ON CONFLICT (id) DO NOTHING
-                """, tuple(r[k] for k in cols))
+                raw_name = (r["name"] if "name" in r.keys() else r.get("template_name") or "").strip()
+                raw_cat = (r.get("template_category") or "").strip()
+                cur_pg.execute("""
+                    SELECT id FROM templates
+                    WHERE LOWER(TRIM(template_name)) = %s 
+                       OR LOWER(TRIM(name)) = %s
+                       OR LOWER(TRIM(template_category)) = %s
+                    ORDER BY id ASC LIMIT 1
+                """, (raw_name.lower(), raw_name.lower(), raw_cat.lower()))
+                exist_t = cur_pg.fetchone()
+                if exist_t:
+                    upd_cols = [k for k in r.keys() if k != "id"]
+                    set_clause = ", ".join(f"{k} = %s" for k in upd_cols)
+                    cur_pg.execute(f"UPDATE templates SET {set_clause} WHERE id = %s", tuple(r[k] for k in upd_cols) + (exist_t[0],))
+                else:
+                    cols = list(r.keys())
+                    placeholders = ", ".join(["%s"] * len(cols))
+                    col_str = ", ".join(cols)
+                    cur_pg.execute(f"""
+                        INSERT INTO templates ({col_str})
+                        VALUES ({placeholders})
+                        ON CONFLICT (id) DO NOTHING
+                    """, tuple(r[k] for k in cols))
             stats["templates"] = len(t_rows)
             safe_reset_seq("templates")
 
@@ -816,6 +831,13 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
                     ON CONFLICT (id) DO NOTHING
                 """, tuple(r[k] for k in cols))
             safe_reset_seq("campaign_images")
+
+        # Deduplicate templates if any redundant records exist
+        try:
+            from database import deduplicate_templates
+            deduplicate_templates(conn=pg_conn)
+        except Exception as dedup_ex:
+            logger.warning(f"Template deduplication note during migration: {dedup_ex}")
 
         pg_conn.commit()
         return True, (
