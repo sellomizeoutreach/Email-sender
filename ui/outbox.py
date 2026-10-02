@@ -24,6 +24,7 @@ from database import (
     get_contacts,
     mark_contact_do_not_contact,
     mark_contact_replied_manual,
+    record_email_open,
 )
 from timezone_helper import get_engine_now, get_engine_now_str
 from scheduler import dispatch_email_hostinger, run_scheduler_cycle
@@ -78,58 +79,65 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
     c_op, c_clk, c_rep = st.columns(3)
     with c_op:
         if open_count > 0 or opened_at:
-            st.markdown(f"""
-            <div style="background:#ECFDF5; border:1px solid #A7F3D0; border-radius:6px; padding:8px 10px;">
-                <b style="color:#065F46; font-size:13px;">👁️ Opened ({open_count}x)</b>
-                <div style="font-size:11px; color:#047857; margin-top:2px;">Last: {opened_at[:16]}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            op_html = (
+                f'<div style="background:#ECFDF5; border:1px solid #A7F3D0; border-radius:6px; padding:8px 10px;">'
+                f'<b style="color:#065F46; font-size:13px;">👁️ Opened ({open_count}x)</b>'
+                f'<div style="font-size:11px; color:#047857; margin-top:2px;">Last: {opened_at[:16]}</div>'
+                f'</div>'
+            )
+            st.markdown(op_html, unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">
-                <b style="color:#64748B; font-size:13px;">⏳ Unopened</b>
-                <div style="font-size:11px; color:#94A3B8; margin-top:2px;">No opens detected yet</div>
-            </div>
-            """, unsafe_allow_html=True)
+            unop_html = (
+                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">'
+                '<b style="color:#64748B; font-size:13px;">⏳ Unopened</b>'
+                '<div style="font-size:11px; color:#94A3B8; margin-top:2px;">No opens detected yet</div>'
+                '</div>'
+            )
+            st.markdown(unop_html, unsafe_allow_html=True)
 
     with c_clk:
         if click_count > 0:
-            st.markdown(f"""
-            <div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:6px; padding:8px 10px;">
-                <b style="color:#1D4ED8; font-size:13px;">🔗 Clicked ({click_count}x)</b>
-                <div style="font-size:11px; color:#1E40AF; margin-top:2px;">Last: {clicked_at[:16]}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            clk_html = (
+                f'<div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:6px; padding:8px 10px;">'
+                f'<b style="color:#1D4ED8; font-size:13px;">🔗 Clicked ({click_count}x)</b>'
+                f'<div style="font-size:11px; color:#1E40AF; margin-top:2px;">Last: {clicked_at[:16]}</div>'
+                f'</div>'
+            )
+            st.markdown(clk_html, unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">
-                <b style="color:#64748B; font-size:13px;">🔗 0 Clicks</b>
-                <div style="font-size:11px; color:#94A3B8; margin-top:2px;">No link clicks</div>
-            </div>
-            """, unsafe_allow_html=True)
+            noc_html = (
+                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">'
+                '<b style="color:#64748B; font-size:13px;">🔗 0 Clicks</b>'
+                '<div style="font-size:11px; color:#94A3B8; margin-top:2px;">No link clicks</div>'
+                '</div>'
+            )
+            st.markdown(noc_html, unsafe_allow_html=True)
 
     with c_rep:
         if replied_at:
-            st.markdown(f"""
-            <div style="background:#FEF3C7; border:1px solid #FDE68A; border-radius:6px; padding:8px 10px;">
-                <b style="color:#B45309; font-size:13px;">💬 Replied</b>
-                <div style="font-size:11px; color:#92400E; margin-top:2px;">Received: {replied_at[:16]}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            rep_html = (
+                f'<div style="background:#FEF3C7; border:1px solid #FDE68A; border-radius:6px; padding:8px 10px;">'
+                f'<b style="color:#B45309; font-size:13px;">💬 Replied</b>'
+                f'<div style="font-size:11px; color:#92400E; margin-top:2px;">Received: {replied_at[:16]}</div>'
+                f'</div>'
+            )
+            st.markdown(rep_html, unsafe_allow_html=True)
         elif is_bounced:
-            st.markdown(f"""
-            <div style="background:#FEE2E2; border:1px solid #FECACA; border-radius:6px; padding:8px 10px;">
-                <b style="color:#991B1B; font-size:13px;">⚠️ Bounced</b>
-                <div style="font-size:11px; color:#7F1D1D; margin-top:2px;">{html.escape(bounce_reason[:28])}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            bnc_html = (
+                f'<div style="background:#FEE2E2; border:1px solid #FECACA; border-radius:6px; padding:8px 10px;">'
+                f'<b style="color:#991B1B; font-size:13px;">⚠️ Bounced</b>'
+                f'<div style="font-size:11px; color:#7F1D1D; margin-top:2px;">{html.escape(bounce_reason[:28])}</div>'
+                f'</div>'
+            )
+            st.markdown(bnc_html, unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">
-                <b style="color:#64748B; font-size:13px;">💬 No Reply</b>
-                <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Follow-up eligible</div>
-            </div>
-            """, unsafe_allow_html=True)
+            nor_html = (
+                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">'
+                '<b style="color:#64748B; font-size:13px;">💬 No Reply</b>'
+                '<div style="font-size:11px; color:#94A3B8; margin-top:2px;">Follow-up eligible</div>'
+                '</div>'
+            )
+            st.markdown(nor_html, unsafe_allow_html=True)
 
     st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:12px 0 8px;'>", unsafe_allow_html=True)
     st.markdown("<span style='font-size:12px; font-weight:700; color:#083731; text-transform:uppercase;'>Delivered Email Content</span>", unsafe_allow_html=True)
@@ -141,7 +149,7 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
     )
 
     st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-    b1, b2, b3 = st.columns(3)
+    b1, b2, b3, b4 = st.columns(4)
     with b1:
         if st.button("↩️ Quick Follow-Up", type="primary", use_container_width=True, key=f"dlg_fu_{eid}"):
             st.session_state["compose_recipient"] = recip
@@ -158,9 +166,18 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
                 trigger_toast(f"Marked {recip} as Replied!", icon="💬")
                 st.rerun()
         else:
-            st.caption("✅ Prospect reply verified")
+            st.caption("✅ Reply verified")
 
     with b3:
+        if open_count == 0:
+            if st.button("👁️ Mark as Opened", use_container_width=True, key=f"dlg_op_{eid}", help="Record an open event (useful for test emails or clients without images)"):
+                record_email_open(eid)
+                trigger_toast(f"Recorded open for {recip}!", icon="👁️")
+                st.rerun()
+        else:
+            st.caption("👁️ Open verified")
+
+    with b4:
         if st.button("🛑 Add to DNC", use_container_width=True, key=f"dlg_dnc_{eid}", help="Add contact to Do Not Contact suppression list"):
             mark_contact_do_not_contact(recip, reason="Operator marked DNC from Sent audit")
             trigger_toast(f"{recip} suppressed and added to DNC list.", icon="🛑")
@@ -379,45 +396,51 @@ def render_outbox_tab():
         # KPI Metrics Dashboard Banner
         m_c1, m_c2, m_c3, m_c4, m_c5 = st.columns(5)
         with m_c1:
-            st.markdown(f"""
-            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; text-align:center;">
-                <div style="font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase;">Total Sent</div>
-                <div style="font-size:22px; font-weight:800; color:#083731; margin-top:2px;">{total_sent}</div>
-                <div style="font-size:11px; color:#94A3B8;">100% dispatched</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; text-align:center;">'
+                f'<div style="font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase;">Total Sent</div>'
+                f'<div style="font-size:22px; font-weight:800; color:#083731; margin-top:2px;">{total_sent}</div>'
+                f'<div style="font-size:11px; color:#94A3B8;">100% dispatched</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         with m_c2:
-            st.markdown(f"""
-            <div style="background:#ECFDF5; border:1px solid #A7F3D0; border-radius:8px; padding:10px 12px; text-align:center;">
-                <div style="font-size:11px; font-weight:700; color:#065F46; text-transform:uppercase;">👁️ Opened</div>
-                <div style="font-size:22px; font-weight:800; color:#047857; margin-top:2px;">{count_opened}</div>
-                <div style="font-size:11px; color:#059669; font-weight:600;">{open_rate:.1f}% open rate</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#ECFDF5; border:1px solid #A7F3D0; border-radius:8px; padding:10px 12px; text-align:center;">'
+                f'<div style="font-size:11px; font-weight:700; color:#065F46; text-transform:uppercase;">👁️ Opened</div>'
+                f'<div style="font-size:22px; font-weight:800; color:#047857; margin-top:2px;">{count_opened}</div>'
+                f'<div style="font-size:11px; color:#059669; font-weight:600;">{open_rate:.1f}% open rate</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         with m_c3:
-            st.markdown(f"""
-            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; text-align:center;">
-                <div style="font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase;">⏳ Unopened</div>
-                <div style="font-size:22px; font-weight:800; color:#475569; margin-top:2px;">{count_unopened}</div>
-                <div style="font-size:11px; color:#94A3B8;">{(count_unopened / total_sent * 100):.1f}% unopened</div>
-            </div>
-            """, unsafe_allow_html=True)
+            unop_pct = (count_unopened / total_sent * 100) if total_sent else 0
+            st.markdown(
+                f'<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; text-align:center;">'
+                f'<div style="font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase;">⏳ Unopened</div>'
+                f'<div style="font-size:22px; font-weight:800; color:#475569; margin-top:2px;">{count_unopened}</div>'
+                f'<div style="font-size:11px; color:#94A3B8;">{unop_pct:.1f}% unopened</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         with m_c4:
-            st.markdown(f"""
-            <div style="background:#FEF3C7; border:1px solid #FDE68A; border-radius:8px; padding:10px 12px; text-align:center;">
-                <div style="font-size:11px; font-weight:700; color:#B45309; text-transform:uppercase;">💬 Replied</div>
-                <div style="font-size:22px; font-weight:800; color:#92400E; margin-top:2px;">{count_replied}</div>
-                <div style="font-size:11px; color:#D97706; font-weight:600;">{reply_rate:.1f}% reply rate</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#FEF3C7; border:1px solid #FDE68A; border-radius:8px; padding:10px 12px; text-align:center;">'
+                f'<div style="font-size:11px; font-weight:700; color:#B45309; text-transform:uppercase;">💬 Replied</div>'
+                f'<div style="font-size:22px; font-weight:800; color:#92400E; margin-top:2px;">{count_replied}</div>'
+                f'<div style="font-size:11px; color:#D97706; font-weight:600;">{reply_rate:.1f}% reply rate</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         with m_c5:
-            st.markdown(f"""
-            <div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:10px 12px; text-align:center;">
-                <div style="font-size:11px; font-weight:700; color:#1D4ED8; text-transform:uppercase;">🔗 Clicked / ⚠️ Bounced</div>
-                <div style="font-size:22px; font-weight:800; color:#1E40AF; margin-top:2px;">{count_clicked} <span style="font-size:14px; font-weight:500; color:#991B1B;">/ {count_bounced}</span></div>
-                <div style="font-size:11px; color:#3B82F6;">{count_clicked} clicked · {count_bounced} bounced</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:10px 12px; text-align:center;">'
+                f'<div style="font-size:11px; font-weight:700; color:#1D4ED8; text-transform:uppercase;">🔗 Clicked / ⚠️ Bounced</div>'
+                f'<div style="font-size:22px; font-weight:800; color:#1E40AF; margin-top:2px;">{count_clicked} <span style="font-size:14px; font-weight:500; color:#991B1B;">/ {count_bounced}</span></div>'
+                f'<div style="font-size:11px; color:#3B82F6;">{count_clicked} clicked · {count_bounced} bounced</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
         st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:14px 0 10px;'>", unsafe_allow_html=True)
 
@@ -596,29 +619,32 @@ def render_outbox_tab():
             else:
                 pill_html = f'<span class="pill" style="background:#F1F5F9; color:#64748B; border:1px solid #CBD5E1; font-weight:600;">⏳ Unopened</span>'
 
+            subj_clean = html.escape((e.get('subject') or 'No Subject')[:65])
+            card_html = (
+                f'<div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">'
+                f'<div style="flex:2.2; min-width:0;">'
+                f'<strong style="color:#083731; font-size:14px;">{html.escape(lead_name)}</strong>'
+                f'<span style="font-size:12px; color:#64748B; margin-left:6px;">{html.escape(recip)}</span>'
+                f'{company_display}'
+                f'<div style="font-size:12px; color:#334155; margin-top:2px;">{subj_clean}</div>'
+                f'</div>'
+                f'<div style="flex:1.1; font-size:12px; color:#475569;">'
+                f'<b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mb_clean)}</span>'
+                f'</div>'
+                f'<div style="flex:1.2; font-size:12px; color:#64748B;">'
+                f'{when_display}'
+                f'</div>'
+                f'<div style="flex:1.2; text-align:right;">'
+                f'{pill_html}'
+                f'</div>'
+                f'</div>'
+            )
+
             with st.container():
-                st.markdown(f"""
-                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="flex:2.2; min-width:0;">
-                        <strong style="color:#083731; font-size:14px;">{html.escape(lead_name)}</strong>
-                        <span style="font-size:12px; color:#64748B; margin-left:6px;">{html.escape(recip)}</span>
-                        {company_display}
-                        <div style="font-size:12px; color:#334155; margin-top:2px;">{html.escape((e.get('subject') or 'No Subject')[:65])}</div>
-                    </div>
-                    <div style="flex:1.1; font-size:12px; color:#475569;">
-                        <b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mb_clean)}</span>
-                    </div>
-                    <div style="flex:1.2; font-size:12px; color:#64748B;">
-                        {when_display}
-                    </div>
-                    <div style="flex:1.2; text-align:right;">
-                        {pill_html}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(card_html, unsafe_allow_html=True)
 
                 # Logical Actions Row for each Sent email
-                r1, r2, r3, r4, _ = st.columns([1, 1.2, 1.2, 1, 2.5], vertical_alignment="center")
+                r1, r2, r3, r4, r5, _ = st.columns([1, 1.2, 1.1, 1.2, 1, 1.8], vertical_alignment="center")
                 with r1:
                     if st.button("👁️ View", key=f"s_view_{eid}", use_container_width=True, help="View delivered HTML body and telemetry"):
                         render_view_sent_dialog(e, matched_lead)
@@ -639,6 +665,14 @@ def render_outbox_tab():
                     else:
                         st.caption("✅ Replied")
                 with r4:
+                    if open_count == 0 and status_tag != "Opened":
+                        if st.button("👁️ Opened", key=f"s_op_{eid}", use_container_width=True, help="Record that the recipient opened the email"):
+                            record_email_open(eid)
+                            trigger_toast(f"Recorded open for {recip}!", icon="👁️")
+                            st.rerun()
+                    else:
+                        st.caption("👁️ Opened")
+                with r5:
                     if st.button("🛑 DNC", key=f"s_dnc_{eid}", use_container_width=True, help="Legal Opt-Out: Suppress contact & add to Do Not Contact list"):
                         mark_contact_do_not_contact(recip, reason="Operator marked DNC from Sent audit")
                         trigger_toast(f"{recip} suppressed in DNC list.", icon="🛑")
@@ -756,26 +790,29 @@ def render_outbox_tab():
         else:
             pill_html = f'<span class="pill p-fail">{html.escape(status_raw)}</span>'
 
+        subj_clean = html.escape((e.get('subject') or 'No Subject')[:60])
+        card_html = (
+            f'<div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">'
+            f'<div style="flex:2; min-width:0;">'
+            f'<strong style="color:#083731; font-size:14px;">{html.escape(lead_display)}</strong>'
+            f'<span style="font-size:12px; color:#64748B; margin-left:8px;">{html.escape(recipient)}</span>'
+            f'{company_display}'
+            f'<div style="font-size:12px; color:#334155; margin-top:2px;">{subj_clean}</div>'
+            f'</div>'
+            f'<div style="flex:1; font-size:12px; color:#475569;">'
+            f'<b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mailbox_display)}</span>'
+            f'</div>'
+            f'<div style="flex:1.5; font-size:12px; color:#64748B;">'
+            f'{when_display}'
+            f'</div>'
+            f'<div style="flex:1; text-align:center;">'
+            f'{pill_html}'
+            f'</div>'
+            f'</div>'
+        )
+
         with st.container():
-            st.markdown(f"""
-            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-                <div style="flex:2; min-width:0;">
-                    <strong style="color:#083731; font-size:14px;">{html.escape(lead_display)}</strong>
-                    <span style="font-size:12px; color:#64748B; margin-left:8px;">{html.escape(recipient)}</span>
-                    {company_display}
-                    <div style="font-size:12px; color:#334155; margin-top:2px;">{html.escape((e.get('subject') or 'No Subject')[:60])}</div>
-                </div>
-                <div style="flex:1; font-size:12px; color:#475569;">
-                    <b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mailbox_display)}</span>
-                </div>
-                <div style="flex:1.5; font-size:12px; color:#64748B;">
-                    {when_display}
-                </div>
-                <div style="flex:1; text-align:center;">
-                    {pill_html}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(card_html, unsafe_allow_html=True)
 
             btn_col1, btn_col2, btn_col3, btn_col4, _ = st.columns([1, 1, 1, 1, 2], vertical_alignment="center")
 
