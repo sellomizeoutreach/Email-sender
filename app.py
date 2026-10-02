@@ -38,7 +38,11 @@ from ui.outbox import render_outbox_tab
 from ui.settings import render_settings_tab
 
 # Ensure database is initialized on startup
-init_db()
+try:
+    init_db()
+except Exception as e:
+    import logging
+    logging.getLogger("app").warning(f"Initial init_db startup: {e}")
 
 # Lightweight local click/open tracking server
 try:

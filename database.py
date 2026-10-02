@@ -7,6 +7,7 @@ import sys
 import sqlite3
 import os
 import json
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Tuple, Set
 import re
@@ -188,8 +189,21 @@ def get_connection(db_path: str = DB_FILE) -> Union[sqlite3.Connection, Postgres
         except Exception as e:
             logger.error(f"Cloud PostgreSQL connection error: {e}. Falling back to SQLite.")
 
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if db_dir and not os.path.exists(db_dir):
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    conn = sqlite3.connect(db_path, timeout=60.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=60000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
     return conn
 
 def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, PostgresConnectionWrapper]] = None):
@@ -914,43 +928,129 @@ def auto_restore_backup_if_needed(db_path: str = DB_FILE):
 # ------------------------------------------------------------------------------
 
 def get_config(key: str, default: Optional[str] = None, db_path: str = DB_FILE) -> Optional[str]:
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
-    row = cursor.fetchone()
-    conn.close()
-    return row["value"] if row else default
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_connection(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
+        except DB_OPERATIONAL_ERRORS as e:
+            err_str = str(e).lower()
+            if "no such table" in err_str:
+                try:
+                    init_db(db_path)
+                except Exception:
+                    pass
+            time.sleep(0.04 * (attempt + 1))
+        except Exception as e:
+            logger.warning(f"get_config('{key}') unexpected error: {e}")
+            break
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    return default
 
 def set_config(key: str, value: str, db_path: str = DB_FILE):
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO system_config (key, value) VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    """, (key, value))
-    conn.commit()
-    conn.close()
-    auto_save_backup(db_path)
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_connection(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO system_config (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (key, value))
+            conn.commit()
+            break
+        except DB_OPERATIONAL_ERRORS as e:
+            err_str = str(e).lower()
+            if "no such table" in err_str:
+                try:
+                    init_db(db_path)
+                except Exception:
+                    pass
+            time.sleep(0.04 * (attempt + 1))
+        except Exception as e:
+            logger.warning(f"set_config('{key}') unexpected error: {e}")
+            break
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    try:
+        auto_save_backup(db_path)
+    except Exception:
+        pass
 
 def get_all_configs(db_path: str = DB_FILE) -> Dict[str, str]:
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT key, value FROM system_config")
-    rows = cursor.fetchall()
-    conn.close()
-    return {row["key"]: row["value"] for row in rows}
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_connection(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM system_config")
+            rows = cursor.fetchall()
+            return {row["key"]: row["value"] for row in rows}
+        except DB_OPERATIONAL_ERRORS as e:
+            err_str = str(e).lower()
+            if "no such table" in err_str:
+                try:
+                    init_db(db_path)
+                except Exception:
+                    pass
+            time.sleep(0.04 * (attempt + 1))
+        except Exception as e:
+            logger.warning(f"get_all_configs unexpected error: {e}")
+            break
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    return {}
 
 def save_all_configs(config_dict: Dict[str, str], db_path: str = DB_FILE):
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    for key, value in config_dict.items():
-        cursor.execute("""
-            INSERT INTO system_config (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """, (key, value))
-    conn.commit()
-    conn.close()
-    auto_save_backup(db_path)
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_connection(db_path)
+            cursor = conn.cursor()
+            for key, value in config_dict.items():
+                cursor.execute("""
+                    INSERT INTO system_config (key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """, (key, value))
+            conn.commit()
+            break
+        except DB_OPERATIONAL_ERRORS as e:
+            err_str = str(e).lower()
+            if "no such table" in err_str:
+                try:
+                    init_db(db_path)
+                except Exception:
+                    pass
+            time.sleep(0.04 * (attempt + 1))
+        except Exception as e:
+            logger.warning(f"save_all_configs unexpected error: {e}")
+            break
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    try:
+        auto_save_backup(db_path)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------------------
 # CAMPAIGN SCHEDULE & SENDING WINDOW HELPERS

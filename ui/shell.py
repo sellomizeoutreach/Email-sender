@@ -34,11 +34,11 @@ def get_logo_data_uri() -> str:
 
 def get_worker_status(db_path: str = DB_FILE) -> Tuple[bool, str, str]:
     """Evaluate background worker daemon health based on worker_heartbeat in settings."""
-    heartbeat_str = (get_config("worker_heartbeat", "", db_path=db_path) or "").strip()
-    if not heartbeat_str:
-        return False, "Sender Stopped", "Scheduled mail won't send until worker is started."
-
     try:
+        heartbeat_str = (get_config("worker_heartbeat", "", db_path=db_path) or "").strip()
+        if not heartbeat_str:
+            return False, "Sender Stopped", "Scheduled mail won't send until worker is started."
+
         hb_dt = datetime.strptime(heartbeat_str[:19], "%Y-%m-%d %H:%M:%S")
         now_dt = get_engine_now()
         diff_seconds = abs((now_dt.replace(tzinfo=None) - hb_dt).total_seconds())
@@ -47,7 +47,7 @@ def get_worker_status(db_path: str = DB_FILE) -> Tuple[bool, str, str]:
         else:
             return False, "Sender Stale", f"Last heartbeat was {int(diff_seconds // 60)}m ago."
     except Exception:
-        return False, "Sender Stopped", "Could not parse worker heartbeat timestamp."
+        return False, "Sender Stopped", "Could not check worker heartbeat."
 
 
 def render_sidebar_nav() -> str:
