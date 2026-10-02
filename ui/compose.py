@@ -643,13 +643,21 @@ def render_compose_tab(contacts=None, templates=None):
                 )
 
                 st.markdown('<span class="lbl">Follow-up Body</span>', unsafe_allow_html=True)
-                fu["body"] = st.text_area(
-                    "Follow-up Body",
-                    value=fu["body"],
-                    height=140,
-                    key=f"comp_fu_{idx}_body_in",
-                    label_visibility="collapsed"
-                )
+                if is_rich_editor_enabled():
+                    fu["body"] = render_rich_editor(
+                        initial_html=fu.get("body", ""),
+                        key=f"comp_fu_{idx}_rich_editor",
+                        height=160,
+                        owner_type="compose_followup"
+                    )
+                else:
+                    fu["body"] = st.text_area(
+                        "Follow-up Body",
+                        value=fu["body"],
+                        height=140,
+                        key=f"comp_fu_{idx}_body_in",
+                        label_visibility="collapsed"
+                    )
 
                 # Quick token insertion buttons for follow-up
                 c_tok1, c_tok2, c_tok3, _ = st.columns([1, 1.2, 1.4, 3], vertical_alignment="center")

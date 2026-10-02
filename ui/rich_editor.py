@@ -290,25 +290,65 @@ def render_rich_editor(
         st.rerun()
 
     # --------------------------------------------------------------------------
-    # Intercept pasted image payload received from browser JS
+    # Intercept pasted image payload received from browser JS (Single or Batch)
     # --------------------------------------------------------------------------
-    pasted_data = st.session_state.get(pasted_img_input_key, "")
-    if pasted_data and isinstance(pasted_data, str) and pasted_data.startswith("data:image/"):
-        try:
-            mime_match = re.search(r'data:(image/[a-zA-Z0-9\+\-]+);base64,', pasted_data)
-            mime = mime_match.group(1) if mime_match else "image/png"
-            b64_raw = re.sub(r'^data:image/[a-zA-Z0-9\+\-]+;base64,', '', pasted_data)
-            raw_bytes = base64.b64decode(b64_raw)
+    pasted_raw = st.session_state.get(pasted_img_input_key, "")
+    if pasted_raw:
+        images_to_process = []
+        if isinstance(pasted_raw, str):
+            pasted_str = pasted_raw.strip()
+            if pasted_str.startswith("[") and pasted_str.endswith("]"):
+                try:
+                    images_to_process = json.loads(pasted_str)
+                except Exception:
+                    images_to_process = []
+            elif pasted_str.startswith("data:image/"):
+                images_to_process = [pasted_str]
 
-            data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=mime)
-            tag = (f'<img src="{data_uri}" alt="Screenshot" '
-                   f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-            st.session_state[pasted_img_input_key] = ""
-            trigger_toast(f"Pasted image ({w}x{h}px) inserted right at cursor!", icon="📋")
-            _insert_image_tag(tag)
-        except Exception as paste_err:
-            logger.warning(f"Error handling browser pasted image: {paste_err}")
-            st.session_state[pasted_img_input_key] = ""
+        if images_to_process:
+            inserted_count = 0
+            for pasted_data in images_to_process:
+                if not (isinstance(pasted_data, str) and pasted_data.startswith("data:image/")):
+                    continue
+                try:
+                    mime_match = re.search(r'data:(image/[a-zA-Z0-9\+\-]+);base64,', pasted_data)
+                    mime = mime_match.group(1) if mime_match else "image/png"
+                    b64_raw = re.sub(r'^data:image/[a-zA-Z0-9\+\-]+;base64,', '', pasted_data)
+                    raw_bytes = base64.b64decode(b64_raw)
+
+                    data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=mime)
+                    tag = (f'<img src="{data_uri}" alt="Pasted Screenshot" '
+                           f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                    
+                    # Insert directly at live cursor position
+                    existing_nums = [
+                        int(m.group(1)) for m in re.finditer(r'\[Image\s+(\d+)\]', live_visual, re.IGNORECASE)
+                    ]
+                    next_num = (max(existing_nums) + 1) if existing_nums else (len(img_map) + 1)
+                    placeholder = f"[Image {next_num}]"
+                    img_map[placeholder] = tag
+
+                    pos = _get_insertion_pos("image")
+                    before = live_visual[:pos].rstrip()
+                    after = live_visual[pos:].lstrip()
+
+                    prefix = "\n\n" if before else ""
+                    suffix = "\n\n" if after else ""
+                    live_visual = f"{before}{prefix}{placeholder}{suffix}{after}"
+                    current_cursor_pos = len(before + prefix + placeholder)
+                    inserted_count += 1
+                except Exception as paste_err:
+                    logger.warning(f"Error handling browser pasted image: {paste_err}")
+
+            if inserted_count > 0:
+                new_html = visual_text_to_html(live_visual, img_map)
+                _sync_editor_state(new_html, live_visual, current_cursor_pos)
+                st.session_state[pasted_img_input_key] = ""
+                plural = "s" if inserted_count > 1 else ""
+                trigger_toast(f"Pasted {inserted_count} image{plural} inserted right at cursor!", icon="📋")
+                st.rerun()
+            else:
+                st.session_state[pasted_img_input_key] = ""
 
     # --------------------------------------------------------------------------
     # TOOLBAR ROW 1: FORMATTING
@@ -582,56 +622,90 @@ def render_rich_editor(
             ta.addEventListener('blur', sendCursorPos);
             ta.addEventListener('input', sendCursorPos);
 
-            function handleImageFile(file) {{
-                if (!file) return;
+            function processImageFiles(imageFiles) {{
+                if (!imageFiles || imageFiles.length === 0) return;
                 sendCursorPos();
-                const reader = new FileReader();
-                reader.onload = function(evt) {{
-                    const img = new Image();
-                    img.onload = function() {{
-                        let w = img.width, h = img.height;
-                        const maxW = 600;
-                        if (w > maxW) {{
-                            h = Math.round((h * maxW) / w);
-                            w = maxW;
-                        }}
-                        const canvas = document.createElement('canvas');
-                        canvas.width = w;
-                        canvas.height = h;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, w, h);
-                        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
-                        const pInps = Array.from(pDoc.querySelectorAll('input[aria-label*="rich_pasted_image_receiver"]'));
-                        const pInp = pInps.find(i => i.id && i.id.includes('{pasted_img_input_key}')) || pInps[0];
-                        if (pInp) {{
-                            if (pInp._valueTracker) {{
-                                pInp._valueTracker.setValue('');
+                let completed = [];
+                let pending = imageFiles.length;
+
+                imageFiles.forEach(file => {{
+                    const reader = new FileReader();
+                    reader.onload = function(evt) {{
+                        const img = new Image();
+                        img.onload = function() {{
+                            let w = img.width, h = img.height;
+                            const maxW = 600;
+                            if (w > maxW) {{
+                                h = Math.round((h * maxW) / w);
+                                w = maxW;
                             }}
-                            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                            nativeSetter.call(pInp, dataUrl);
-                            pInp.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                            pInp.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        }}
+                            const canvas = document.createElement('canvas');
+                            canvas.width = w;
+                            canvas.height = h;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, w, h);
+                            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                            completed.push(dataUrl);
+                            pending--;
+
+                            if (pending === 0 && completed.length > 0) {{
+                                const pInps = Array.from(pDoc.querySelectorAll('input[aria-label*="rich_pasted_image_receiver"]'));
+                                const pInp = pInps.find(i => i.id && i.id.includes('{pasted_img_input_key}')) || pInps[0];
+                                if (pInp) {{
+                                    if (pInp._valueTracker) {{
+                                        pInp._valueTracker.setValue('');
+                                    }}
+                                    const payload = completed.length === 1 ? completed[0] : JSON.stringify(completed);
+                                    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                    nativeSetter.call(pInp, payload);
+                                    pInp.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    pInp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                }}
+                            }}
+                        }};
+                        img.onerror = function() {{
+                            pending--;
+                        }};
+                        img.src = evt.target.result;
                     }};
-                    img.src = evt.target.result;
-                }};
-                reader.readAsDataURL(file);
+                    reader.onerror = function() {{
+                        pending--;
+                    }};
+                    reader.readAsDataURL(file);
+                }});
             }}
 
-            // 1. Intercept clipboard paste event
+            // 1. Intercept clipboard paste event (only intercept when image present)
             ta.addEventListener('paste', function(e) {{
                 if (!e.clipboardData) return;
-                const items = e.clipboardData.items;
-                if (!items) return;
+                const items = e.clipboardData.items || [];
+                const files = e.clipboardData.files || [];
+                let imageFiles = [];
+
+                // Check items first
                 for (let i = 0; i < items.length; i++) {{
-                    if (items[i].type && items[i].type.indexOf('image') !== -1) {{
-                        e.preventDefault();
-                        const file = items[i].getAsFile();
-                        handleImageFile(file);
-                        return;
+                    if (items[i].type && items[i].type.indexOf('image') === 0) {{
+                        const f = items[i].getAsFile();
+                        if (f) imageFiles.push(f);
                     }}
                 }}
+
+                // If items was empty or had no files, check files list
+                if (imageFiles.length === 0 && files.length > 0) {{
+                    for (let i = 0; i < files.length; i++) {{
+                        if (files[i].type && files[i].type.indexOf('image') === 0) {{
+                            imageFiles.push(files[i]);
+                        }}
+                    }}
+                }}
+
+                // Only prevent default if an image was actually in clipboard
+                if (imageFiles.length > 0) {{
+                    e.preventDefault();
+                    processImageFiles(imageFiles);
+                }}
+                // Else: normal text paste falls through to native browser behavior
             }});
 
             // 2. Intercept drag-and-drop file event
@@ -649,13 +723,16 @@ def render_rich_editor(
                 e.preventDefault();
                 ta.style.borderColor = '';
                 ta.style.backgroundColor = '';
-                if (!e.dataTransfer || !e.dataTransfer.files) return;
-                const files = e.dataTransfer.files;
+                if (!e.dataTransfer) return;
+                const files = e.dataTransfer.files || [];
+                let imageFiles = [];
                 for (let i = 0; i < files.length; i++) {{
-                    if (files[i].type && files[i].type.indexOf('image') !== -1) {{
-                        handleImageFile(files[i]);
-                        return;
+                    if (files[i].type && files[i].type.indexOf('image') === 0) {{
+                        imageFiles.push(files[i]);
                     }}
+                }}
+                if (imageFiles.length > 0) {{
+                    processImageFiles(imageFiles);
                 }}
             }});
         }}
