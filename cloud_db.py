@@ -660,14 +660,22 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
             cur_sq.execute("SELECT * FROM smtp_accounts")
             s_rows = cur_sq.fetchall()
             for r in s_rows:
-                cols = list(r.keys())
-                placeholders = ", ".join(["%s"] * len(cols))
-                col_str = ", ".join(cols)
-                cur_pg.execute(f"""
-                    INSERT INTO smtp_accounts ({col_str})
-                    VALUES ({placeholders})
-                    ON CONFLICT (id) DO NOTHING
-                """, tuple(r[k] for k in cols))
+                acc_email = (r["email"] or "").strip()
+                cur_pg.execute("SELECT id FROM smtp_accounts WHERE LOWER(TRIM(email)) = LOWER(TRIM(%s))", (acc_email,))
+                exist_acc = cur_pg.fetchone()
+                if exist_acc:
+                    update_cols = [k for k in r.keys() if k != "id"]
+                    set_clause = ", ".join(f"{k} = %s" for k in update_cols)
+                    cur_pg.execute(f"UPDATE smtp_accounts SET {set_clause} WHERE id = %s", tuple(r[k] for k in update_cols) + (exist_acc[0],))
+                else:
+                    cols = list(r.keys())
+                    placeholders = ", ".join(["%s"] * len(cols))
+                    col_str = ", ".join(cols)
+                    cur_pg.execute(f"""
+                        INSERT INTO smtp_accounts ({col_str})
+                        VALUES ({placeholders})
+                        ON CONFLICT (id) DO NOTHING
+                    """, tuple(r[k] for k in cols))
             stats["smtp_accounts"] = len(s_rows)
             safe_reset_seq("smtp_accounts")
 
