@@ -2562,7 +2562,7 @@ def get_approved_due_emails(current_time_str: Optional[str] = None, db_path: str
     cursor = conn.cursor()
     cursor.execute("""
         SELECT * FROM emails
-        WHERE status = 'Approved'
+        WHERE status IN ('Approved', 'Scheduled')
           AND scheduled_time IS NOT NULL
           AND scheduled_time <= ?
         ORDER BY scheduled_time ASC

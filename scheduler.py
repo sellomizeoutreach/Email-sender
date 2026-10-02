@@ -914,17 +914,17 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     except Exception as camp_err:
         logger.warning(f"Error processing campaign engine cycle: {camp_err}")
 
-    # 2. Check sending window (global / office hours mode)
+    now_local_str = get_local_system_time_str()
+    due_emails = get_approved_due_emails(now_local_str, db_path=target_db)
+    count = len(due_emails)
+
+    # 2. Check sending window for new queue items (only when no overdue scheduled emails)
     sched_mode = (get_config("schedule_mode", "adaptive_multi_country", db_path=target_db) or "adaptive_multi_country").strip()
-    if sched_mode != "adaptive_multi_country":
+    if count == 0 and sched_mode != "adaptive_multi_country":
         in_window, window_msg = is_within_sending_window(db_path=target_db)
         if not in_window and not dry_run:
             logger.info(f"[Scheduler] Dispatch paused: {window_msg}.")
             return 0
-
-    now_local_str = get_local_system_time_str()
-    due_emails = get_approved_due_emails(now_local_str, db_path=target_db)
-    count = len(due_emails)
 
     if count > 0:
         dispatch_method = get_config("dispatch_method", "hostinger_smtp", db_path=target_db)
@@ -936,18 +936,24 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
         except Exception:
             min_delay, max_delay = 20.0, 45.0
 
-        logger.info(f"Found {count} approved email(s) due at {now_local_str}. Dispatch Engine: '{dispatch_method}'.")
+        logger.info(f"Found {count} approved/due email(s) at {now_local_str}. Dispatch Engine: '{dispatch_method}'.")
 
         dispatched_count = 0
         for idx, email_rec in enumerate(due_emails):
-            # Evaluate individual recipient's market window if adaptive mode
-            email_in_window, email_window_msg = is_within_sending_window(
-                email_record=email_rec,
-                db_path=target_db
-            )
-            if not email_in_window and not dry_run:
-                logger.info(f"[Scheduler] Postponing Email ID #{email_rec['id']} for '{email_rec.get('recipient')}': {email_window_msg}")
-                continue
+            sched_time_str = email_rec.get("scheduled_time") or ""
+            is_overdue = bool(sched_time_str and sched_time_str <= now_local_str)
+
+            # Auto-send overdue emails immediately. Only evaluate window limits for non-overdue queue items.
+            if not is_overdue:
+                email_in_window, email_window_msg = is_within_sending_window(
+                    email_record=email_rec,
+                    db_path=target_db
+                )
+                if not email_in_window and not dry_run:
+                    logger.info(f"[Scheduler] Postponing Email ID #{email_rec['id']} for '{email_rec.get('recipient')}': {email_window_msg}")
+                    continue
+            else:
+                logger.info(f"[Scheduler] Auto-dispatching overdue Email ID #{email_rec['id']} ({sched_time_str} <= {now_local_str}) immediately.")
 
             if dispatch_method == "hostinger_smtp":
                 dispatch_email_hostinger(email_rec, dry_run=dry_run, db_path=target_db)

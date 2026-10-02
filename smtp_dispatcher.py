@@ -44,7 +44,7 @@ def html_to_plain_text(html_content: str) -> str:
         return "\n".join(l for l in lines if l)
 
 def test_smtp_connection(
-    smtp_host: str = "",
+    smtp_host: Any = "",
     smtp_port: int = 465,
     email: str = "",
     password: str = "",
@@ -53,13 +53,20 @@ def test_smtp_connection(
 ) -> Tuple[bool, str]:
     """
     Test credentials and SSL/TLS handshake with Hostinger or any SMTP server.
-    Flexible signature accepting smtp_host/host, smtp_port/port, email/username.
+    Flexible signature accepting an account dict, or individual params.
     Returns (True, success_msg) or (False, error_msg).
     """
-    host = (smtp_host or kwargs.get("host") or "").strip()
-    port = int(kwargs.get("port") or smtp_port or 465)
-    user = (email or kwargs.get("username") or "").strip()
-    pwd = (password or kwargs.get("password") or "").strip()
+    if isinstance(smtp_host, dict):
+        acc = smtp_host
+        host = str(acc.get("smtp_host") or acc.get("host") or "").strip()
+        port = int(acc.get("smtp_port") or acc.get("port") or 465)
+        user = str(acc.get("email") or acc.get("username") or "").strip()
+        pwd = str(acc.get("password") or "").strip()
+    else:
+        host = str(smtp_host or kwargs.get("host") or "").strip()
+        port = int(kwargs.get("port") or smtp_port or 465)
+        user = str(email or kwargs.get("username") or "").strip()
+        pwd = str(password or kwargs.get("password") or "").strip()
 
     if not host or not user or not pwd:
         return False, "Host, email address, and password are required."

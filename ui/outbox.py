@@ -17,6 +17,7 @@ from typing import List, Dict, Any, Optional
 from database import (
     get_emails,
     get_email_by_id,
+    get_approved_due_emails,
     update_email,
     delete_email,
     get_smtp_accounts,
@@ -24,8 +25,8 @@ from database import (
     mark_contact_do_not_contact,
     mark_contact_replied_manual,
 )
-from timezone_helper import get_engine_now
-from scheduler import dispatch_email_hostinger
+from timezone_helper import get_engine_now, get_engine_now_str
+from scheduler import dispatch_email_hostinger, run_scheduler_cycle
 from ui.editor import render_dual_mode_editor
 from ui.components import trigger_toast
 
@@ -287,6 +288,17 @@ def _get_sent_engagement_status(email_rec: Dict[str, Any], lead: Optional[Dict[s
 # ---------------------------------------------------------------------------
 def render_outbox_tab():
     """Render Outbox with Scheduled, Sent (with telemetry & filters), and Paused/Failed."""
+    # ── Auto-dispatch overdue scheduled outreach immediately ──
+    now_ts = get_engine_now_str()
+    overdue_due = get_approved_due_emails(now_ts)
+    if overdue_due:
+        try:
+            dispatched = run_scheduler_cycle(dry_run=False)
+            if dispatched > 0:
+                trigger_toast(f"⚡ Auto-dispatched {dispatched} overdue scheduled email(s) immediately!", icon="🚀")
+        except Exception:
+            pass
+
     all_emails = get_emails()
     all_leads = get_contacts()
     lead_map = {c.get("email", "").lower().strip(): c for c in all_leads if c.get("email")}
@@ -632,6 +644,19 @@ def render_outbox_tab():
             st.success("✅ Clean queue: No paused follow-ups or failed deliveries.")
         return
 
+    cur_now_ts = get_engine_now_str()
+    due_items = [e for e in items if e.get("scheduled_time") and e.get("scheduled_time") <= cur_now_ts]
+    if current_filter == "Scheduled" and due_items:
+        d_c1, d_c2 = st.columns([3, 1], vertical_alignment="center")
+        with d_c1:
+            st.info(f"⚡ **{len(due_items)} email(s) are due/overdue for dispatch.**")
+        with d_c2:
+            if st.button("🚀 Auto-send All Due Now", type="primary", use_container_width=True, key="btn_outbox_flush_due"):
+                with st.spinner("Dispatching due outreach..."):
+                    dispatched = run_scheduler_cycle(dry_run=False)
+                    trigger_toast(f"Dispatched {dispatched} email(s)!", icon="🚀")
+                    st.rerun()
+
     st.markdown(f"<div style='font-size:12px; color:#64748B; margin-bottom:8px;'>Showing {len(items)} {current_filter.lower()} email(s):</div>", unsafe_allow_html=True)
 
     for e in items:
@@ -650,14 +675,18 @@ def render_outbox_tab():
 
         sched_time_str = e.get("scheduled_time") or ""
         target_tz = e.get("target_timezone") or "LOCAL"
+        is_overdue = bool(sched_time_str and sched_time_str <= cur_now_ts)
         if sched_time_str:
-            when_display = f"{sched_time_str[:16]} ({target_tz})"
+            when_display = f"{sched_time_str[:16]} ({target_tz})" + (" · <b style='color:#B45309;'>⏰ Due Now</b>" if is_overdue else "")
         else:
             when_display = "Immediate"
 
         status_raw = e.get("status") or "Scheduled"
         if status_raw in ["Approved", "Pending", "Scheduled"]:
-            pill_html = '<span class="pill p-sent">Scheduled</span>'
+            if is_overdue:
+                pill_html = '<span class="pill" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-weight:700;">⚡ Due to Send</span>'
+            else:
+                pill_html = '<span class="pill p-sent">Scheduled</span>'
         elif status_raw == "Paused":
             err_msg = e.get("error_message") or ""
             reason = "replied" if "replied" in err_msg.lower() or "reply" in err_msg.lower() else "manual"
