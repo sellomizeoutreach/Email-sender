@@ -1,0 +1,27 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # Runs every 30 minutes, 24/7
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  ping-app:
+    name: Ping Streamlit Cloud App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping App URL and Health Endpoint
+        run: |
+          echo "Pinging https://sellomize.streamlit.app/ to keep container warm..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c cookies.txt -b cookies.txt --max-redirs 5 --max-time 30 "https://sellomize.streamlit.app/" || echo "failed")
+          echo "Main page HTTP status: $HTTP_STATUS"
+          
+          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c cookies.txt -b cookies.txt --max-redirs 5 --max-time 30 "https://sellomize.streamlit.app/_stcore/health" || echo "failed")
+          echo "Health check HTTP status: $HEALTH_STATUS"
+          
+          if [ "$HTTP_STATUS" != "failed" ]; then
+            echo "Success: Ping registered on Streamlit Cloud (Status: $HTTP_STATUS)!"
+          else
+            echo "Warning: Request failed to connect."
+          fi
