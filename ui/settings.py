@@ -187,7 +187,7 @@ def render_edit_mailbox_dialog(acc: Dict[str, Any]):
         with c_port:
             port = st.number_input("Port", value=int(acc.get("smtp_port") or DEFAULT_SMTP_PORT), step=1)
 
-        daily_limit = st.number_input("Target Daily Limit", min_value=1, max_value=500, value=int(acc.get("daily_limit") or DEFAULT_DAILY_LIMIT))
+        daily_limit = st.number_input("Target Daily Limit", min_value=1, max_value=500, value=max(1, min(500, int(acc.get("daily_limit") or DEFAULT_DAILY_LIMIT))))
 
         st.markdown("---")
         st.markdown("#### Automated Warmup Schedule")
@@ -195,9 +195,9 @@ def render_edit_mailbox_dialog(acc: Dict[str, Any]):
         warmup_enabled = st.checkbox("Enable Automated Warmup", value=is_warmup)
         w_c1, w_c2 = st.columns(2)
         with w_c1:
-            w_start_lim = st.number_input("Starting Limit", min_value=1, max_value=100, value=int(acc.get("warmup_starting_limit") or 5))
+            w_start_lim = st.number_input("Starting Limit", min_value=1, max_value=100, value=max(1, min(100, int(acc.get("warmup_starting_limit") or 5))))
         with w_c2:
-            w_inc = st.number_input("Daily Increment", min_value=1, max_value=50, value=int(acc.get("warmup_daily_increment") or 3))
+            w_inc = st.number_input("Daily Increment", min_value=1, max_value=50, value=max(1, min(50, int(acc.get("warmup_daily_increment") or 3))))
 
         c1, c2 = st.columns(2)
         with c1:
@@ -499,8 +499,9 @@ def render_settings_tab():
                     trigger_toast("BCC configuration updated & saved!", icon="📬")
                     st.rerun()
 
-    curr_min_j = max(5, _safe_int(get_config("min_delay_seconds", str(DEFAULT_MIN_JITTER)), DEFAULT_MIN_JITTER))
-    curr_max_j = max(curr_min_j, _safe_int(get_config("max_delay_seconds", str(DEFAULT_MAX_JITTER)), DEFAULT_MAX_JITTER))
+    curr_min_j = max(5, min(300, _safe_int(get_config("min_delay_seconds", str(DEFAULT_MIN_JITTER)), DEFAULT_MIN_JITTER)))
+    raw_max_j = _safe_int(get_config("max_delay_seconds", str(DEFAULT_MAX_JITTER)), DEFAULT_MAX_JITTER)
+    curr_max_j = max(10, max(curr_min_j, min(600, raw_max_j)))
     jitter_summary = f"{curr_min_j}s – {curr_max_j}s random human delay between dispatches"
 
     with card_c4:
@@ -515,9 +516,9 @@ def render_settings_tab():
                 st.caption("Adds randomized human-like delays between consecutive dispatches to prevent spam filter triggers.")
                 j_c1, j_c2 = st.columns(2)
                 with j_c1:
-                    new_min_j = st.number_input("Min Delay (seconds)", min_value=5, max_value=300, value=curr_min_j)
+                    new_min_j = st.number_input("Min Delay (seconds)", min_value=5, max_value=300, value=max(5, min(300, curr_min_j)))
                 with j_c2:
-                    new_max_j = st.number_input("Max Delay (seconds)", min_value=10, max_value=600, value=curr_max_j)
+                    new_max_j = st.number_input("Max Delay (seconds)", min_value=10, max_value=600, value=max(10, min(600, curr_max_j)))
                 if st.form_submit_button("Save Pacing", type="primary", use_container_width=True):
                     if new_min_j > new_max_j:
                         new_min_j, new_max_j = new_max_j, new_min_j
