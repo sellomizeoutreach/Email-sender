@@ -14,9 +14,10 @@ Features:
 import streamlit as st
 import html
 import re
+import json
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -145,12 +146,384 @@ def _get_default_copy(touch_step, sample_contact, is_single_recipient):
         }
 
 
+
+def _detect_body_language(text: str) -> str:
+    """Heuristic language detection from email body text."""
+    t_lower = text.lower()
+    spanish_indicators = ["hola", "gracias", "saludos", "estimado", "escribo", "nuestro", "atentamente", "cordial"]
+    french_indicators = ["bonjour", "merci", "cordialement", "suite à", "notre", "salutations"]
+    german_indicators = ["hallo", "guten tag", "vielen dank", "mit freundlichen", "bezugnehmend"]
+    if any(w in t_lower for w in spanish_indicators):
+        return "Spanish"
+    if any(w in t_lower for w in french_indicators):
+        return "French"
+    if any(w in t_lower for w in german_indicators):
+        return "German"
+    return "English"
+
+
+def _generate_rule_based_followup(
+    initial_subject: str,
+    initial_body: str,
+    step_num: int,
+    angle_type: str,
+    lead_name: str = "{first_name}",
+    company_name: str = "[Company]"
+) -> Tuple[str, str]:
+    """Generates natural, rule-based follow-up copy tailored to Touch 1."""
+    lang = _detect_body_language(initial_body)
+    c_subj = initial_subject.strip()
+    if not c_subj:
+        c_subj = f"{company_name} inquiry"
+    re_subj = c_subj if re.match(r'^(re|fwd):', c_subj, re.IGNORECASE) else f"Re: {c_subj}"
+
+    greeting = f"Hi {lead_name}," if lead_name and lead_name != "{first_name}" else "Hi {first_name},"
+
+    if lang == "Spanish":
+        greeting_es = f"Hola {lead_name}," if lead_name and lead_name != "{first_name}" else "Hola {first_name},"
+        if "nudge" in angle_type.lower():
+            body = (
+                f"{greeting_es}\n\n"
+                f"Te escribo brevemente para dar seguimiento a mi nota anterior sobre {company_name}. "
+                f"¿Tuviste oportunidad de revisarla?\n\n"
+                f"Avísame si tienes unos minutos esta semana.\n\n"
+                f"Saludos cordiales,"
+            )
+        elif "value" in angle_type.lower():
+            body = (
+                f"{greeting_es}\n\n"
+                f"Estuve revisando la situación de {company_name} y encontré una oportunidad interesante que podría aportarles valor inmediato.\n\n"
+                f"¿Te interesaría que te comparta un resumen rápido de 2 minutos?\n\n"
+                f"Saludos cordiales,"
+            )
+        elif "alternative" in angle_type.lower():
+            body = (
+                f"{greeting_es}\n\n"
+                f"Dando seguimiento a mi correo anterior. Si no eres la persona indicada en {company_name} para este tema, ¿me podrías orientar con quién debería comunicarme?\n\n"
+                f"Agradezco mucho tu ayuda.\n\n"
+                f"Saludos cordiales,"
+            )
+        else:
+            body = (
+                f"{greeting_es}\n\n"
+                f"Como no he tenido respuesta, asumo que el momento no es el adecuado para {company_name}.\n\n"
+                f"Cierro este contacto por ahora. ¡Mucho éxito en sus proyectos!\n\n"
+                f"Saludos cordiales,"
+            )
+        return re_subj, body
+
+    # English default
+    if "nudge" in angle_type.lower():
+        body = (
+            f"{greeting}\n\n"
+            f"Just bumping my previous note regarding {company_name} to the top of your inbox. "
+            f"Did you have a quick moment to look it over?\n\n"
+            f"Would you be open to a 5-minute chat this week?\n\n"
+            f"Best regards,"
+        )
+    elif "value" in angle_type.lower():
+        body = (
+            f"{greeting}\n\n"
+            f"Following up on my previous note. I put together a quick observation on how similar brands to {company_name} "
+            f"are improving their performance right now.\n\n"
+            f"Happy to send over a brief 2-minute overview if this is on your radar.\n\n"
+            f"Best regards,"
+        )
+    elif "alternative" in angle_type.lower():
+        body = (
+            f"{greeting}\n\n"
+            f"Touching base on my earlier message. If you're not the best person at {company_name} to speak with regarding this, "
+            f"could you point me toward whoever leads this on your team?\n\n"
+            f"Really appreciate your help!\n\n"
+            f"Best regards,"
+        )
+    else:
+        body = (
+            f"{greeting}\n\n"
+            f"I haven't heard back, so I'll assume timing isn't right for {company_name} right now.\n\n"
+            f"I'll close the loop for now—wishing you and your team continued success!\n\n"
+            f"Best regards,"
+        )
+
+    return re_subj, body
+
+
+def _generate_api_followup(
+    api_key: str,
+    initial_subject: str,
+    initial_body: str,
+    step_num: int,
+    angle_type: str,
+    custom_guidance: str = "",
+    lead_name: str = "{first_name}",
+    company_name: str = "[Company]"
+) -> Tuple[str, str]:
+    """Generates context-aware follow-up via Groq API or falls back to rule-based copy."""
+    from groq_client import call_groq_completion, DEFAULT_TEXT_MODEL
+    lang = _detect_body_language(initial_body)
+
+    system_prompt = (
+        "You are an elite B2B outreach copywriter for Sellomize. "
+        f"Write follow-up touch #{step_num} responding to Touch 1.\n"
+        "STRICT RULES:\n"
+        f"1. Language: Must match the exact language of the initial email ({lang}).\n"
+        "2. Length: Maximum 65 words. Zero fluff.\n"
+        "3. Tone: Professional, human, conversational, polite. Never robotic or pushy.\n"
+        "4. Do NOT repeat the initial pitch from Touch 1. Reference it as 'my previous note' or 'our note earlier'.\n"
+        "5. Include a low-friction call to action.\n"
+        "6. Return ONLY a valid JSON object in this format: {\"subject\": \"...\", \"body\": \"...\"}\n"
+    )
+
+    user_prompt = (
+        f"Initial Subject: {initial_subject}\n"
+        f"Initial Body Context:\n{initial_body[:500]}\n\n"
+        f"Recipient: {lead_name}\n"
+        f"Company: {company_name}\n"
+        f"Follow-up Strategy: {angle_type}\n"
+        f"Custom Instructions: {custom_guidance.strip() if custom_guidance else 'None'}\n"
+    )
+
+    try:
+        raw_output, _ = call_groq_completion(
+            api_key=api_key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=DEFAULT_TEXT_MODEL,
+            temperature=0.6,
+            max_tokens=300
+        )
+        m = re.search(r'\{.*\}', raw_output, re.DOTALL)
+        if m:
+            data = json.loads(m.group(0))
+            s = data.get("subject", "").strip()
+            b = data.get("body", "").strip()
+            if s and b:
+                return s, b
+        lines = [ln.strip() for ln in raw_output.strip().split("\n") if ln.strip()]
+        if lines:
+            if lines[0].lower().startswith("subject:"):
+                subj_line = lines[0].split(":", 1)[1].strip()
+                body_lines = lines[1:]
+                return subj_line, "\n\n".join(body_lines)
+            return f"Re: {initial_subject}", raw_output.strip()
+    except Exception as ex:
+        logger.warning(f"Groq follow-up generation failed: {ex}")
+
+    return _generate_rule_based_followup(initial_subject, initial_body, step_num, angle_type, lead_name, company_name)
+
+
+# ---------------------------------------------------------------------------
+# Dialog: Add Follow-up Sequence Step
+# ---------------------------------------------------------------------------
+@st.dialog("➕ Add Follow-up Sequence Step", width="large")
+def render_add_followup_dialog(
+    initial_subject: str,
+    initial_body: str,
+    current_followups_count: int,
+    sample_lead: Optional[Dict[str, Any]] = None
+):
+    step_num = current_followups_count + 1
+    default_delay = step_num * 3
+    lead_name = (sample_lead.get("name") if sample_lead else "") or "{first_name}"
+    company_name = (sample_lead.get("company") if sample_lead else "") or "[Company]"
+
+    st.markdown(
+        f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px;'>"
+        f"<b>Adding Follow-up #{step_num}</b> &nbsp;·&nbsp; "
+        f"Recipient: <b>{html.escape(lead_name)}</b> ({html.escape(company_name)}) &nbsp;·&nbsp; "
+        f"Initial Subject: <i>{html.escape(initial_subject or 'No Subject')}</i>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    tab_ai, tab_custom, tab_tpl = st.tabs([
+        "🤖 Generate via AI / Bot (API)",
+        "✏️ Write Custom Follow-up",
+        "📋 Load from Saved Template"
+    ])
+
+    with tab_ai:
+        st.markdown(
+            "<div style='font-size:12px; color:#475569; margin-bottom:8px;'>"
+            "Generates context-aware follow-up copy tailored to your initial message, matching the language, tone, and offer."
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+        col_ang, col_del = st.columns([2.5, 1.5], vertical_alignment="center")
+        with col_ang:
+            chosen_angle = st.selectbox(
+                "Follow-up Strategy / Angle",
+                [
+                    "📌 Quick Polite Nudge (Check in on previous note without pressure)",
+                    "💡 Value-Add & Insight (Offer a relevant tip or case study for company)",
+                    "🤝 Alternative Contact (Ask who on the team handles this)",
+                    "🚪 Soft Breakup / Final Note (Politely close the loop)",
+                    "✏️ Custom Prompt Guidance"
+                ],
+                key=f"dlg_ai_angle_{step_num}"
+            )
+        with col_del:
+            ai_delay = st.slider(
+                "Delay (Days after touch 1):",
+                min_value=1,
+                max_value=30,
+                value=default_delay,
+                key=f"dlg_ai_delay_{step_num}"
+            )
+
+        custom_prompt = ""
+        if "Custom" in chosen_angle:
+            custom_prompt = st.text_input(
+                "Custom AI Instructions",
+                placeholder="e.g. Mention that our onboarding closes on Friday",
+                key=f"dlg_ai_custom_{step_num}"
+            )
+
+        configured_key = get_config("groq_api_key", "")
+        if not configured_key and "GROQ_API_KEY" in st.secrets:
+            configured_key = st.secrets["GROQ_API_KEY"]
+        if not configured_key:
+            import os
+            configured_key = os.environ.get("GROQ_API_KEY", "")
+
+        c_gen_btn, c_gen_info = st.columns([1.5, 2.5], vertical_alignment="center")
+        with c_gen_btn:
+            gen_clicked = st.button("⚡ Generate Follow-up", type="secondary", use_container_width=True, key=f"dlg_btn_trigger_gen_{step_num}")
+        with c_gen_info:
+            if configured_key:
+                st.caption("⚡ Powered by Groq API (High-speed multimodal AI)")
+            else:
+                st.caption("🤖 Powered by Built-in Outreach Bot (Deterministic smart rules)")
+
+        subj_state_key = f"dlg_gen_subj_{step_num}"
+        body_state_key = f"dlg_gen_body_{step_num}"
+
+        if gen_clicked:
+            with st.spinner("Generating follow-up copy..."):
+                if configured_key:
+                    g_subj, g_body = _generate_api_followup(
+                        api_key=configured_key,
+                        initial_subject=initial_subject,
+                        initial_body=initial_body,
+                        step_num=step_num,
+                        angle_type=chosen_angle,
+                        custom_guidance=custom_prompt,
+                        lead_name=lead_name,
+                        company_name=company_name
+                    )
+                else:
+                    g_subj, g_body = _generate_rule_based_followup(
+                        initial_subject=initial_subject,
+                        initial_body=initial_body,
+                        step_num=step_num,
+                        angle_type=chosen_angle,
+                        lead_name=lead_name,
+                        company_name=company_name
+                    )
+                st.session_state[subj_state_key] = g_subj
+                st.session_state[body_state_key] = g_body
+                trigger_toast(f"Follow-up #{step_num} generated!", icon="⚡")
+
+        if subj_state_key not in st.session_state:
+            def_s, def_b = _generate_rule_based_followup(initial_subject, initial_body, step_num, chosen_angle, lead_name, company_name)
+            st.session_state[subj_state_key] = def_s
+            st.session_state[body_state_key] = def_b
+
+        st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+        edit_subj = st.text_input("Follow-up Subject Line", value=st.session_state[subj_state_key], key=f"dlg_ai_res_subj_{step_num}")
+        edit_body = st.text_area("Follow-up Body Copy", value=st.session_state[body_state_key], height=130, key=f"dlg_ai_res_body_{step_num}")
+        ai_inc_sig = st.checkbox(f"🖋️ Include signature in follow-up #{step_num}", value=False, key=f"dlg_ai_sig_{step_num}")
+
+        if st.button(f"➕ Add Follow-up #{step_num} to Sequence", type="primary", use_container_width=True, key=f"dlg_ai_add_step_{step_num}"):
+            st.session_state["compose_followups"].append({
+                "delay_days": ai_delay,
+                "subject": edit_subj.strip(),
+                "body": edit_body.strip(),
+                "include_signature": ai_inc_sig
+            })
+            st.session_state.pop(subj_state_key, None)
+            st.session_state.pop(body_state_key, None)
+            trigger_toast(f"Follow-up #{step_num} added (+{ai_delay}d)!", icon="↩️")
+            st.rerun()
+
+    with tab_custom:
+        st.markdown(
+            "<div style='font-size:12px; color:#475569; margin-bottom:8px;'>"
+            "Write custom follow-up copy from scratch and choose your delay timing."
+            "</div>",
+            unsafe_allow_html=True
+        )
+        c_delay = st.slider(
+            "Delay (Days after touch 1):",
+            min_value=1,
+            max_value=30,
+            value=default_delay,
+            key=f"dlg_c_delay_{step_num}"
+        )
+        def_c_subj = f"Re: {initial_subject}" if initial_subject and not initial_subject.lower().startswith("re:") else (initial_subject or "Re: Quick question")
+        c_subj = st.text_input("Follow-up Subject Line", value=def_c_subj, key=f"dlg_c_subj_{step_num}")
+        def_c_body = f"Hi {lead_name},\n\nJust following up on my previous note to see if you had a chance to review it.\n\nBest regards,"
+        c_body = st.text_area("Follow-up Body", value=def_c_body, height=130, key=f"dlg_c_body_{step_num}")
+        c_inc_sig = st.checkbox(f"🖋️ Include signature in follow-up #{step_num}", value=False, key=f"dlg_c_sig_{step_num}")
+
+        if st.button(f"➕ Add Custom Follow-up #{step_num}", type="primary", use_container_width=True, key=f"dlg_c_add_step_{step_num}"):
+            st.session_state["compose_followups"].append({
+                "delay_days": c_delay,
+                "subject": c_subj.strip(),
+                "body": c_body.strip(),
+                "include_signature": c_inc_sig
+            })
+            trigger_toast(f"Custom follow-up #{step_num} added (+{c_delay}d)!", icon="↩️")
+            st.rerun()
+
+    with tab_tpl:
+        st.markdown(
+            "<div style='font-size:12px; color:#475569; margin-bottom:8px;'>"
+            "Load any saved outreach template to use as this follow-up step."
+            "</div>",
+            unsafe_allow_html=True
+        )
+        all_tpls = get_templates(active_only=True)
+        if not all_tpls:
+            st.info("No saved templates found. Create templates in the Templates screen.")
+        else:
+            tpl_map = {f"{t.get('name') or t.get('template_name', 'Template')} (ID #{t['id']})": t for t in all_tpls}
+            chosen_tpl_lbl = st.selectbox("Select Template", list(tpl_map.keys()), key=f"dlg_tpl_pick_{step_num}")
+            chosen_tpl = tpl_map[chosen_tpl_lbl]
+
+            t_delay = st.slider(
+                "Delay (Days after touch 1):",
+                min_value=1,
+                max_value=30,
+                value=default_delay,
+                key=f"dlg_t_delay_{step_num}"
+            )
+            tpl_subj_init = chosen_tpl.get("subject") or f"Re: {initial_subject}"
+            t_subj = st.text_input("Follow-up Subject Line", value=tpl_subj_init, key=f"dlg_tpl_subj_{step_num}")
+            from ui.editor import html_to_visual_text
+            clean_tpl_body, _ = html_to_visual_text(chosen_tpl.get("body_html") or chosen_tpl.get("body_content") or "")
+            t_body = st.text_area("Template Body", value=clean_tpl_body, height=130, key=f"dlg_tpl_body_{step_num}")
+            t_inc_sig = st.checkbox(f"🖋️ Include signature in follow-up #{step_num}", value=False, key=f"dlg_tpl_sig_{step_num}")
+
+            if st.button(f"➕ Add Template as Follow-up #{step_num}", type="primary", use_container_width=True, key=f"dlg_tpl_add_step_{step_num}"):
+                st.session_state["compose_followups"].append({
+                    "delay_days": t_delay,
+                    "subject": t_subj.strip(),
+                    "body": t_body.strip(),
+                    "include_signature": t_inc_sig
+                })
+                trigger_toast(f"Template added as follow-up #{step_num} (+{t_delay}d)!", icon="↩️")
+                st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # Dialog: Confirm Outreach & Schedule Sequence (UTC+5)
 # ---------------------------------------------------------------------------
 
 @st.dialog("🚀 Confirm Outreach & Schedule Sequence (UTC+5)")
 def render_compose_schedule_dialog(
+
     mode: str,
     current_lead: Dict[str, Any],
     selected_mb: Dict[str, Any],
@@ -564,21 +937,17 @@ def render_compose_tab(contacts=None, templates=None):
             with seq_hdr2:
                 if st.button(
                     f"➕ Add follow-up ({num_fu}/3)",
-                    key="comp_add_fu_btn",
+                    key="comp_add_fu_btn_more",
                     use_container_width=True,
                     disabled=not can_add_fu,
-                    help="Adds another follow-up tab in this sequence"
+                    help="Add another follow-up step via AI, custom text, or template"
                 ):
-                    fu_step_num = num_fu + 1
-                    default_delay = fu_step_num * 3
-                    curr_subj = st.session_state.get("compose_subject", "[Company] + Amazon")
-                    re_subj = f"Re: {curr_subj}" if not curr_subj.startswith("Re:") else curr_subj
-                    st.session_state["compose_followups"].append({
-                        "delay_days": default_delay,
-                        "subject": re_subj,
-                        "body": "Hi {first_name},\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
-                    })
-                    st.rerun()
+                    render_add_followup_dialog(
+                        initial_subject=st.session_state.get("compose_subject", ""),
+                        initial_body=st.session_state.get("compose_body_html", ""),
+                        current_followups_count=num_fu,
+                        sample_lead=chosen_lead_obj
+                    )
             with seq_hdr3:
                 if st.button("↩️ Undo", key="comp_undo_fu_btn", use_container_width=True, help="Undo / remove last added follow-up"):
                     st.session_state["compose_followups"].pop()
@@ -590,19 +959,16 @@ def render_compose_tab(contacts=None, templates=None):
             with seq_hdr2:
                 if st.button(
                     "➕ Add follow-up",
-                    key="comp_add_fu_btn",
+                    key="comp_add_fu_btn_init",
                     use_container_width=True,
-                    help="Adds a follow-up tab in this row — each editable separately"
+                    help="Add a follow-up step via AI, custom text, or template"
                 ):
-                    default_delay = 3
-                    curr_subj = st.session_state.get("compose_subject", "[Company] + Amazon")
-                    re_subj = f"Re: {curr_subj}" if not curr_subj.startswith("Re:") else curr_subj
-                    st.session_state["compose_followups"].append({
-                        "delay_days": default_delay,
-                        "subject": re_subj,
-                        "body": "Hi {first_name},\n\nJust following up on my previous note to see if you had a chance to look it over.\n\nBest regards,"
-                    })
-                    st.rerun()
+                    render_add_followup_dialog(
+                        initial_subject=st.session_state.get("compose_subject", ""),
+                        initial_body=st.session_state.get("compose_body_html", ""),
+                        current_followups_count=0,
+                        sample_lead=chosen_lead_obj
+                    )
 
         # Build tabs
         tab_titles = ["📧 Initial Email"] + [

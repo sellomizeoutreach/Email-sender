@@ -16,6 +16,7 @@ Features:
 import os
 import io
 import time
+import json
 import base64
 import html
 import re
@@ -407,15 +408,19 @@ def render_dual_mode_editor(
     - Visual mode: clean editable copy (NO raw HTML tags), toolbar, variable chips, image gallery.
     - Source mode: raw HTML textarea for power users.
     """
-    state_key        = f"{key_prefix}_body_html"
-    mode_key         = f"{key_prefix}_editor_mode"
-    textarea_key     = f"{key_prefix}_visual_textarea"
-    last_synced_html = f"{key_prefix}_last_synced_html"
+    state_key          = f"{key_prefix}_body_html"
+    mode_key           = f"{key_prefix}_editor_mode"
+    textarea_key       = f"{key_prefix}_visual_textarea"
+    last_synced_html   = f"{key_prefix}_last_synced_html"
+    img_map_key        = f"{key_prefix}_img_map"
+    clipboard_copy_key = f"{key_prefix}_clipboard_copy"
 
     if state_key not in st.session_state:
         st.session_state[state_key] = initial_content
     if mode_key not in st.session_state:
         st.session_state[mode_key] = "visual"
+    if img_map_key not in st.session_state:
+        st.session_state[img_map_key] = {}
 
     current_body = st.session_state[state_key]
     is_visual    = (st.session_state[mode_key] == "visual")
@@ -425,7 +430,10 @@ def render_dual_mode_editor(
     # =========================================================================
     if is_visual:
         # Pre-compute clean visual text from stored HTML
-        visual_text, img_map = html_to_visual_text(current_body)
+        visual_text, extracted_img_map = html_to_visual_text(current_body)
+        img_map = dict(st.session_state.get(img_map_key, {}))
+        img_map.update(extracted_img_map)
+        st.session_state[img_map_key] = img_map
 
         # External state sync: if state_key was changed externally (e.g. template loaded)
         prev_html = st.session_state.get(last_synced_html)
@@ -543,39 +551,31 @@ def render_dual_mode_editor(
                 st.session_state["tpl_body_html"] = new_html
             st.rerun()
 
-        def _insert_image(img_tag: str):
-            """Inserts a clean [Image X] token in visual text at the cursor position."""
+        def _register_image(img_tag: str) -> str:
+            """Registers an uploaded or pasted image as [Image X] variable WITHOUT auto-inserting into email text."""
             existing_nums = [
                 int(m.group(1)) for m in re.finditer(r'\[Image\s+(\d+)\]', live_visual, re.IGNORECASE)
             ]
-            next_num = (max(existing_nums) + 1) if existing_nums else (len(img_map) + 1)
+            for k in img_map.keys():
+                m = re.match(r'\[Image\s+(\d+)\]', k, re.IGNORECASE)
+                if m:
+                    existing_nums.append(int(m.group(1)))
+            next_num = (max(existing_nums) + 1) if existing_nums else 1
             placeholder = f"[Image {next_num}]"
             img_map[placeholder] = img_tag
+            st.session_state[img_map_key] = img_map
 
-            pos = _get_insertion_pos("image")
-            before = live_visual[:pos].rstrip()
-            after  = live_visual[pos:].lstrip()
+            # Automatically copy placeholder to clipboard so user can paste it wherever they choose
+            st.session_state[clipboard_copy_key] = placeholder
+            trigger_toast(f"Saved as variable {placeholder}! Copied to clipboard — paste (Ctrl+V) anywhere in your email.", icon="🖼️")
+            st.rerun()
+            return placeholder
 
-            prefix = "\n\n" if before else ""
-            suffix = "\n\n" if after else ""
-            new_visual = f"{before}{prefix}{placeholder}{suffix}{after}"
-
-            new_html = visual_text_to_html(new_visual, img_map)
-
-            new_pos = len(before + prefix + placeholder)
-            st.session_state[cursor_tracker_key] = new_pos
-            if cursor_input_key in st.session_state:
-                st.session_state[cursor_input_key] = str(new_pos)
-
-            st.session_state[state_key]        = new_html
-            st.session_state[textarea_key]     = new_visual
-            st.session_state[last_synced_html] = new_html
-            if "compose" in key_prefix:
-                st.session_state["compose_body_html"] = new_html
-            elif "bulk" in key_prefix:
-                st.session_state["bulk_body_html"] = new_html
-            elif "tpl" in key_prefix:
-                st.session_state["tpl_body_html"] = new_html
+        def _copy_token(token: str):
+            """Copies a variable token to clipboard and notifies operator."""
+            clean_tok = token.strip()
+            st.session_state[clipboard_copy_key] = clean_tok
+            trigger_toast(f"Copied '{clean_tok}' to clipboard! Paste it anywhere with Ctrl+V.", icon="📋")
             st.rerun()
 
         # Handle pasted image data received directly from browser Ctrl+V
@@ -585,8 +585,7 @@ def render_dual_mode_editor(
             tag = (f'<img src="{pasted_data}" alt="Screenshot" '
                    f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
             st.session_state[pasted_img_input_key] = ""
-            trigger_toast("Pasted screenshot inserted right at cursor!", icon="📋")
-            _insert_image(tag)
+            _register_image(tag)
 
         # ------------------------------------------------------------------
         # Row 1: Formatting toolbar (Proportional widths, zero truncation)
@@ -620,7 +619,7 @@ def render_dual_mode_editor(
         with tb_cols[4]:
             with st.popover("🖼️ Image", help="Paste or Upload Screenshot (Ctrl+V)", use_container_width=True):
                 st.markdown("<div style='font-size:13px; font-weight:700; color:#083731; margin-bottom:2px;'>🖼️ Insert Screenshot / Image</div>", unsafe_allow_html=True)
-                st.caption("💡 **Tip:** Press **Ctrl+V** anywhere in the text area to paste directly at your cursor!")
+                st.caption("💡 **Tip:** Images are saved as variables (e.g. `[Image 1]`). Click to copy and paste anywhere in your email!")
 
                 # 1. Instant Clipboard Paste
                 c_p1, c_p2 = st.columns([2.0, 1.2], vertical_alignment="center")
@@ -633,8 +632,7 @@ def render_dual_mode_editor(
                             data_uri, fpath, w, h = res
                             tag = (f'<img src="{data_uri}" alt="Screenshot" '
                                    f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-                            _insert_image(tag)
-                            trigger_toast(f"Pasted screenshot ({w}x{h}px) as [Image] token!", icon="📋")
+                            _register_image(tag)
                         else:
                             st.warning("No image found on clipboard. Drag & drop image below or press Ctrl+V directly in the editor.")
 
@@ -672,16 +670,14 @@ def render_dual_mode_editor(
                         tag  = (f'<img src="data:{mime};base64,{b64}" alt="{html.escape(up_file.name)}" '
                                 f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
 
-                        btn_manual = st.button("➕ Insert Uploaded Screenshot", type="primary",
+                        btn_manual = st.button("➕ Register Uploaded Image as Variable", type="primary",
                                               key=f"{key_prefix}_btn_ins_up_img", use_container_width=True)
 
                         if is_new_upload:
                             st.session_state[last_sig_key] = file_sig
-                            _insert_image(tag)
-                            trigger_toast(f"Image '{up_file.name}' inserted into email body!", icon="🖼️")
+                            _register_image(tag)
                         elif btn_manual:
-                            _insert_image(tag)
-                            trigger_toast("Screenshot inserted as [Image] token!", icon="🖼️")
+                            _register_image(tag)
 
                 st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:10px 0;'>", unsafe_allow_html=True)
 
@@ -690,13 +686,12 @@ def render_dual_mode_editor(
                     img_url = st.text_input("Image Direct URL", placeholder="https://sellomize.com/logo.png",
                                             key=f"{key_prefix}_img_url_val")
                     img_alt = st.text_input("Alt Text", value="Screenshot", key=f"{key_prefix}_img_alt_val")
-                    if st.button("Insert URL Image",
+                    if st.button("Register URL Image as Variable",
                                  key=f"{key_prefix}_btn_ins_url_img", use_container_width=True):
                         if img_url.strip():
                             tag = (f'<img src="{html.escape(img_url.strip())}" alt="{html.escape(img_alt)}" '
                                    f'style="max-width:100%; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-                            _insert_image(tag)
-                            trigger_toast("Image inserted as [Image] token!", icon="🖼️")
+                            _register_image(tag)
 
         with tb_cols[5]:
             with st.popover("📋 List", help="Insert Bullet or Numbered List", use_container_width=True):
@@ -720,36 +715,48 @@ def render_dual_mode_editor(
 
         with chip_cols[0]:
             if st.button("👤 First Name", key=f"{key_prefix}_chip_name",
-                         help="Insert {first_name} token — automatically resolves to recipient's contact first name",
+                         help="Click to copy {first_name} to clipboard",
                          use_container_width=True):
-                _insert(" {first_name}")
+                _copy_token("{first_name}")
 
         with chip_cols[1]:
             if st.button("🏢 Company", key=f"{key_prefix}_chip_comp",
-                         help="Insert [Company] token — automatically resolves to recipient's brand/company",
+                         help="Click to copy [Company] to clipboard",
                          use_container_width=True):
-                _insert(" [Company]")
+                _copy_token("[Company]")
 
         with chip_cols[2]:
-            with st.popover("➕ Variables", help="Insert personalization tokens",
+            with st.popover("➕ Variables", help="Personalization tokens — click to copy",
                             use_container_width=True):
                 st.markdown("**Personalization Tokens**")
-                st.caption("Click any token to insert it into your email body.")
+                var_act_choice = st.radio(
+                    "Click Action:",
+                    ["📋 Copy to Clipboard", "➕ Insert at Cursor"],
+                    horizontal=True,
+                    key=f"{key_prefix}_var_act_mode"
+                )
+                do_insert = ("Insert" in var_act_choice)
+                st.caption("Click any token below to copy it (or insert at cursor).")
+
                 v1, v2 = st.columns(2)
                 with v1:
                     if st.button("{first_name}", key=f"{key_prefix}_var_fn", use_container_width=True):
-                        _insert(" {first_name}")
+                        _insert(" {first_name}") if do_insert else _copy_token("{first_name}")
                     if st.button("[First Name]", key=f"{key_prefix}_var_fn_bracket", use_container_width=True):
-                        _insert(" [First Name]")
+                        _insert(" [First Name]") if do_insert else _copy_token("[First Name]")
                     if st.button("[Email]", key=f"{key_prefix}_var_email", use_container_width=True):
-                        _insert(" [Email]")
+                        _insert(" [Email]") if do_insert else _copy_token("[Email]")
+                    if st.button("[Name]", key=f"{key_prefix}_var_name_bracket", use_container_width=True):
+                        _insert(" [Name]") if do_insert else _copy_token("[Name]")
                 with v2:
                     if st.button("{company}", key=f"{key_prefix}_var_c", use_container_width=True):
-                        _insert(" {company}")
+                        _insert(" {company}") if do_insert else _copy_token("{company}")
                     if st.button("[Website]", key=f"{key_prefix}_var_site", use_container_width=True):
-                        _insert(" [Website]")
+                        _insert(" [Website]") if do_insert else _copy_token("[Website]")
                     if st.button("[Tags]", key=f"{key_prefix}_var_tags", use_container_width=True):
-                        _insert(" [Tags]")
+                        _insert(" [Tags]") if do_insert else _copy_token("[Tags]")
+                    if st.button("[Product]", key=f"{key_prefix}_var_prod", use_container_width=True):
+                        _insert(" [Product]") if do_insert else _copy_token("[Product]")
 
         with chip_cols[3]:
             if st.button("🖋️ Signature", key=f"{key_prefix}_chip_sig",
@@ -771,35 +778,62 @@ def render_dual_mode_editor(
                 st.rerun()
 
         # ------------------------------------------------------------------
-        # Image gallery (visual thumbnails for embedded images)
+        # Image variables gallery (Thumbnails + Click-to-copy tokens)
         # ------------------------------------------------------------------
         if img_map:
             st.markdown(
-                f"<div style='font-size:12px; font-weight:700; color:#083731; margin:6px 0 4px;'>"
-                f"🖼️ Images in this email ({len(img_map)}):</div>",
+                f"<div style='font-size:12px; font-weight:700; color:#083731; margin:8px 0 4px;'>"
+                f"🖼️ Image Variables ({len(img_map)}) — Click token to copy or insert:</div>",
                 unsafe_allow_html=True
             )
-            for ph, img_tag in img_map.items():
+            for ph, img_tag in list(img_map.items()):
                 with st.container(border=True):
-                    c_thumb, c_lbl = st.columns([1, 4], vertical_alignment="center")
+                    c_thumb, c_lbl, c_copy, c_ins, c_del = st.columns([1.0, 3.2, 1.8, 1.4, 1.2], vertical_alignment="center")
                     with c_thumb:
                         src_match = re.search(r'src=["\']([^"\']+)["\']', img_tag)
                         img_src = src_match.group(1) if src_match else ""
                         st.markdown(
-                            f'<img src="{img_src}" style="max-height:48px; max-width:80px; '
+                            f'<img src="{img_src}" style="max-height:44px; max-width:70px; '
                             f'border-radius:4px; object-fit:cover; border:1px solid #CBD5E1;" />',
                             unsafe_allow_html=True
                         )
                     with c_lbl:
+                        is_placed = (ph.lower() in live_visual.lower())
+                        status_badge = (
+                            '<span style="background:#DCFCE7; color:#166534; font-size:11px; font-weight:700; padding:2px 6px; border-radius:4px;">✓ In email</span>'
+                            if is_placed else
+                            '<span style="background:#FEF3C7; color:#92400E; font-size:11px; font-weight:700; padding:2px 6px; border-radius:4px;">⚠️ Unplaced</span>'
+                        )
                         st.markdown(
-                            f"<div style='font-size:12px; font-weight:700; color:#083731;'>{ph}</div>"
-                            f"<div style='font-size:11px; color:#64748B;'>Positioned as {ph} — move or delete the token in the text area.</div>",
+                            f"<div style='font-size:13px; font-weight:700; color:#083731;'>{ph} &nbsp;{status_badge}</div>"
+                            f"<div style='font-size:11px; color:#64748B;'>Paste <code>{ph}</code> anywhere in email body.</div>",
                             unsafe_allow_html=True
                         )
-                        if st.button(f"🗑️ Remove {ph}", key=f"{key_prefix}_del_{ph}"):
+                    with c_copy:
+                        if st.button(f"📋 Copy {ph}", key=f"{key_prefix}_copy_{ph}", use_container_width=True, help=f"Copy {ph} to clipboard"):
+                            _copy_token(ph)
+                    with c_ins:
+                        if st.button(f"➕ Insert", key=f"{key_prefix}_ins_{ph}", use_container_width=True, help=f"Insert {ph} at current cursor"):
+                            pos = _get_insertion_pos("image")
+                            before = live_visual[:pos].rstrip()
+                            after = live_visual[pos:].lstrip()
+                            prefix = "\n\n" if before else ""
+                            suffix = "\n\n" if after else ""
+                            new_visual = f"{before}{prefix}{ph}{suffix}{after}"
+                            new_html = visual_text_to_html(new_visual, img_map)
+                            new_pos = len(before + prefix + ph)
+                            st.session_state[cursor_tracker_key] = new_pos
+                            st.session_state[state_key] = new_html
+                            st.session_state[textarea_key] = new_visual
+                            st.session_state[last_synced_html] = new_html
+                            trigger_toast(f"Inserted {ph} at cursor!", icon="➕")
+                            st.rerun()
+                    with c_del:
+                        if st.button(f"🗑️ Delete", key=f"{key_prefix}_del_{ph}", use_container_width=True, help=f"Remove {ph}"):
                             cur_vis = st.session_state.get(textarea_key, live_visual)
                             cur_vis = re.sub(rf'\n*{re.escape(ph)}\n*', '\n\n', cur_vis).strip()
                             img_map.pop(ph, None)
+                            st.session_state[img_map_key] = img_map
                             st.session_state[textarea_key] = cur_vis
                             st.session_state[state_key] = visual_text_to_html(cur_vis, img_map)
                             st.session_state[last_synced_html] = st.session_state[state_key]
@@ -848,11 +882,32 @@ def render_dual_mode_editor(
             label_visibility="collapsed"
         )
 
-        # Injected script to sync textarea cursor position AND intercept Ctrl+V image pastes
+        copy_target_val = st.session_state.get(clipboard_copy_key, "")
+        # Injected script to sync textarea cursor position, intercept Ctrl+V image pastes, and dispatch clipboard copies
         components.html(f"""
         <script>
         (function() {{
             const pDoc = window.parent.document;
+
+            // Execute clipboard copy if requested
+            const copyStr = {json.dumps(copy_target_val)};
+            if (copyStr) {{
+                try {{
+                    const taCopy = pDoc.createElement('textarea');
+                    taCopy.value = copyStr;
+                    taCopy.style.position = 'fixed';
+                    taCopy.style.left = '-9999px';
+                    pDoc.body.appendChild(taCopy);
+                    taCopy.select();
+                    pDoc.execCommand('copy');
+                    pDoc.body.removeChild(taCopy);
+                }} catch (e) {{
+                    if (navigator.clipboard) {{
+                        navigator.clipboard.writeText(copyStr);
+                    }}
+                }}
+            }}
+
             function bindCursorAndPasteTracker() {{
                 const allTextareas = Array.from(pDoc.querySelectorAll('textarea'));
                 const ta = allTextareas.find(t => t.id && t.id.includes('{textarea_key}')) || allTextareas[0];
@@ -931,6 +986,10 @@ def render_dual_mode_editor(
         }})();
         </script>
         """, height=0, width=0)
+
+        # Clear executed copy string from session state
+        if clipboard_copy_key in st.session_state and st.session_state[clipboard_copy_key]:
+            st.session_state[clipboard_copy_key] = ""
 
         # Convert clean visual text back to structured HTML for dispatch & preview
         st.session_state[state_key] = visual_text_to_html(edited_val, img_map)
