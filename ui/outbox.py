@@ -187,9 +187,9 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
 # ---------------------------------------------------------------------------
 # Dialog: Edit Scheduled Outreach
 # ---------------------------------------------------------------------------
-@st.dialog("✏️ Edit Scheduled Outreach")
+@st.dialog("✏️ Edit Scheduled Outreach", width="large")
 def render_edit_email_dialog(email_record: Dict[str, Any]):
-    """Modal dialog to edit subject, recipient, scheduled date/time, mailbox, and email body."""
+    """Modal dialog to edit subject, recipient, scheduled date/time, mailbox, and email body with live rendered preview."""
     eid = email_record["id"]
     current_recip = email_record.get("recipient") or ""
     current_subj = email_record.get("subject") or ""
@@ -207,7 +207,8 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
             pass
 
     from database import get_contact_by_email
-    from template_engine import inject_variables, parse_spintax
+    from template_engine import inject_variables, parse_spintax, format_email_html
+    from security import sanitize_preview_html
 
     lead_match = get_contact_by_email(current_recip) if current_recip else None
     if lead_match:
@@ -216,40 +217,87 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
 
     st.markdown(f"#### Edit Outreach #OUT-{eid:04d}")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        new_recip = st.text_input("Recipient Email", value=current_recip, key=f"edit_recip_{eid}")
-    with c2:
-        if all_mailboxes:
-            mb_options = {f"{mb.get('sender_name') or mb.get('email')} <{mb.get('email')}>": mb["id"] for mb in all_mailboxes}
-            curr_idx = 0
-            for idx, mb_id in enumerate(mb_options.values()):
-                if mb_id == current_mb_id:
-                    curr_idx = idx
-                    break
-            chosen_mb_label = st.selectbox("Sending Mailbox", list(mb_options.keys()), index=curr_idx, key=f"edit_mb_{eid}")
-            chosen_mb_id = mb_options[chosen_mb_label]
-        else:
-            st.caption("No mailboxes configured.")
-            chosen_mb_id = current_mb_id
+    tab_edit, tab_preview = st.tabs(["✏️ Edit Message", "📨 Live Final Preview"])
 
-    new_subj = st.text_input("Subject Line", value=current_subj, key=f"edit_subj_{eid}")
-    current_bcc = email_record.get("bcc_email") or ""
-    new_bcc = st.text_input("BCC (optional, comma-separated)", value=current_bcc, key=f"edit_bcc_{eid}")
+    with tab_edit:
+        c1, c2 = st.columns(2)
+        with c1:
+            new_recip = st.text_input("Recipient Email", value=current_recip, key=f"edit_recip_{eid}")
+        with c2:
+            if all_mailboxes:
+                mb_options = {f"{mb.get('sender_name') or mb.get('email')} <{mb.get('email')}>": mb["id"] for mb in all_mailboxes}
+                curr_idx = 0
+                for idx, mb_id in enumerate(mb_options.values()):
+                    if mb_id == current_mb_id:
+                        curr_idx = idx
+                        break
+                chosen_mb_label = st.selectbox("Sending Mailbox", list(mb_options.keys()), index=curr_idx, key=f"edit_mb_{eid}")
+                chosen_mb_id = mb_options[chosen_mb_label]
+            else:
+                st.caption("No mailboxes configured.")
+                chosen_mb_id = current_mb_id
+                chosen_mb_label = "Default Mailbox"
 
-    c_date, c_time = st.columns(2)
-    with c_date:
-        new_date = st.date_input("Scheduled Date", value=dt_val.date(), key=f"edit_date_{eid}")
-    with c_time:
-        new_time = st.time_input("Scheduled Time (UTC+5)", value=dt_val.time(), key=f"edit_time_{eid}")
+        new_subj = st.text_input("Subject Line", value=current_subj, key=f"edit_subj_{eid}")
+        current_bcc = email_record.get("bcc_email") or ""
+        new_bcc = st.text_input("BCC (optional, comma-separated)", value=current_bcc, key=f"edit_bcc_{eid}")
 
-    st.markdown("<span class='lbl' style='margin-top:6px;'>Email Body Content</span>", unsafe_allow_html=True)
-    new_body = render_dual_mode_editor(
-        key_prefix=f"edit_outbox_{eid}",
-        initial_content=current_html,
-        height=180
-    )
+        c_date, c_time = st.columns(2)
+        with c_date:
+            new_date = st.date_input("Scheduled Date", value=dt_val.date(), key=f"edit_date_{eid}")
+        with c_time:
+            new_time = st.time_input("Scheduled Time (UTC+5)", value=dt_val.time(), key=f"edit_time_{eid}")
 
+        st.markdown("<span class='lbl' style='margin-top:6px;'>Email Body Content</span>", unsafe_allow_html=True)
+        new_body = render_dual_mode_editor(
+            key_prefix=f"edit_outbox_{eid}",
+            initial_content=current_html,
+            height=220
+        )
+
+    with tab_preview:
+        sender_display = chosen_mb_label if all_mailboxes else "Default Mailbox"
+        final_rendered_html = format_email_html(new_body)
+        safe_preview_html = sanitize_preview_html(final_rendered_html)
+
+        bcc_row = (
+            f"<div style='font-size:12px; color:#475569; margin-bottom:4px;'>"
+            f"<b>BCC:</b> <span style='font-family:monospace; color:#083731;'>{html.escape(new_bcc.strip())}</span>"
+            f"</div>"
+        ) if new_bcc.strip() else ""
+
+        recip_display = (
+            f"{html.escape(lead_match.get('name'))} &lt;{html.escape(new_recip.strip())}&gt;"
+            if (lead_match and lead_match.get("name"))
+            else html.escape(new_recip.strip())
+        )
+        comp_display = f" · <span style='color:#0F766E;'>{html.escape(lead_match.get('company'))}</span>" if (lead_match and lead_match.get("company")) else ""
+        combined_sched_str = f"{new_date.strftime('%Y-%m-%d')} {new_time.strftime('%H:%M:%S')} (UTC+5)"
+
+        preview_card_html = (
+            f'<div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:13px; line-height:1.5;">'
+            f'<div style="color:#083731; font-weight:700; font-size:14px; margin-bottom:6px; border-bottom:1px solid #E2E8F0; padding-bottom:6px;">'
+            f'Subject: {html.escape(new_subj.strip() or "(No Subject)")}'
+            f'</div>'
+            f'<div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px; color:#334155; margin-bottom:4px;">'
+            f'<div><b>To:</b> {recip_display}{comp_display}</div>'
+            f'<div style="color:#64748B; font-size:12px;">📅 <b>Delivery:</b> {combined_sched_str}</div>'
+            f'</div>'
+            f'<div style="color:#475569; font-size:12px; margin-bottom:4px;">'
+            f'<b>From:</b> {html.escape(sender_display)}'
+            f'</div>'
+            f'{bcc_row}'
+            f'</div>'
+            f'<div class="preview" style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:18px 20px; font-size:14px; line-height:1.6; color:#1E293B; max-height:400px; overflow-y:auto; box-shadow:0 1px 3px rgba(0,0,0,0.05);">'
+            f'{safe_preview_html}'
+            f'</div>'
+            f'<div class="banner banner-info" style="margin-top:10px; font-size:12px;">'
+            f'📨 <b>Live Final Preview:</b> This is the exact rendered visual email the prospect will receive upon dispatch. Switch back to <i>✏️ Edit Message</i> if you need to adjust wording or timing.'
+            f'</div>'
+        )
+        st.markdown(preview_card_html, unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
     btn_save, btn_send_now = st.columns(2)
     with btn_save:
         if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_{eid}"):
@@ -264,6 +312,10 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
                 smtp_account_id=chosen_mb_id,
                 bcc_email=new_bcc.strip()
             )
+            # Clear editor session state for clean re-open
+            st.session_state.pop(f"edit_outbox_{eid}_body_html", None)
+            st.session_state.pop(f"edit_outbox_{eid}_visual_textarea", None)
+            st.session_state.pop(f"edit_outbox_{eid}_last_synced_html", None)
             trigger_toast(f"Email #OUT-{eid:04d} updated!", icon="💾")
             st.rerun()
 
@@ -280,6 +332,9 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
                 smtp_account_id=chosen_mb_id,
                 bcc_email=new_bcc.strip()
             )
+            st.session_state.pop(f"edit_outbox_{eid}_body_html", None)
+            st.session_state.pop(f"edit_outbox_{eid}_visual_textarea", None)
+            st.session_state.pop(f"edit_outbox_{eid}_last_synced_html", None)
             updated_rec = get_email_by_id(eid)
             with st.spinner("Dispatching via Hostinger..."):
                 try:

@@ -195,6 +195,15 @@ def sanitize_visual_text(text: str, img_map: Dict[str, str]) -> Tuple[str, Dict[
             clean_text = clean_text.replace(b64_str, ph, 1)
             modified = True
 
+    # 4. Check for raw HTML tags (e.g. <p style='...'>, <br>, <div>, <span>, <table>, etc.)
+    has_html_tags = any(tag in clean_text.lower() for tag in ["<p ", "<p>", "<br", "<div", "<span", "<table", "<tr", "<td", "<!doctype", "<html>", "<body>"])
+    if has_html_tags:
+        converted_text, extracted_imgs = html_to_visual_text(clean_text)
+        if converted_text != clean_text:
+            clean_text = converted_text
+            updated_map.update(extracted_imgs)
+            modified = True
+
     if modified:
         clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
 
@@ -264,6 +273,12 @@ def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
     norm_content = str(html_content).replace('\r\n', '\n').replace('\r', '\n')
     text, img_map = extract_images_to_placeholders(norm_content)
 
+    # Strip script and style elements completely
+    text = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    # Strip DOCTYPE, html, body, head tags
+    text = re.sub(r'<!DOCTYPE[^>]*>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?(?:html|head|body|meta|title)[^>]*>', '', text, flags=re.IGNORECASE)
+
     # Convert <ul> lists to bullet points
     def ul_repl(match):
         ul_content = match.group(1)
@@ -280,14 +295,23 @@ def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
         return "\n" + "\n".join(lines) + "\n"
     text = re.sub(r'<ol[^>]*>(.*?)</ol>', ol_repl, text, flags=re.IGNORECASE | re.DOTALL)
 
+    # Convert table structures: cells to spaces, rows to newlines
+    text = re.sub(r'</t[dh]>\s*<t[dh][^>]*>', '  ', text, flags=re.IGNORECASE)
+    text = re.sub(r'</tr>\s*<tr[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?(?:table|tbody|thead|tfoot|tr|td|th)[^>]*>', '\n', text, flags=re.IGNORECASE)
+
     # Convert inline tags to markdown
     text = html_inline_to_markdown(text)
 
-    # Strip spans
-    text = re.sub(r'<span[^>]*>(.*?)</span>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    # Strip spans (clean nested spans repeatedly)
+    for _ in range(4):
+        if not re.search(r'<span[^>]*>(.*?)</span>', text, flags=re.IGNORECASE | re.DOTALL):
+            break
+        text = re.sub(r'<span[^>]*>(.*?)</span>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'</?span[^>]*>', '', text, flags=re.IGNORECASE)
 
     # 2. Check for HTML structure tags
-    has_html = any(tag in text.lower() for tag in ["<p", "<br", "<div"])
+    has_html = any(tag in text.lower() for tag in ["<p", "<br", "<div", "<hr", "<font"])
     if has_html:
         # Convert paragraph transitions </p><p...> to double newline
         text = re.sub(r'</p>\s*<p[^>]*>', '\n\n', text, flags=re.IGNORECASE)
@@ -302,6 +326,8 @@ def html_to_visual_text(html_content: str) -> Tuple[str, Dict[str, str]]:
         # Convert <div> to newline
         text = re.sub(r'</div>\s*<div[^>]*>', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'</?div[^>]*>', '\n', text, flags=re.IGNORECASE)
+        # Strip hr, font, center, section, etc.
+        text = re.sub(r'</?(?:hr|font|center|section|article|header|footer)[^>]*>', '\n', text, flags=re.IGNORECASE)
 
     # Unescape HTML entities
     text = html.unescape(text)
