@@ -644,8 +644,9 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
             cur_sq.execute("SELECT * FROM templates")
             t_rows = cur_sq.fetchall()
             for r in t_rows:
-                raw_name = (r["name"] if "name" in r.keys() else r.get("template_name") or "").strip()
-                raw_cat = (r.get("template_category") or "").strip()
+                r_dict = dict(r)
+                raw_name = (r_dict.get("name") or r_dict.get("template_name") or "").strip()
+                raw_cat = (r_dict.get("template_category") or "").strip()
                 cur_pg.execute("""
                     SELECT id FROM templates
                     WHERE LOWER(TRIM(template_name)) = %s 
@@ -655,18 +656,18 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
                 """, (raw_name.lower(), raw_name.lower(), raw_cat.lower()))
                 exist_t = cur_pg.fetchone()
                 if exist_t:
-                    upd_cols = [k for k in r.keys() if k != "id"]
+                    upd_cols = [k for k in r_dict.keys() if k != "id"]
                     set_clause = ", ".join(f"{k} = %s" for k in upd_cols)
-                    cur_pg.execute(f"UPDATE templates SET {set_clause} WHERE id = %s", tuple(r[k] for k in upd_cols) + (exist_t[0],))
+                    cur_pg.execute(f"UPDATE templates SET {set_clause} WHERE id = %s", tuple(r_dict[k] for k in upd_cols) + (exist_t[0],))
                 else:
-                    cols = list(r.keys())
+                    cols = list(r_dict.keys())
                     placeholders = ", ".join(["%s"] * len(cols))
                     col_str = ", ".join(cols)
                     cur_pg.execute(f"""
                         INSERT INTO templates ({col_str})
                         VALUES ({placeholders})
                         ON CONFLICT (id) DO NOTHING
-                    """, tuple(r[k] for k in cols))
+                    """, tuple(r_dict[k] for k in cols))
             stats["templates"] = len(t_rows)
             safe_reset_seq("templates")
 

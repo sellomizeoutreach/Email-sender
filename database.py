@@ -708,8 +708,9 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                 cursor.execute("SELECT id, updated_at, created_at, scheduled_time FROM emails WHERE status = 'Sent'")
                 sent_rows = cursor.fetchall()
                 for r in sent_rows:
-                    ts = r.get("updated_at") or r.get("created_at") or ""
-                    sched = r.get("scheduled_time") or ""
+                    r_dict = dict(r)
+                    ts = r_dict.get("updated_at") or r_dict.get("created_at") or ""
+                    sched = r_dict.get("scheduled_time") or ""
                     if ts and len(ts) >= 19:
                         try:
                             dt = datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
