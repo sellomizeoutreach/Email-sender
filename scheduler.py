@@ -528,12 +528,15 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
 
     # 1. Pre-flight Compliance Guard: Strictly suppress Do Not Contact / Unsubscribed recipients
     from database import get_contact_by_email
-    contact_rec = get_contact_by_email(recipient, db_path=db_path)
-    if contact_rec and (contact_rec.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
-        suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{recipient}' is marked as 'Do Not Contact'."
-        logger.info(f"Email ID #{email_id}: {suppress_msg}")
-        mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
-        return False
+    for r_check in re.split(r'[,;]+', recipient):
+        rc = r_check.strip()
+        if rc:
+            contact_rec = get_contact_by_email(rc, db_path=db_path)
+            if contact_rec and (contact_rec.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
+                suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{rc}' is marked as 'Do Not Contact'."
+                logger.info(f"Email ID #{email_id}: {suppress_msg}")
+                mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
+                return False
 
     # 2. Pre-flight MX record and domain sanity check
     enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"
@@ -612,6 +615,10 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
             except Exception as upd_err:
                 logger.warning(f"Could not update sent_via for email #{email_id}: {upd_err}")
 
+            for r_single in re.split(r'[,;]+', recipient):
+                rs = r_single.strip()
+                if rs:
+                    advance_contact_followup(rs, delay_days=followup_delay, db_path=db_path)
             advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
             logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
             return True
@@ -668,12 +675,15 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
 
     # Pre-flight Compliance Guard: Strictly suppress Do Not Contact / Unsubscribed recipients
     from database import get_contact_by_email
-    contact_rec = get_contact_by_email(recipient, db_path=db_path)
-    if contact_rec and (contact_rec.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
-        suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{recipient}' is marked as 'Do Not Contact'."
-        logger.info(f"Email ID #{email_id}: {suppress_msg}")
-        mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
-        return
+    for r_check in re.split(r'[,;]+', recipient):
+        rc = r_check.strip()
+        if rc:
+            contact_rec = get_contact_by_email(rc, db_path=db_path)
+            if contact_rec and (contact_rec.get("status") in ["Do Not Contact", "unsubscribed", "Unsubscribed"]):
+                suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{rc}' is marked as 'Do Not Contact'."
+                logger.info(f"Email ID #{email_id}: {suppress_msg}")
+                mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
+                return
 
     # 1. Connect to Outlook with explicit COM initialization
     try:
@@ -733,6 +743,10 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
         mail.Send()
         logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}'.")
         mark_email_sent(email_id, db_path=db_path)
+        for r_single in re.split(r'[,;]+', recipient):
+            rs = r_single.strip()
+            if rs:
+                advance_contact_followup(rs, delay_days=followup_delay, db_path=db_path)
         advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
 
     except Exception as dispatch_err:

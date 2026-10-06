@@ -1343,8 +1343,17 @@ def get_contact_by_id(contact_id: int, db_path: str = DB_FILE) -> Optional[Dict[
 def get_contact_by_email(email: str, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (email.strip(),))
+    clean_email = (email or "").strip()
+    cursor.execute("SELECT * FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (clean_email,))
     row = cursor.fetchone()
+    if not row and (',' in clean_email or ';' in clean_email):
+        for single in re.split(r'[,;]+', clean_email):
+            s = single.strip()
+            if s:
+                cursor.execute("SELECT * FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (s,))
+                row = cursor.fetchone()
+                if row:
+                    break
     conn.close()
     if not row:
         return None

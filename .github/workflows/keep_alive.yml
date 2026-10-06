@@ -10,14 +10,15 @@ jobs:
   ping-app:
     name: Ping Streamlit Cloud App
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Ping App URL and Health Endpoint
         run: |
           echo "Pinging https://sellomize.streamlit.app/ to keep container warm..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c cookies.txt -b cookies.txt --max-redirs 5 --max-time 30 "https://sellomize.streamlit.app/" || echo "failed")
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c cookies.txt -b cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" --max-redirs 5 --max-time 30 "https://sellomize.streamlit.app/" || echo "failed")
           echo "Main page HTTP status: $HTTP_STATUS"
           
-          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c cookies.txt -b cookies.txt --max-redirs 5 --max-time 30 "https://sellomize.streamlit.app/_stcore/health" || echo "failed")
+          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c cookies.txt -b cookies.txt -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" --max-redirs 5 --max-time 30 "https://sellomize.streamlit.app/_stcore/health" || echo "failed")
           echo "Health check HTTP status: $HEALTH_STATUS"
           
           if [ "$HTTP_STATUS" != "failed" ]; then

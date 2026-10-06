@@ -134,6 +134,23 @@ def send_smtp_email(
     if not target_recipient:
         return False, "Recipient email is missing."
 
+    # Parse and normalize To recipient addresses (supports comma or semicolon separated)
+    to_list = []
+    destinations = []
+    for to_single in re.split(r'[,;]+', target_recipient):
+        ts = to_single.strip()
+        clean_ts = ts
+        if "<" in ts and ">" in ts:
+            m_a = re.search(r'<([^>]+)>', ts)
+            if m_a:
+                clean_ts = m_a.group(1).strip()
+        if clean_ts and clean_ts not in destinations:
+            to_list.append(ts)
+            destinations.append(clean_ts)
+
+    if not destinations:
+        return False, "Recipient email is missing."
+
     clean_subject = sanitize_header(subject)
     clean_sender = sanitize_header(sender_name)
 
@@ -143,7 +160,7 @@ def send_smtp_email(
     msg = MIMEMultipart("alternative")
     msg["Subject"] = clean_subject
     msg["From"] = formataddr((clean_sender, user))
-    msg["To"] = target_recipient
+    msg["To"] = ", ".join(to_list)
     msg["Date"] = formatdate(localtime=True)
     msg_id = make_msgid(domain=domain)
     msg["Message-ID"] = msg_id
@@ -221,17 +238,21 @@ def send_smtp_email(
         msg.attach(part_text)
         msg.attach(part_html)
 
-    # Build recipient list including optional BCC (supports 1, 2, or more comma- or semicolon-separated addresses)
-    destinations = [target_recipient]
+    # Append optional BCC to SMTP envelope destinations
     if bcc_email and bcc_email.strip():
         bcc_clean = sanitize_header(bcc_email)
         if bcc_clean:
             bcc_list = []
             for bcc_single in re.split(r'[,;]+', bcc_clean):
                 b_s = bcc_single.strip()
-                if b_s and b_s not in destinations and b_s not in bcc_list:
+                clean_bs = b_s
+                if "<" in b_s and ">" in b_s:
+                    m_b = re.search(r'<([^>]+)>', b_s)
+                    if m_b:
+                        clean_bs = m_b.group(1).strip()
+                if clean_bs and clean_bs not in destinations and clean_bs not in bcc_list:
                     bcc_list.append(b_s)
-                    destinations.append(b_s)
+                    destinations.append(clean_bs)
             if bcc_list:
                 msg["Bcc"] = ", ".join(bcc_list)
 

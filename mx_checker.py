@@ -56,7 +56,12 @@ def get_domain_from_email(email_address: str) -> Optional[str]:
     """Extract and validate domain part from an email address."""
     if not email_address or not isinstance(email_address, str):
         return None
-    match = EMAIL_REGEX.match(email_address.strip())
+    clean = email_address.strip()
+    if "<" in clean and ">" in clean:
+        m_a = re.search(r'<([^>]+)>', clean)
+        if m_a:
+            clean = m_a.group(1).strip()
+    match = EMAIL_REGEX.match(clean)
     if not match:
         return None
     domain = match.group(1).lower().strip()
@@ -77,6 +82,13 @@ def get_cached_domain_mx(email_address: str) -> Optional[Tuple[bool, str]]:
     clean_email = (email_address or "").strip()
     if not clean_email:
         return None
+    if "," in clean_email or ";" in clean_email:
+        recipients = [r.strip() for r in re.split(r'[,;]+', clean_email) if r.strip()]
+        for r in recipients:
+            res = get_cached_domain_mx(r)
+            if res is None or not res[0]:
+                return res
+        return (True, "All domains cached as valid")
     domain = get_domain_from_email(clean_email)
     if not domain:
         return False, "Invalid email format"
@@ -106,6 +118,20 @@ def verify_email_domain_mx(
     clean_email = (email_address or "").strip()
     if not clean_email:
         return False, "Recipient email address is empty.", []
+
+    # Support multiple comma- or semicolon-separated recipient addresses
+    if "," in clean_email or ";" in clean_email:
+        recipients = [r.strip() for r in re.split(r'[,;]+', clean_email) if r.strip()]
+        if len(recipients) > 1:
+            all_records = []
+            for r in recipients:
+                valid, reason, recs = verify_email_domain_mx(r, timeout=timeout, use_cache=use_cache)
+                if not valid:
+                    return False, f"Address '{r}' failed MX check: {reason}", []
+                all_records.extend(recs)
+            return True, f"All {len(recipients)} recipient addresses verified.", all_records
+        elif len(recipients) == 1:
+            clean_email = recipients[0]
 
     domain = get_domain_from_email(clean_email)
     if not domain:
