@@ -2568,13 +2568,23 @@ def create_email(
     conn.close()
     return email_id
 
-def get_emails(status: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+def get_emails(status: Optional[str] = None, include_html: bool = True, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    if status:
-        cursor.execute("SELECT * FROM emails WHERE status = ? ORDER BY id DESC", (status,))
+    if include_html:
+        col_clause = "*"
     else:
-        cursor.execute("SELECT * FROM emails ORDER BY id DESC")
+        col_clause = (
+            "id, recipient, subject, status, scheduled_time, sent_via, "
+            "open_count, opened_at, click_count, clicked_at, replied_at, "
+            "is_bounced, error_message, revision_notes, variation_num, "
+            "sequence_step, in_reply_to, created_at, updated_at, "
+            "smtp_account_id, bcc_email, target_timezone"
+        )
+    if status:
+        cursor.execute(f"SELECT {col_clause} FROM emails WHERE status = ? ORDER BY id DESC", (status,))
+    else:
+        cursor.execute(f"SELECT {col_clause} FROM emails ORDER BY id DESC")
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]

@@ -113,23 +113,19 @@ try:
 except Exception:
     pass
 
-# Retrieve fresh leads and templates
-all_contacts = get_contacts()
-all_templates = get_templates()
-
 # ==============================================================================
-# RENDER ACTIVE SCREEN
+# RENDER ACTIVE SCREEN (Lazy-load DB datasets only when required by active screen)
 # ==============================================================================
 if screen_key == "compose":
-    render_compose_tab(all_contacts, all_templates)
+    render_compose_tab(get_contacts(), get_templates())
 elif screen_key == "templates":
-    render_templates_tab(all_templates)
+    render_templates_tab(get_templates())
 elif screen_key == "ai_studio":
-    render_ai_studio_tab(all_contacts)
+    render_ai_studio_tab(get_contacts())
 elif screen_key == "leads":
-    render_leads_tab(all_contacts)
+    render_leads_tab(get_contacts())
 elif screen_key == "campaigns":
-    render_campaigns_tab(all_contacts, all_templates)
+    render_campaigns_tab(get_contacts(), get_templates())
 elif screen_key == "bulk":
     render_bulk_tab()
 elif screen_key == "outbox":

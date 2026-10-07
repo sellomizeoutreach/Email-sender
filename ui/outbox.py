@@ -59,6 +59,10 @@ def format_outreach_timestamp(raw_ts: Optional[str], sched_ts: Optional[str] = N
 def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional[Dict[str, Any]] = None):
     """Modal dialog displaying exact sent body HTML, delivery metadata, and real-time engagement telemetry."""
     eid = email_record["id"]
+    if not email_record.get("email_html"):
+        full_rec = get_email_by_id(eid)
+        if full_rec:
+            email_record = full_rec
     recip = (email_record.get("recipient") or "").strip()
     subj = email_record.get("subject") or "No Subject"
     sent_time = format_outreach_timestamp(email_record.get("updated_at") or email_record.get("created_at"), email_record.get("scheduled_time"))
@@ -219,6 +223,10 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
 def render_edit_email_dialog(email_record: Dict[str, Any]):
     """Modal dialog to edit subject, recipient, scheduled date/time, mailbox, and email body with live rendered preview."""
     eid = email_record["id"]
+    if not email_record.get("email_html"):
+        full_rec = get_email_by_id(eid)
+        if full_rec:
+            email_record = full_rec
     current_recip = email_record.get("recipient") or ""
     current_subj = email_record.get("subject") or ""
     current_sched = email_record.get("scheduled_time") or ""
@@ -523,7 +531,7 @@ def render_outbox_tab():
         except Exception:
             pass
 
-    all_emails = get_emails()
+    all_emails = get_emails(include_html=False)
     all_leads = get_contacts()
     lead_map = {c.get("email", "").lower().strip(): c for c in all_leads if c.get("email")}
 
@@ -796,8 +804,19 @@ def render_outbox_tab():
             st.info("No sent outreach matched your current filter or search criteria.")
             return
 
-        # ── 6. Render Sent Items Cards with Actions ──
-        for e, matched_lead, status_tag in filtered_sent:
+        # ── 6. Pagination (50 per page for instant render performance) ──
+        page_size = 50
+        total_pages = max(1, (len(filtered_sent) + page_size - 1) // page_size)
+        if "outbox_sent_page" not in st.session_state:
+            st.session_state["outbox_sent_page"] = 1
+        curr_page = min(st.session_state["outbox_sent_page"], total_pages)
+
+        start_idx = (curr_page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_items = filtered_sent[start_idx:end_idx]
+
+        # ── 7. Render Sent Items Cards with Actions ──
+        for e, matched_lead, status_tag in page_items:
             eid = e["id"]
             recip = (e.get("recipient") or "No recipient").strip()
             lead_name = matched_lead.get("name") if (matched_lead and matched_lead.get("name")) else recip
@@ -895,6 +914,22 @@ def render_outbox_tab():
                     if st.button("🛑 DNC", key=f"s_dnc_{eid}", use_container_width=True, help="Legal Opt-Out: Suppress contact & add to Do Not Contact list"):
                         mark_contact_do_not_contact(recip, reason="Operator marked DNC from Sent audit")
                         trigger_toast(f"{recip} suppressed in DNC list.", icon="🛑")
+                        st.rerun()
+
+        if total_pages > 1:
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+            p_c1, p_c2, p_c3 = st.columns([1, 2, 1], vertical_alignment="center")
+            with p_c1:
+                if curr_page > 1:
+                    if st.button("⬅️ Previous Page", key="sent_pg_prev", use_container_width=True):
+                        st.session_state["outbox_sent_page"] = curr_page - 1
+                        st.rerun()
+            with p_c2:
+                st.markdown(f"<div style='text-align:center; font-size:12px; color:#64748B;'>Page <b>{curr_page}</b> of <b>{total_pages}</b> ({len(filtered_sent)} total)</div>", unsafe_allow_html=True)
+            with p_c3:
+                if curr_page < total_pages:
+                    if st.button("Next Page ➡️", key="sent_pg_next", use_container_width=True):
+                        st.session_state["outbox_sent_page"] = curr_page + 1
                         st.rerun()
 
         return

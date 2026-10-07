@@ -518,6 +518,15 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
     recipient = sanitize_header(email_record.get("recipient", ""))
     subject = sanitize_header(email_record.get("subject", "Listing Audit"))
     approved_email_html = email_record.get("email_html", "").strip()
+    if not approved_email_html:
+        from database import get_email_by_id
+        full_rec = get_email_by_id(email_id, db_path=db_path)
+        if full_rec:
+            approved_email_html = full_rec.get("email_html", "").strip()
+            if not recipient:
+                recipient = sanitize_header(full_rec.get("recipient", ""))
+            if not subject:
+                subject = sanitize_header(full_rec.get("subject", "Listing Audit"))
 
     logger.info(f"[Hostinger SMTP] Processing Email ID #{email_id} for recipient '{recipient}'...")
 
