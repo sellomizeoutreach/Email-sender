@@ -833,6 +833,9 @@ def export_backup_data(db_path: str = DB_FILE) -> Dict[str, Any]:
     cur.execute("SELECT * FROM contacts")
     contacts = [dict(row) for row in cur.fetchall()]
 
+    cur.execute("SELECT * FROM emails")
+    emails = [dict(row) for row in cur.fetchall()]
+
     conn.close()
     return {
         "version": "1.0",
@@ -840,8 +843,10 @@ def export_backup_data(db_path: str = DB_FILE) -> Dict[str, Any]:
         "system_config": configs,
         "smtp_accounts": mailboxes,
         "templates": templates,
-        "contacts": contacts
+        "contacts": contacts,
+        "emails": emails
     }
+
 
 def import_backup_data(backup_data: Dict[str, Any], db_path: str = DB_FILE) -> Tuple[bool, str]:
     """Restores all mailboxes, configs, templates, and contacts from a backup dict."""
@@ -950,9 +955,37 @@ def import_backup_data(backup_data: Dict[str, Any], db_path: str = DB_FILE) -> T
                     c.get("country_or_timezone", ""), c.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 ))
 
+        # 5. Emails (Sent, Scheduled, Drafts)
+        emails = backup_data.get("emails", [])
+        for em in emails:
+            em_id = em.get("id")
+            if em_id:
+                cur.execute("SELECT id FROM emails WHERE id = ?", (em_id,))
+                if not cur.fetchone():
+                    cur.execute("""
+                        INSERT INTO emails (
+                            id, subject, recipient, email_html, status, scheduled_time,
+                            revision_notes, variation_num, error_message, sent_via,
+                            smtp_account_id, opened_at, open_count, is_bounced,
+                            bounce_reason, created_at, updated_at, click_count,
+                            clicked_at, replied_at, sequence_step, in_reply_to,
+                            bcc_email, target_timezone
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        em_id, em.get("subject"), em.get("recipient"), em.get("email_html", ""),
+                        em.get("status", "Pending"), em.get("scheduled_time"), em.get("revision_notes", ""),
+                        em.get("variation_num", 1), em.get("error_message", ""), em.get("sent_via", ""),
+                        em.get("smtp_account_id"), em.get("opened_at", ""), em.get("open_count", 0),
+                        em.get("is_bounced", 0), em.get("bounce_reason", ""),
+                        em.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                        em.get("updated_at", ""), em.get("click_count", 0), em.get("clicked_at", ""),
+                        em.get("replied_at", ""), em.get("sequence_step", 1), em.get("in_reply_to", ""),
+                        em.get("bcc_email", ""), em.get("target_timezone", "LOCAL")
+                    ))
+
         conn.commit()
         conn.close()
-        return True, f"Restored {len(mailboxes)} mailboxes, {len(templates)} templates, and {len(contacts)} contacts."
+        return True, f"Restored {len(mailboxes)} mailboxes, {len(templates)} templates, {len(contacts)} contacts, and {len(emails)} emails."
     except Exception as e:
         logger.error(f"Error importing backup: {e}")
         return False, str(e)
@@ -964,7 +997,7 @@ def auto_save_backup(db_path: str = DB_FILE):
             return
         data = export_backup_data(db_path)
         # Only save if there's actual data worth persisting
-        if not (data.get("smtp_accounts") or data.get("templates") or data.get("contacts") or data.get("system_config", {}).get("signature_html")):
+        if not (data.get("smtp_accounts") or data.get("templates") or data.get("contacts") or data.get("system_config", {}).get("signature_html") or data.get("emails")):
             return
         payload = json.dumps(data, indent=2)
         for p in get_backup_filepaths():
@@ -994,7 +1027,7 @@ def auto_restore_backup_if_needed(db_path: str = DB_FILE):
                     try:
                         with open(p, "r", encoding="utf-8") as f:
                             data = json.load(f)
-                        if data and (data.get("smtp_accounts") or data.get("templates") or data.get("system_config", {}).get("signature_html")):
+                        if data and (data.get("smtp_accounts") or data.get("templates") or data.get("system_config", {}).get("signature_html") or data.get("emails")):
                             import_backup_data(data, db_path)
                             logger.info(f"Auto-restored database from backup file '{p}'.")
                             break

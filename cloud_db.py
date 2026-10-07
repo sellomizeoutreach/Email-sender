@@ -385,6 +385,9 @@ def normalize_database_url(url: str) -> str:
     return clean
 
 
+DEFAULT_CLOUD_DB_URL = "postgresql://postgres.ledgdhmagbpmjylywmnm:Sellomize%23%23%230300@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
+
+
 def get_database_url() -> str:
     """
     Retrieve configured Cloud PostgreSQL connection URL.
@@ -393,6 +396,7 @@ def get_database_url() -> str:
     2. Environment variables: DATABASE_URL, POSTGRES_URL, SUPABASE_DB_URL
     3. Streamlit secrets: st.secrets['DATABASE_URL'] or st.secrets['postgres']['url']
     4. Persistent config file: sellomize_db_config.json
+    5. Fallback to production Cloud PostgreSQL if none of the above are set
     """
     if os.environ.get("SELLOMIZE_FORCE_SQLITE", "").lower() in ("1", "true", "yes"):
         return ""
@@ -427,7 +431,11 @@ def get_database_url() -> str:
             except Exception:
                 pass
 
+    if not raw_url:
+        raw_url = DEFAULT_CLOUD_DB_URL
+
     return normalize_database_url(raw_url) if raw_url else ""
+
 
 
 def set_database_url(url: str) -> None:
