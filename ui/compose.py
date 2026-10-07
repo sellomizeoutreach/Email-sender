@@ -49,6 +49,8 @@ from template_engine import (
     audit_email_deliverability,
     _missing_tokens,
     format_email_html,
+    deduplicate_email_signature,
+    has_signature_marker,
 )
 from scheduler import dispatch_email_hostinger
 from timezone_helper import get_engine_now, get_engine_now_str
@@ -725,10 +727,11 @@ def render_compose_schedule_dialog(
         st.rerun()
 
     sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
-    if include_signature and sig_html and sig_html not in final_body:
-        full_initial_body = f"{final_body}<br><br>{sig_html}"
-    else:
-        full_initial_body = final_body
+    full_initial_body = deduplicate_email_signature(
+        final_body,
+        signature_html=sig_html,
+        include_signature=include_signature
+    )
     initial_email_html = format_email_html(full_initial_body)
 
     if save_draft_clicked:
@@ -803,10 +806,12 @@ def render_compose_schedule_dialog(
                 fu_body_raw  = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
                 fu_body_res  = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
 
-                # Attach signature if enabled for this follow-up step
-                has_sig = (sig_html and sig_html in fu_body_res) or ("Sellomize Logo" in fu_body_res) or ("Jack Connor" in fu_body_res)
-                if fu.get("include_signature", False) and sig_html and not has_sig:
-                    fu_body_res = f"{fu_body_res}<br><br>{sig_html}"
+                # Attach or strip signature based on user setting for this follow-up step
+                fu_body_res = deduplicate_email_signature(
+                    fu_body_res,
+                    signature_html=sig_html,
+                    include_signature=fu.get("include_signature", False)
+                )
 
                 create_email(
                     email_html=format_email_html(fu_body_res),

@@ -43,6 +43,8 @@ from tracker import wrap_links_with_click_tracking, inject_tracking_pixel
 from mx_checker import verify_email_domain_mx
 from timezone_helper import get_engine_now
 from sheets_sync import sync_lead_sent_to_sheets
+from template_engine import deduplicate_email_signature
+
 
 # Configure logging
 handlers = [logging.StreamHandler(sys.stdout)]
@@ -123,13 +125,14 @@ def execute_send_job(job: Dict[str, Any], dry_run: bool = False, db_path: str = 
         mark_send_job_failed(job_id, err_msg, db_path=db_path)
         return False
 
-    # 4. Attach signature if configured
+    # 4. Attach signature if configured (universally deduplicated)
     sig_html = (get_config("signature_html", db_path=db_path) or "").strip()
-    has_sig = (sig_html and sig_html in body_html) or ("Sellomize Logo" in body_html) or ("Jack Connor" in body_html)
-    if sig_html and not has_sig:
-        combined_body = f"{body_html}<br><br>{sig_html}"
-    else:
-        combined_body = body_html
+    combined_body = deduplicate_email_signature(
+        body_html,
+        signature_html=sig_html,
+        include_signature=True
+    )
+
 
     # Dry-run bypass
     if dry_run:

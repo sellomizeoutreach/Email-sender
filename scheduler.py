@@ -62,6 +62,8 @@ from timezone_helper import (
     get_engine_now,
     get_engine_now_str
 )
+from template_engine import deduplicate_email_signature, has_signature_marker
+
 
 
 # Configure logging with both console and sellomize.log file handler
@@ -575,12 +577,13 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
     # Corporate signature links (e.g. sellomize.com) remain 100% direct and pristine.
     body_with_links = wrap_links_with_click_tracking(approved_email_html, email_id)
     is_followup = int(email_record.get("sequence_step") or 1) > 1
-    if signature_html and (signature_html in approved_email_html or is_followup):
-        combined_body = body_with_links
-    elif signature_html:
-        combined_body = f"{body_with_links}<br><br>{signature_html}"
-    else:
-        combined_body = body_with_links
+    has_sig = has_signature_marker(approved_email_html)
+    combined_body = deduplicate_email_signature(
+        body_with_links,
+        signature_html=signature_html if (not is_followup or has_sig) else "",
+        include_signature=(not is_followup or has_sig)
+    )
+
 
     # Legal & Compliance: Opt-out footer notice if enabled in Settings
     opt_out_on = (get_config("append_opt_out_footer", "false", db_path=db_path) or "false").lower() in ["true", "1", "yes"]
@@ -727,12 +730,13 @@ def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: s
         # Click tracking applies ONLY to campaign body links, NEVER to corporate signature links
         body_with_links = wrap_links_with_click_tracking(approved_email_html, email_id)
         is_followup = int(email_record.get("sequence_step") or 1) > 1
-        if signature_html and (signature_html in approved_email_html or is_followup):
-            combined_body = body_with_links
-        elif signature_html:
-            combined_body = f"{body_with_links}<br><br>{signature_html}"
-        else:
-            combined_body = body_with_links
+        has_sig = has_signature_marker(approved_email_html)
+        combined_body = deduplicate_email_signature(
+            body_with_links,
+            signature_html=signature_html if (not is_followup or has_sig) else "",
+            include_signature=(not is_followup or has_sig)
+        )
+
 
         # Legal & Compliance: Opt-out footer notice if enabled in Settings
         opt_out_on = (get_config("append_opt_out_footer", "false", db_path=db_path) or "false").lower() in ["true", "1", "yes"]

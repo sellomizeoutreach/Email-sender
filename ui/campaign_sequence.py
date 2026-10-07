@@ -25,7 +25,7 @@ from database import (
     get_next_available_smtp_account,
     DB_FILE,
 )
-from template_engine import resolve_template, _missing_tokens, inject_variables
+from template_engine import resolve_template, _missing_tokens, inject_variables, deduplicate_email_signature
 from smtp_dispatcher import send_smtp_email
 from ui.components import trigger_toast
 from ui.rich_editor import render_rich_editor
@@ -272,8 +272,11 @@ def render_sequence_builder(
                             sig_html = get_config("signature_html", "") or "Best regards,<br>Jack Connor<br>Sellomize"
                             res_subj = resolve_template(stp.get("subject", ""), sample_lead)
                             res_body = resolve_template(stp.get("body_html", ""), sample_lead)
-                            sig_part = f"<br><br>{sig_html}" if (sig_enabled and sig_html) else ""
-                            full_payload = f"{res_body}{sig_part}"
+                            full_payload = deduplicate_email_signature(
+                                res_body,
+                                signature_html=sig_html,
+                                include_signature=sig_enabled
+                            )
                             ok, msg = send_smtp_email(
                                 smtp_account=active_acc,
                                 recipient=test_to.strip(),
@@ -290,8 +293,11 @@ def render_sequence_builder(
                 sig_html = get_config("signature_html", "") or "Best regards,<br>Jack Connor<br>Sellomize"
                 resolved_subj = resolve_template(stp.get("subject", ""), sample_lead)
                 resolved_body = resolve_template(stp.get("body_html", ""), sample_lead)
-                sig_part = f"<br><br>{sig_html}" if (sig_enabled and sig_html) else ""
-                full_preview_html = f"{resolved_body}{sig_part}"
+                full_preview_html = deduplicate_email_signature(
+                    resolved_body,
+                    signature_html=sig_html,
+                    include_signature=sig_enabled
+                )
 
                 # Missing tokens check
                 unfilled_subj = _missing_tokens(resolved_subj)

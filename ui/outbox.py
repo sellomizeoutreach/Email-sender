@@ -33,6 +33,8 @@ from scheduler import dispatch_email_hostinger, run_scheduler_cycle
 from ui.editor import render_dual_mode_editor
 from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
 from ui.components import trigger_toast
+from template_engine import deduplicate_email_signature, has_signature_marker
+
 
 
 def format_outreach_timestamp(raw_ts: Optional[str], sched_ts: Optional[str] = None) -> str:
@@ -406,11 +408,16 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
             if st.button("🚀 Send Immediately", use_container_width=True, key=f"send_edit_{eid}"):
                 combined_dt = datetime.combine(new_date, new_time)
                 sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                cleaned_body = deduplicate_email_signature(
+                    new_body,
+                    signature_html=get_config("signature_html", ""),
+                    include_signature=has_signature_marker(new_body)
+                )
                 update_email(
                     email_id=eid,
                     recipient=new_recip.strip(),
                     subject=new_subj.strip(),
-                    email_html=new_body,
+                    email_html=cleaned_body,
                     scheduled_time=sched_str,
                     status="Approved",
                     smtp_account_id=chosen_mb_id,
@@ -441,11 +448,16 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
             if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_{eid}"):
                 combined_dt = datetime.combine(new_date, new_time)
                 sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                cleaned_body = deduplicate_email_signature(
+                    new_body,
+                    signature_html=get_config("signature_html", ""),
+                    include_signature=has_signature_marker(new_body)
+                )
                 update_email(
                     email_id=eid,
                     recipient=new_recip.strip(),
                     subject=new_subj.strip(),
-                    email_html=new_body,
+                    email_html=cleaned_body,
                     scheduled_time=sched_str,
                     smtp_account_id=chosen_mb_id,
                     bcc_email=new_bcc.strip()
@@ -463,11 +475,16 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
             if st.button("🚀 Send Immediately", use_container_width=True, key=f"send_edit_{eid}"):
                 combined_dt = datetime.combine(new_date, new_time)
                 sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                cleaned_body = deduplicate_email_signature(
+                    new_body,
+                    signature_html=get_config("signature_html", ""),
+                    include_signature=has_signature_marker(new_body)
+                )
                 update_email(
                     email_id=eid,
                     recipient=new_recip.strip(),
                     subject=new_subj.strip(),
-                    email_html=new_body,
+                    email_html=cleaned_body,
                     scheduled_time=sched_str,
                     smtp_account_id=chosen_mb_id,
                     bcc_email=new_bcc.strip()

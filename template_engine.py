@@ -613,6 +613,7 @@ def resolve_template(template_body: str, contact: Dict[str, Any]) -> str:
 
 # ------------------------------------------------------------------------------
 
+
 _TOKEN_RE = re.compile(r'\[([a-zA-Z0-9_\s\-]+)\]')
 
 
@@ -628,5 +629,118 @@ def _missing_tokens(text: str) -> List[str]:
             continue
         missing.add(f"[{inner}]")
     return list(missing)
+
+
+# ------------------------------------------------------------------------------
+# Universal Signature Deduplication & Formatting Guard
+# ------------------------------------------------------------------------------
+
+SIGNATURE_MARKERS = [
+    r"cropped-amazon-aligators\.png",
+    r"Sellomize\s+Logo",
+    r"Business\s+Development\s+Officer",
+    r"Jack\s+Connor",
+    r"mailto:info@sellomize\.com",
+    r"mailto:sales@sellomize\.com",
+    r"Jack\s+Connor\s*·\s*Sellomize",
+    r"Best\s+regards,?<br\s*/?>\s*(?:<strong>)?(?:Jack\s+Connor|Outreach\s+Team)",
+    r"Best\s+regards,\s*(?:Jack\s+Connor|Outreach\s+Team)",
+]
+
+TABLE_SIG_REGEX = re.compile(
+    r'(?:<div[^>]*>\s*)?<table[^>]*>[\s\S]*?(?:cropped-amazon-aligators\.png|Sellomize\s*Logo|Business\s*Development\s*Officer|Jack\s*Connor)[\s\S]*?</table>(?:\s*</div>)?',
+    re.IGNORECASE
+)
+
+PARAGRAPH_SIG_REGEX = re.compile(
+    r'<p[^>]*>\s*Best\s+regards,?\s*<br\s*/?>\s*(?:<strong>)?(?:Jack\s+Connor|Outreach\s+Team|Sellomize)[\s\S]*?</p>',
+    re.IGNORECASE
+)
+
+TEXT_SIG_REGEX = re.compile(
+    r'(?:<br\s*/?>\s*)*(?:Best\s+regards,?\s*(?:\n|<br\s*/?>)\s*(?:Jack\s+Connor|Outreach\s+Team)(?:\s*(?:\n|<br\s*/?>)\s*Sellomize)?|Jack\s+Connor\s*·\s*Sellomize\s*·\s*\S+@\S+)',
+    re.IGNORECASE
+)
+
+
+def has_signature_marker(text: str) -> bool:
+    """Return True if text contains any recognized Sellomize corporate signature marker."""
+    if not text:
+        return False
+    for pat in SIGNATURE_MARKERS:
+        if re.search(pat, text, re.IGNORECASE):
+            return True
+    return False
+
+
+def count_signature_occurrences(text: str) -> int:
+    """Count how many distinct signature representations exist in the text."""
+    if not text:
+        return 0
+    t_matches = len(TABLE_SIG_REGEX.findall(text))
+    p_matches = len(PARAGRAPH_SIG_REGEX.findall(text))
+    if t_matches > 0 or p_matches > 0:
+        return t_matches + p_matches
+    # Fallback to distinct marker occurrences
+    connor_count = len(re.findall(r"Jack\s+Connor", text, re.IGNORECASE))
+    if connor_count > 0:
+        return connor_count
+    logo_count = len(re.findall(r"cropped-amazon-aligators\.png|Sellomize\s*Logo", text, re.IGNORECASE))
+    if logo_count > 0:
+        return logo_count
+    return 1 if has_signature_marker(text) else 0
+
+
+def strip_all_signatures(html_text: str) -> str:
+    """Remove all recognized corporate signature blocks and trailing delimiters from HTML text."""
+    if not html_text:
+        return ""
+    res = html_text
+    res = TABLE_SIG_REGEX.sub("", res)
+    res = PARAGRAPH_SIG_REGEX.sub("", res)
+    res = TEXT_SIG_REGEX.sub("", res)
+    # Strip any dangling trailing breaks, empty paragraphs, or whitespace
+    res = re.sub(r'(?:<br\s*/?>|\s|&nbsp;|<p>\s*</p>)+$', '', res, flags=re.IGNORECASE)
+    return res.strip()
+
+
+def deduplicate_email_signature(html_text: str, signature_html: str = "", include_signature: bool = True) -> str:
+    """
+    Ensure the email HTML has AT MOST ONE signature throughout the entire system.
+    If include_signature is False: strips all signatures (useful for follow-ups that opt out).
+    If include_signature is True:
+      - If multiple signatures exist: strips all duplicates and re-attaches exactly ONE canonical signature.
+      - If exactly one signature exists: preserves it as-is without re-appending another.
+      - If 0 signatures exist: cleanly appends signature_html once.
+    """
+    if not html_text:
+        return ""
+
+    if not include_signature:
+        return strip_all_signatures(html_text)
+
+    sig_count = count_signature_occurrences(html_text)
+
+    if sig_count > 1:
+        # Multiple signatures detected: strip all and append exactly one clean canonical signature
+        clean_body = strip_all_signatures(html_text)
+        chosen_sig = signature_html.strip() if signature_html and signature_html.strip() else ""
+        if not chosen_sig:
+            t_match = TABLE_SIG_REGEX.search(html_text)
+            if t_match:
+                chosen_sig = t_match.group(0)
+        if chosen_sig:
+            return f"{clean_body}<br><br>{chosen_sig}".strip()
+        return clean_body
+    elif sig_count == 1:
+        # Exactly one signature already exists. Keep it as-is, never duplicate!
+        return html_text
+    else:
+        # 0 signatures found in body
+        if signature_html and signature_html.strip():
+            clean_body = re.sub(r'(?:<br\s*/?>|\s)+$', '', html_text)
+            return f"{clean_body}<br><br>{signature_html.strip()}".strip()
+        return html_text
+
 
 

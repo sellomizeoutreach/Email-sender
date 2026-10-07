@@ -47,7 +47,7 @@ from database import (
     create_email,
     DB_FILE,
 )
-from template_engine import resolve_template, _missing_tokens
+from template_engine import resolve_template, _missing_tokens, deduplicate_email_signature
 from smtp_dispatcher import send_smtp_email, sanitize_header
 from tracker import inject_tracking_and_links
 from mx_checker import verify_email_domain_mx
@@ -253,13 +253,15 @@ def process_campaign_contact_step(
         logger.warning(f"[Campaign #{camp_id}] Unfilled tokens for {lead_email}: {unfilled}. Skipped.")
         return False, f"Unfilled tokens: {', '.join(unfilled)}"
 
-    # Append Corporate Signature if enabled on this sequence step
+    # Append Corporate Signature if enabled on this sequence step (universally deduplicated)
     include_sig = bool(int(target_step.get("include_signature", 1 if target_pos == 1 else 0)))
     sig_html = get_config("signature_html", db_path=db_path) or "<p>Best regards,<br>Jack Connor<br>Sellomize</p>"
-    if include_sig and sig_html and sig_html not in resolved_body:
-        full_html = f"{resolved_body}<br><br>{sig_html}"
-    else:
-        full_html = resolved_body
+    full_html = deduplicate_email_signature(
+        resolved_body,
+        signature_html=sig_html,
+        include_signature=include_sig
+    )
+
 
     # 5. PRE-FLIGHT MX VERIFICATION
     enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"

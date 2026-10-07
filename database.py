@@ -796,6 +796,13 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
     except Exception:
         pass
 
+    # Universal Signature Sanitizer: Audits all scheduled / queued emails and scrubs duplicate signatures
+    try:
+        sanitize_all_scheduled_signatures(db_path)
+    except Exception as sig_clean_ex:
+        logger.warning(f"Signature sanitizer notice: {sig_clean_ex}")
+
+
 # ------------------------------------------------------------------------------
 # BACKUP & RESTORE UTILITIES (Data Persistence Protection)
 # ------------------------------------------------------------------------------
@@ -5269,6 +5276,85 @@ def get_send_jobs(
             pass
         results.append(d)
     return results
+
+
+def sanitize_all_scheduled_signatures(db_path: str = DB_FILE) -> Dict[str, int]:
+    """
+    Universal Database Sanitizer for Signatures:
+    Audits all queued, scheduled, pending, or draft emails in the database and cleans any
+    duplicate signatures, ensuring each scheduled email has AT MOST ONE signature.
+    Follow-up emails that should not have a signature are preserved or cleaned accordingly.
+    Also audits body_html in the send_jobs table.
+    """
+    from template_engine import deduplicate_email_signature, has_signature_marker, count_signature_occurrences
+
+    fixed_emails = 0
+    fixed_jobs = 0
+
+    sig_html = get_config("signature_html", "", db_path=db_path) or ""
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    try:
+        # 1. Audit emails table
+        cursor.execute("""
+            SELECT id, email_html, sequence_step, status
+            FROM emails
+            WHERE status IN ('Approved', 'Scheduled', 'Pending', 'Paused', 'Draft')
+        """)
+        rows = cursor.fetchall()
+        for r in rows:
+            r_dict = dict(r)
+            eid = r_dict["id"]
+            html_content = r_dict.get("email_html") or ""
+            step = int(r_dict.get("sequence_step") or 1)
+            is_followup = step > 1
+
+            sig_count = count_signature_occurrences(html_content)
+            if sig_count > 1:
+                has_sig = has_signature_marker(html_content)
+                cleaned = deduplicate_email_signature(
+                    html_content,
+                    signature_html=sig_html if (not is_followup or has_sig) else "",
+                    include_signature=(not is_followup or has_sig)
+                )
+                if cleaned != html_content:
+                    cursor.execute("UPDATE emails SET email_html = ? WHERE id = ?", (cleaned, eid))
+                    fixed_emails += 1
+
+        # 2. Audit send_jobs queue table
+        try:
+            cursor.execute("""
+                SELECT id, body_html
+                FROM send_jobs
+                WHERE status IN ('pending', 'scheduled', 'queued')
+            """)
+            jobs = cursor.fetchall()
+            for j in jobs:
+                j_dict = dict(j)
+                jid = j_dict["id"]
+                body_content = j_dict.get("body_html") or ""
+                if count_signature_occurrences(body_content) > 1:
+                    cleaned_job = deduplicate_email_signature(
+                        body_content,
+                        signature_html=sig_html,
+                        include_signature=True
+                    )
+                    if cleaned_job != body_content:
+                        cursor.execute("UPDATE send_jobs SET body_html = ? WHERE id = ?", (cleaned_job, jid))
+                        fixed_jobs += 1
+        except Exception:
+            pass
+
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Error during sanitize_all_scheduled_signatures: {e}")
+    finally:
+        conn.close()
+
+    if fixed_emails > 0 or fixed_jobs > 0:
+        logger.info(f"Signature sanitizer completed: fixed {fixed_emails} scheduled emails and {fixed_jobs} send_jobs.")
+    return {"fixed_emails": fixed_emails, "fixed_jobs": fixed_jobs}
 
 
 # Initialize upon import

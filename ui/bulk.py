@@ -36,6 +36,7 @@ from template_engine import (
     audit_email_deliverability,
     format_email_html,
     _missing_tokens,
+    deduplicate_email_signature,
 )
 from timezone_helper import get_next_valid_market_datetime, get_engine_now
 from ui.editor import render_dual_mode_editor, html_to_visual_text
@@ -174,10 +175,11 @@ def render_bulk_schedule_dialog(
 
                 lead_subj      = inject_variables(parse_spintax(selected_subject), lead)
                 lead_body      = resolve_template(current_body, lead)
-                if include_signature and sig_html and sig_html not in lead_body:
-                    lead_body_res = f"{lead_body}<br><br>{sig_html}"
-                else:
-                    lead_body_res = lead_body
+                lead_body_res  = deduplicate_email_signature(
+                    lead_body,
+                    signature_html=sig_html,
+                    include_signature=include_signature
+                )
                 formatted_body = format_email_html(lead_body_res)
 
                 create_email(
@@ -219,9 +221,11 @@ def render_bulk_schedule_dialog(
 
                     fu_subj_resolved = inject_variables(parse_spintax(step["subject"]), lead)
                     fu_body_resolved = resolve_template(fu_body_html, lead)
-                    fu_has_sig = (sig_html and sig_html in fu_body_resolved) or ("Sellomize Logo" in fu_body_resolved) or ("Jack Connor" in fu_body_resolved)
-                    if fu_inc_sig and sig_html and not fu_has_sig:
-                        fu_body_resolved = f"{fu_body_resolved}<br><br>{sig_html}"
+                    fu_body_resolved = deduplicate_email_signature(
+                        fu_body_resolved,
+                        signature_html=sig_html,
+                        include_signature=fu_inc_sig
+                    )
 
                     formatted_fu = format_email_html(fu_body_resolved)
                     create_email(
