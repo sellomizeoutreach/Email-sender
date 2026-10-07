@@ -26,6 +26,7 @@ from database import (
     mark_contact_do_not_contact,
     mark_contact_replied_manual,
     record_email_open,
+    unrecord_email_open,
 )
 from timezone_helper import get_engine_now, get_engine_now_str
 from scheduler import dispatch_email_hostinger, run_scheduler_cycle
@@ -194,12 +195,15 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
 
     with b3:
         if open_count == 0:
-            if st.button("👁️ Mark as Opened", use_container_width=True, key=f"dlg_op_{eid}", help="Record an open event (useful for test emails or clients without images)"):
+            if st.button("👁️ Mark Opened", use_container_width=True, key=f"dlg_op_{eid}", help="Record an open event (useful for test emails or clients without images)"):
                 record_email_open(eid)
                 trigger_toast(f"Recorded open for {recip}!", icon="👁️")
                 st.rerun()
         else:
-            st.caption("👁️ Open verified")
+            if st.button("↩️ Undo Open", use_container_width=True, key=f"dlg_unop_{eid}", help="Undo accidental open and reset open counter to 0"):
+                unrecord_email_open(eid)
+                trigger_toast(f"Reset open status for {recip}!", icon="↩️")
+                st.rerun()
 
     with b4:
         if st.button("🛑 Add to DNC", use_container_width=True, key=f"dlg_dnc_{eid}", help="Add contact to Do Not Contact suppression list"):
@@ -883,7 +887,10 @@ def render_outbox_tab():
                             trigger_toast(f"Recorded open for {recip}!", icon="👁️")
                             st.rerun()
                     else:
-                        st.caption("👁️ Opened")
+                        if st.button("↩️ Unopen", key=f"s_unop_{eid}", use_container_width=True, help="Undo accidental open count & reset to 0"):
+                            unrecord_email_open(eid)
+                            trigger_toast(f"Reset open count for {recip}!", icon="↩️")
+                            st.rerun()
                 with r5:
                     if st.button("🛑 DNC", key=f"s_dnc_{eid}", use_container_width=True, help="Legal Opt-Out: Suppress contact & add to Do Not Contact list"):
                         mark_contact_do_not_contact(recip, reason="Operator marked DNC from Sent audit")

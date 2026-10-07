@@ -2905,6 +2905,43 @@ def record_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
     conn.close()
     return True
 
+def unrecord_email_open(email_id: int, db_path: str = DB_FILE) -> bool:
+    """
+    Undo accidental email open.
+    Resets opened_at to NULL, open_count to 0, and restores contact status if appropriate.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM emails WHERE id = ?", (email_id,))
+    email_row = cursor.fetchone()
+    if not email_row:
+        conn.close()
+        return False
+
+    cursor.execute("""
+        UPDATE emails SET opened_at = NULL, open_count = 0 WHERE id = ?
+    """, (email_id,))
+
+    recipient = email_row["recipient"]
+    if recipient:
+        cursor.execute("SELECT id, status FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (recipient.strip(),))
+        contact_row = cursor.fetchone()
+        if contact_row and contact_row["status"] == "Opened":
+            # Check if any OTHER emails for this contact are actually opened
+            cursor.execute("""
+                SELECT COUNT(*) as ct FROM emails 
+                WHERE LOWER(TRIM(recipient)) = LOWER(TRIM(?)) 
+                  AND id != ? 
+                  AND (open_count > 0 OR opened_at IS NOT NULL)
+            """, (recipient.strip(), email_id))
+            other_opens = cursor.fetchone()
+            if not other_opens or other_opens["ct"] == 0:
+                cursor.execute("UPDATE contacts SET status = 'Contacted' WHERE id = ?", (contact_row["id"],))
+
+    conn.commit()
+    conn.close()
+    return True
+
 def record_email_click(email_id: int, clicked_url: str = "", db_path: str = DB_FILE) -> bool:
     """
     Called when a tracked link in an email is clicked.
