@@ -1235,7 +1235,7 @@ def render_outbox_tab():
 
             elif current_filter == "Paused / failed":
                 if is_reply_paused:
-                    b_rep, b_send, b_queue, b_edit, b_del = st.columns([1.5, 1.4, 1.1, 1.0, 1.3], vertical_alignment="center")
+                    b_rep, b_send, b_queue, b_edit, b_del, b_dnc = st.columns([1.5, 1.3, 1.1, 1.0, 1.2, 1.0], vertical_alignment="center")
                     with b_rep:
                         if st.button("💬 Reply to Lead", key=f"outbox_pf_reply_{eid}", type="primary", use_container_width=True, help="Compose a manual direct response to this prospect"):
                             st.session_state["compose_recipient"] = recipient
@@ -1272,16 +1272,23 @@ def render_outbox_tab():
                             delete_email(eid)
                             trigger_toast(f"Email for {recipient} cancelled.", icon="🗑️")
                             st.rerun()
+                    with b_dnc:
+                        if st.button("🛑 DNC", key=f"outbox_pf_dnc_{eid}", use_container_width=True, help="Legal Opt-Out: Suppress contact & add to Do Not Contact list"):
+                            mark_contact_do_not_contact(recipient, reason="Marked DNC from Paused outbox")
+                            delete_email(eid)
+                            trigger_toast(f"{recipient} added to DNC list & outreach cancelled.", icon="🛑")
+                            st.rerun()
                 else:
-                    with btn_col1:
+                    pf_c1, pf_c2, pf_c3, pf_c4, pf_c5 = st.columns([1, 1.1, 1, 1, 1], vertical_alignment="center")
+                    with pf_c1:
                         if st.button("✏️ Edit", key=f"outbox_pf_edit_{eid}", use_container_width=True):
                             render_edit_email_dialog(e)
-                    with btn_col2:
+                    with pf_c2:
                         if st.button("▶️ Resume", key=f"outbox_res_{eid}", use_container_width=True, type="primary"):
                             update_email(email_id=eid, status="Approved")
                             trigger_toast(f"Email #{eid} unpaused & queued.", icon="▶️")
                             st.rerun()
-                    with btn_col3:
+                    with pf_c3:
                         if st.button("🔄 Retry", key=f"outbox_retry_{eid}", use_container_width=True):
                             with st.spinner("Retrying dispatch..."):
                                 try:
@@ -1295,7 +1302,13 @@ def render_outbox_tab():
                                         st.error(f"Retry failed: {err_reason}")
                                 except Exception as ex:
                                     st.error(f"Retry exception: {ex}")
-                    with btn_col4:
+                    with pf_c4:
+                        if st.button("🛑 DNC", key=f"outbox_pf_dnc_{eid}", use_container_width=True, help="Legal Opt-Out: Suppress contact & add to Do Not Contact list"):
+                            mark_contact_do_not_contact(recipient, reason="Marked DNC from Paused/Failed outbox")
+                            delete_email(eid)
+                            trigger_toast(f"{recipient} suppressed in DNC list.", icon="🛑")
+                            st.rerun()
+                    with pf_c5:
                         if st.button("🗑️ Delete", key=f"outbox_pf_del_{eid}", use_container_width=True):
                             delete_email(eid)
                             trigger_toast(f"Email #{eid} deleted.", icon="🗑️")
