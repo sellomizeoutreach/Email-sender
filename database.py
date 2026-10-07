@@ -185,7 +185,8 @@ def get_connection(db_path: str = DB_FILE) -> Union[sqlite3.Connection, Postgres
     PostgreSQL connection wrapper with transparent dialect compatibility.
     Otherwise, returns local SQLite connection.
     """
-    if is_postgres_active() and (db_path == DB_FILE or not os.path.exists(db_path)):
+    force_sqlite = os.environ.get("SELLOMIZE_FORCE_SQLITE", "").strip() in ("1", "true", "yes")
+    if not force_sqlite and is_postgres_active() and (db_path == DB_FILE or db_path is None):
         try:
             return get_postgres_connection()
         except Exception as e:

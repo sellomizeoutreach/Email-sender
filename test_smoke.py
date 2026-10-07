@@ -6,6 +6,7 @@ CRLF header injection prevention, and sending window boundary logic.
 """
 
 import os
+os.environ["SELLOMIZE_FORCE_SQLITE"] = "1"
 import time
 import unittest
 from datetime import datetime, timedelta
