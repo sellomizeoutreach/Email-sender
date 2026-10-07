@@ -35,6 +35,9 @@ from database import (
     update_template,
     update_contact,
     mark_email_error,
+    get_lead_images,
+    delete_lead_image,
+    update_image_filename,
     DB_FILE,
 )
 from template_engine import (
@@ -47,8 +50,8 @@ from template_engine import (
 )
 from scheduler import dispatch_email_hostinger
 from timezone_helper import get_engine_now, get_engine_now_str
-from ui.editor import render_dual_mode_editor
-from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
+from ui.editor import render_dual_mode_editor, visual_text_to_html
+from ui.rich_editor import render_rich_editor, is_rich_editor_enabled, process_and_store_image
 from ui.components import trigger_toast
 
 _TOKEN_RE = re.compile(r'\[([A-Za-z0-9_]+)\]|\{([A-Za-z0-9_]+)\}')
@@ -74,6 +77,93 @@ def _apply_variable_fallback(text: str, fallback: str) -> str:
     if not fallback:
         return _TOKEN_RE.sub("", text)
     return _TOKEN_RE.sub(fallback, text)
+
+
+def get_lead_identifier(lead: Optional[Dict[str, Any]]) -> str:
+    """Extract or generate a clean, stable lead code like L-0147 or email identifier."""
+    if not lead:
+        return "general"
+    vars_dict = lead.get("custom_variables_dict")
+    if not vars_dict and isinstance(lead.get("custom_variables"), str):
+        try:
+            vars_dict = json.loads(lead["custom_variables"])
+        except Exception:
+            vars_dict = {}
+    if isinstance(vars_dict, dict):
+        for k in ("lead_code", "Lead Code", "lead_id", "Lead ID", "code", "LeadCode"):
+            if vars_dict.get(k):
+                return str(vars_dict[k]).strip()
+    if lead.get("id"):
+        return f"L-{lead['id']:04d}"
+    if lead.get("email"):
+        return re.sub(r'[^a-zA-Z0-9_\-]', '_', str(lead.get("email")).strip().lower())
+    return "general"
+
+
+def insert_lead_image_into_editor(
+    image_rec: Dict[str, Any],
+    editor_key: str = "compose_rich_editor"
+):
+    """Inserts a lead library image directly at the editor's current cursor position."""
+    textarea_key = f"{editor_key}_visual_textarea"
+    cursor_tracker_key = f"{editor_key}_cursor_pos"
+    cursor_input_key = f"{editor_key}_cursor_input"
+    img_map_key = f"{editor_key}_img_map"
+    state_key = f"{editor_key}_html_content"
+    last_synced_html = f"{editor_key}_last_synced_html"
+
+    live_visual = st.session_state.get(textarea_key, "")
+    current_pos = st.session_state.get(cursor_tracker_key, 0)
+    inp_val = st.session_state.get(cursor_input_key, "")
+    if inp_val and str(inp_val).strip().isdigit():
+        current_pos = int(str(inp_val).strip())
+
+    if current_pos < 0:
+        current_pos = 0
+    if current_pos > len(live_visual):
+        current_pos = len(live_visual)
+
+    if img_map_key not in st.session_state:
+        st.session_state[img_map_key] = {}
+    img_map = st.session_state[img_map_key]
+
+    existing_nums = [
+        int(m.group(1)) for m in re.finditer(r'\[Image\s+(\d+)\]', live_visual, re.IGNORECASE)
+    ]
+    next_num = (max(existing_nums) + 1) if existing_nums else (len(img_map) + 1)
+    placeholder = f"[Image {next_num}]"
+
+    s_key = image_rec.get("storage_key", "")
+    full_fpath = os.path.join("assets/uploads", s_key) if not os.path.isabs(s_key) else s_key
+    if os.path.exists(full_fpath):
+        with open(full_fpath, "rb") as fp:
+            b64_raw = base64.b64encode(fp.read()).decode("utf-8")
+        data_uri = f"data:{image_rec.get('mime_type', 'image/jpeg')};base64,{b64_raw}"
+    else:
+        data_uri = ""
+
+    f_name = image_rec.get("filename") or "Screenshot"
+    w = image_rec.get("width") or 600
+    tag = (f'<img src="{data_uri}" alt="{html.escape(f_name)}" '
+           f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+
+    img_map[placeholder] = tag
+
+    before = live_visual[:current_pos].rstrip()
+    after = live_visual[current_pos:].lstrip()
+    prefix = "\n\n" if before else ""
+    suffix = "\n\n" if after else ""
+    new_vis = f"{before}{prefix}{placeholder}{suffix}{after}"
+    new_pos = len(before + prefix + placeholder)
+
+    new_html = visual_text_to_html(new_vis, img_map)
+    st.session_state[state_key] = new_html
+    st.session_state[textarea_key] = new_vis
+    st.session_state[last_synced_html] = new_html
+    st.session_state[cursor_tracker_key] = new_pos
+    if cursor_input_key in st.session_state:
+        st.session_state[cursor_input_key] = str(new_pos)
+    st.session_state["compose_body_html"] = new_html
 
 
 def _stub_contact(email: str) -> dict:
@@ -186,29 +276,25 @@ def _generate_rule_based_followup(
                 f"{greeting_es}\n\n"
                 f"Te escribo brevemente para dar seguimiento a mi nota anterior sobre {company_name}. "
                 f"¿Tuviste oportunidad de revisarla?\n\n"
-                f"Avísame si tienes unos minutos esta semana.\n\n"
-                f"Saludos cordiales,"
+                f"Avísame si tienes unos minutos esta semana."
             )
         elif "value" in angle_type.lower():
             body = (
                 f"{greeting_es}\n\n"
                 f"Estuve revisando la situación de {company_name} y encontré una oportunidad interesante que podría aportarles valor inmediato.\n\n"
-                f"¿Te interesaría que te comparta un resumen rápido de 2 minutos?\n\n"
-                f"Saludos cordiales,"
+                f"¿Te interesaría que te comparta un resumen rápido de 2 minutos?"
             )
         elif "alternative" in angle_type.lower():
             body = (
                 f"{greeting_es}\n\n"
                 f"Dando seguimiento a mi correo anterior. Si no eres la persona indicada en {company_name} para este tema, ¿me podrías orientar con quién debería comunicarme?\n\n"
-                f"Agradezco mucho tu ayuda.\n\n"
-                f"Saludos cordiales,"
+                f"Agradezco mucho tu ayuda."
             )
         else:
             body = (
                 f"{greeting_es}\n\n"
                 f"Como no he tenido respuesta, asumo que el momento no es el adecuado para {company_name}.\n\n"
-                f"Cierro este contacto por ahora. ¡Mucho éxito en sus proyectos!\n\n"
-                f"Saludos cordiales,"
+                f"Cierro este contacto por ahora. ¡Mucho éxito en sus proyectos!"
             )
         return re_subj, body
 
@@ -218,31 +304,27 @@ def _generate_rule_based_followup(
             f"{greeting}\n\n"
             f"Just bumping my previous note regarding {company_name} to the top of your inbox. "
             f"Did you have a quick moment to look it over?\n\n"
-            f"Would you be open to a 5-minute chat this week?\n\n"
-            f"Best regards,"
+            f"Would you be open to a 5-minute chat this week?"
         )
     elif "value" in angle_type.lower():
         body = (
             f"{greeting}\n\n"
             f"Following up on my previous note. I put together a quick observation on how similar brands to {company_name} "
             f"are improving their performance right now.\n\n"
-            f"Happy to send over a brief 2-minute overview if this is on your radar.\n\n"
-            f"Best regards,"
+            f"Happy to send over a brief 2-minute overview if this is on your radar."
         )
     elif "alternative" in angle_type.lower():
         body = (
             f"{greeting}\n\n"
             f"Touching base on my earlier message. If you're not the best person at {company_name} to speak with regarding this, "
             f"could you point me toward whoever leads this on your team?\n\n"
-            f"Really appreciate your help!\n\n"
-            f"Best regards,"
+            f"Really appreciate your help!"
         )
     else:
         body = (
             f"{greeting}\n\n"
             f"I haven't heard back, so I'll assume timing isn't right for {company_name} right now.\n\n"
-            f"I'll close the loop for now—wishing you and your team continued success!\n\n"
-            f"Best regards,"
+            f"I'll close the loop for now—wishing you and your team continued success!"
         )
 
     return re_subj, body
@@ -463,7 +545,7 @@ def render_add_followup_dialog(
         )
         def_c_subj = f"Re: {initial_subject}" if initial_subject and not initial_subject.lower().startswith("re:") else (initial_subject or "Re: Quick question")
         c_subj = st.text_input("Follow-up Subject Line", value=def_c_subj, key=f"dlg_c_subj_{step_num}")
-        def_c_body = f"Hi {lead_name},\n\nJust following up on my previous note to see if you had a chance to review it.\n\nBest regards,"
+        def_c_body = f"Hi {lead_name},\n\nJust following up on my previous note to see if you had a chance to review it."
         c_body = st.text_area("Follow-up Body", value=def_c_body, height=130, key=f"dlg_c_body_{step_num}")
         c_inc_sig = st.checkbox(f"🖋️ Include signature in follow-up #{step_num}", value=False, key=f"dlg_c_sig_{step_num}")
 
@@ -521,7 +603,7 @@ def render_add_followup_dialog(
 # Dialog: Confirm Outreach & Schedule Sequence (UTC+5)
 # ---------------------------------------------------------------------------
 
-@st.dialog("🚀 Confirm Outreach & Schedule Sequence (UTC+5)")
+@st.dialog("🚀 Confirm Outreach & Schedule Sequence (UTC+5)", width="large")
 def render_compose_schedule_dialog(
 
     mode: str,
@@ -534,15 +616,26 @@ def render_compose_schedule_dialog(
     include_signature: bool = True,
 ):
     """Modal popup allowing exact custom date and time setting for initial email and each follow-up separately."""
+    effective_bcc = (bcc_email or "").strip()
+    if not effective_bcc:
+        effective_bcc = (get_config("bcc_email", "") or "").strip()
+    bcc_email = effective_bcc
+
     recipient_clean = (current_lead.get("email") or "").strip()
     recipient_name  = current_lead.get("name") or recipient_clean
     lead_tz         = current_lead.get("country_or_timezone") or "LOCAL"
     now_engine      = get_engine_now()
 
+    recip_parts = [e.strip() for e in re.split(r'[,;]+', recipient_clean) if e.strip()]
+    if len(recip_parts) > 1:
+        recip_display_html = f"<b>Recipients ({len(recip_parts)}):</b> <span style='font-family:monospace; color:#083731;'>{html.escape(recipient_clean)}</span>"
+    else:
+        recip_display_html = f"<b>Recipient:</b> {html.escape(recipient_name)} &lt;{html.escape(recipient_clean)}&gt;"
+
     bcc_badge_html = f"<br><b>BCC:</b> <span style='font-family:monospace; color:#083731;'>{html.escape(bcc_email)}</span>" if bcc_email.strip() else ""
     st.markdown(
         f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;'>"
-        f"<b>Recipient:</b> {html.escape(recipient_name)} &lt;{html.escape(recipient_clean)}&gt;<br>"
+        f"{recip_display_html}<br>"
         f"<b>Sending Mailbox:</b> {html.escape(selected_mb.get('email', ''))}"
         f"{bcc_badge_html}"
         f"</div>",
@@ -565,7 +658,7 @@ def render_compose_schedule_dialog(
             with c1:
                 init_date = st.date_input("Initial Date (UTC+5)", value=now_engine.date(), min_value=now_engine.date(), key="comp_dlg_init_d")
             with c2:
-                init_time = st.time_input("Initial Time (UTC+5)", value=(now_engine + timedelta(minutes=15)).time(), key="comp_dlg_init_t")
+                init_time = st.time_input("Initial Time (UTC+5)", value=(now_engine + timedelta(minutes=15)).time(), step=60, key="comp_dlg_init_t")
             init_dt = datetime.combine(init_date, init_time)
         else:
             init_dt = None
@@ -575,7 +668,7 @@ def render_compose_schedule_dialog(
         with c1:
             init_date = st.date_input("Scheduled Date", value=now_engine.date(), min_value=now_engine.date(), key="comp_dlg_sched_d", label_visibility="collapsed")
         with c2:
-            init_time = st.time_input("Scheduled Time", value=(now_engine + timedelta(hours=1)).time(), key="comp_dlg_sched_t", label_visibility="collapsed")
+            init_time = st.time_input("Scheduled Time", value=(now_engine + timedelta(hours=1)).time(), step=60, key="comp_dlg_sched_t", label_visibility="collapsed")
         init_dt = datetime.combine(init_date, init_time)
 
     # ── Section 2: Follow-up Emails (Set each date and time separately) ──
@@ -603,6 +696,7 @@ def render_compose_schedule_dialog(
                     f_time = st.time_input(
                         f"Time (UTC+5) for Follow-up #{idx + 1}",
                         value=default_fu_dt.time(),
+                        step=60,
                         key=f"comp_dlg_fu_t_{idx}"
                     )
                 target_fu_dt = datetime.combine(f_date, f_time)
@@ -611,7 +705,10 @@ def render_compose_schedule_dialog(
 
     # ── Confirmation & Cancel/Draft Actions ──
     st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
-    confirm_label = "🚀 Launch Outreach Sequence" if (mode == "send_now" and init_dt is None) else "🕒 Confirm Scheduled Sequence"
+    if mode == "send_now" and init_dt is None:
+        confirm_label = "🚀 Send Now" if not followup_steps else f"🚀 Send Now (+{len(followup_steps)} FU)"
+    else:
+        confirm_label = "🕒 Confirm Scheduled Sequence"
     
     col_act_main, col_act_draft, col_act_disc = st.columns([2.5, 1.4, 1.1], vertical_alignment="center")
     with col_act_main:
@@ -705,7 +802,8 @@ def render_compose_schedule_dialog(
                 fu_body_res  = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
 
                 # Attach signature if enabled for this follow-up step
-                if fu.get("include_signature", False) and sig_html and sig_html not in fu_body_res:
+                has_sig = (sig_html and sig_html in fu_body_res) or ("Sellomize Logo" in fu_body_res) or ("Jack Connor" in fu_body_res)
+                if fu.get("include_signature", False) and sig_html and not has_sig:
                     fu_body_res = f"{fu_body_res}<br><br>{sig_html}"
 
                 create_email(
@@ -778,10 +876,28 @@ def render_compose_tab(contacts=None, templates=None):
 
     smtp_accounts = get_smtp_accounts(active_only=True)
 
-    # Prefill from Leads tab
+    # Prefill from Leads tab, Outbox, or prior screen
     prefill_lead_id = st.session_state.pop("prefill_compose_lead_id", None)
     if prefill_lead_id:
         st.session_state["compose_selected_lead_id"] = prefill_lead_id
+
+    # Handle incoming compose_recipient (e.g. from Outbox follow-up or takeover)
+    incoming_recipient = st.session_state.pop("compose_recipient", None)
+    if incoming_recipient:
+        inc_clean = str(incoming_recipient).strip()
+        matched_lead_for_inc = get_contact_by_email(inc_clean)
+        if matched_lead_for_inc:
+            st.session_state["compose_selected_lead_id"] = matched_lead_for_inc["id"]
+            st.session_state["compose_custom_mode"] = False
+            st.session_state.pop("comp_lead_pick", None)
+        else:
+            st.session_state["compose_custom_mode"] = True
+            st.session_state["compose_custom_email_in"] = inc_clean
+            st.session_state["comp_custom_email_in"] = inc_clean
+            st.session_state.pop("comp_lead_pick", None)
+    elif "compose_selected_lead_id" in st.session_state:
+        # If lead ID was updated externally, ensure selectbox key reflects it
+        pass
 
     # Default body / subject
     if "compose_body_html" not in st.session_state:
@@ -870,19 +986,24 @@ def render_compose_tab(contacts=None, templates=None):
         else:
             preselected_idx = 0
             target_prefill_id = st.session_state.get("compose_selected_lead_id")
+            lead_choice_keys = list(lead_choices.keys())
             if target_prefill_id:
                 for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
                     if l_obj and l_obj.get("id") == target_prefill_id:
                         preselected_idx = idx
+                        if st.session_state.get("comp_lead_pick") != lbl:
+                            st.session_state["comp_lead_pick"] = lbl
                         break
 
             sel_lead_label = st.selectbox(
-                "To", list(lead_choices.keys()),
-                index=preselected_idx,
+                "To", lead_choice_keys,
+                index=preselected_idx if preselected_idx < len(lead_choice_keys) else 0,
                 label_visibility="collapsed",
                 key="comp_lead_pick"
             )
             chosen_lead_obj = lead_choices.get(sel_lead_label)
+            if chosen_lead_obj and chosen_lead_obj.get("id"):
+                st.session_state["compose_selected_lead_id"] = chosen_lead_obj["id"]
             custom_email    = chosen_lead_obj.get("email", "") if chosen_lead_obj else ""
 
         if st.session_state.get("compose_show_bcc"):
@@ -903,13 +1024,26 @@ def render_compose_tab(contacts=None, templates=None):
 
         # Resolve active recipient
         if custom_email.strip():
-            matched = get_contact_by_email(custom_email.strip())
-            if matched:
+            # Check for multiple comma-separated addresses
+            email_parts = [e.strip() for e in re.split(r'[,;]+', custom_email.strip()) if e.strip()]
+            first_addr = email_parts[0] if email_parts else custom_email.strip()
+            first_clean = first_addr
+            if "<" in first_addr and ">" in first_addr:
+                m_a = re.search(r'<([^>]+)>', first_addr)
+                if m_a:
+                    first_clean = m_a.group(1).strip()
+
+            matched = get_contact_by_email(first_clean)
+            if matched and len(email_parts) == 1:
                 current_lead = matched
+            elif matched:
+                # Retain matched CRM context but preserve all recipient addresses
+                current_lead = dict(matched)
+                current_lead["email"] = custom_email.strip()
             else:
                 current_lead = {
                     "id":                   None,
-                    "name":                 custom_email.split("@")[0].capitalize(),
+                    "name":                 first_clean.split("@")[0].capitalize(),
                     "email":                custom_email.strip(),
                     "company":              "",
                     "country_or_timezone":  "LOCAL",
@@ -928,47 +1062,120 @@ def render_compose_tab(contacts=None, templates=None):
         # SEQUENCE TABS: Initial Email + Follow-ups in the SAME ROW
         # =====================================================================
         st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:14px 0 10px;'>", unsafe_allow_html=True)
+        lead_id_str = get_lead_identifier(current_lead)
+        lead_display_name = current_lead.get("name") or current_lead.get("company") or "Lead"
+        try:
+            saved_lead_imgs = get_lead_images(lead_id_str)
+        except Exception:
+            saved_lead_imgs = []
+
         num_fu = len(st.session_state["compose_followups"])
         can_add_fu = num_fu < 3
+
         if num_fu > 0:
-            seq_hdr1, seq_hdr2, seq_hdr3 = st.columns([2.0, 1.8, 1.2], vertical_alignment="center")
-            with seq_hdr1:
-                st.markdown("<span class='lbl' style='font-size:13px; font-weight:700;'>Message &amp; Sequence</span>", unsafe_allow_html=True)
-            with seq_hdr2:
-                if st.button(
-                    f"➕ Add follow-up ({num_fu}/3)",
-                    key="comp_add_fu_btn_more",
-                    use_container_width=True,
-                    disabled=not can_add_fu,
-                    help="Add another follow-up step via AI, custom text, or template"
-                ):
-                    render_add_followup_dialog(
-                        initial_subject=st.session_state.get("compose_subject", ""),
-                        initial_body=st.session_state.get("compose_body_html", ""),
-                        current_followups_count=num_fu,
-                        sample_lead=chosen_lead_obj
-                    )
+            seq_hdr1, seq_hdr_img, seq_hdr2, seq_hdr3 = st.columns([1.6, 1.4, 1.4, 0.8], vertical_alignment="center")
+        else:
+            seq_hdr1, seq_hdr_img, seq_hdr2 = st.columns([1.8, 1.6, 1.4], vertical_alignment="center")
+
+        with seq_hdr1:
+            st.markdown("<span class='lbl' style='font-size:13px; font-weight:700;'>Message &amp; Sequence</span>", unsafe_allow_html=True)
+
+        with seq_hdr_img:
+            img_badge = f" ({len(saved_lead_imgs)})" if saved_lead_imgs else ""
+            with st.popover(f"🖼️ Lead Library{img_badge}", help=f"Lead Image Library for {lead_display_name} ({lead_id_str})", use_container_width=True):
+                st.markdown(f"<div style='font-size:13px; font-weight:700; color:#083731; margin-bottom:2px;'>🖼️ Lead Image Library</div>", unsafe_allow_html=True)
+                st.caption(f"Lead ID: **{lead_id_str}** · Saved screenshots for this lead.")
+
+                up_lead_file = st.file_uploader(
+                    "Upload to Lead Library",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"comp_lead_img_up_{lead_id_str}",
+                    label_visibility="collapsed"
+                )
+                if up_lead_file:
+                    up_lead_file.seek(0)
+                    lead_raw = up_lead_file.read()
+                    if lead_raw:
+                        lead_file_sig = f"{up_lead_file.name}_{len(lead_raw)}"
+                        lead_last_sig_key = f"comp_last_lead_sig_{lead_id_str}"
+                        if st.session_state.get(lead_last_sig_key) != lead_file_sig:
+                            st.session_state[lead_last_sig_key] = lead_file_sig
+                            proc_img = process_and_store_image(
+                                lead_raw,
+                                mime_type=up_lead_file.type or "image/png",
+                                lead_id=lead_id_str,
+                                original_filename=up_lead_file.name
+                            )
+                            # Auto-insert at cursor
+                            insert_lead_image_into_editor({
+                                "storage_key": proc_img.storage_key,
+                                "filename": up_lead_file.name,
+                                "mime_type": up_lead_file.type or "image/jpeg",
+                                "width": proc_img.width,
+                            }, editor_key="compose_rich_editor")
+                            trigger_toast(f"Saved & inserted '{up_lead_file.name}' at cursor!", icon="🖼️")
+                            st.rerun()
+
+                st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:8px 0;'>", unsafe_allow_html=True)
+
+                if not saved_lead_imgs:
+                    st.info("No saved images for this lead yet. Paste (Ctrl+V) directly in the editor or upload above!")
+                else:
+                    for img_rec in saved_lead_imgs:
+                        with st.container(border=True):
+                            g_c1, g_c2, g_c3 = st.columns([1.2, 2.2, 1.4], vertical_alignment="center")
+                            s_key = img_rec.get("storage_key", "")
+                            full_fpath = os.path.join("assets/uploads", s_key) if not os.path.isabs(s_key) else s_key
+                            with g_c1:
+                                if os.path.exists(full_fpath):
+                                    try:
+                                        with open(full_fpath, "rb") as fp_prev:
+                                            b64_p = base64.b64encode(fp_prev.read()).decode("utf-8")
+                                        st.markdown(f'<img src="data:{img_rec.get("mime_type","image/jpeg")};base64,{b64_p}" style="max-height:44px; max-width:75px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1;" />', unsafe_allow_html=True)
+                                    except Exception:
+                                        st.caption("🖼️")
+                                else:
+                                    st.caption("🖼️")
+                            with g_c2:
+                                f_name = img_rec.get("filename") or f"image_{img_rec['id'][:6]}"
+                                st.markdown(f"<div style='font-size:11px; font-weight:600; line-height:1.2; word-break:break-all;'>{html.escape(f_name)}</div>", unsafe_allow_html=True)
+                                st.caption(f"{img_rec.get('width', 0)}x{img_rec.get('height', 0)}px · {round(img_rec.get('bytes', 0)/1024, 1)} KB")
+                            with g_c3:
+                                if st.button("➕ Insert", key=f"comp_ins_btn_{img_rec['id']}", use_container_width=True, type="primary", help="Insert at cursor in email body"):
+                                    insert_lead_image_into_editor(img_rec, editor_key="compose_rich_editor")
+                                    trigger_toast(f"Inserted image at cursor!", icon="🖼️")
+                                    st.rerun()
+                                if st.button("🗑️", key=f"comp_del_img_{img_rec['id']}", use_container_width=True, help="Delete from lead library"):
+                                    delete_lead_image(img_rec['id'])
+                                    if os.path.exists(full_fpath):
+                                        try:
+                                            os.remove(full_fpath)
+                                        except Exception:
+                                            pass
+                                    trigger_toast("Image deleted from library.", icon="🗑️")
+                                    st.rerun()
+
+        with seq_hdr2:
+            fu_btn_text = f"➕ Add follow-up ({num_fu}/3)" if num_fu > 0 else "➕ Add follow-up"
+            if st.button(
+                fu_btn_text,
+                key="comp_add_fu_btn_main",
+                use_container_width=True,
+                disabled=not can_add_fu,
+                help="Add another follow-up step via AI, custom text, or template"
+            ):
+                render_add_followup_dialog(
+                    initial_subject=st.session_state.get("compose_subject", ""),
+                    initial_body=st.session_state.get("compose_body_html", ""),
+                    current_followups_count=num_fu,
+                    sample_lead=chosen_lead_obj
+                )
+
+        if num_fu > 0:
             with seq_hdr3:
                 if st.button("↩️ Undo", key="comp_undo_fu_btn", use_container_width=True, help="Undo / remove last added follow-up"):
                     st.session_state["compose_followups"].pop()
                     st.rerun()
-        else:
-            seq_hdr1, seq_hdr2 = st.columns([3.2, 1.8], vertical_alignment="center")
-            with seq_hdr1:
-                st.markdown("<span class='lbl' style='font-size:13px; font-weight:700;'>Message &amp; Sequence</span>", unsafe_allow_html=True)
-            with seq_hdr2:
-                if st.button(
-                    "➕ Add follow-up",
-                    key="comp_add_fu_btn_init",
-                    use_container_width=True,
-                    help="Add a follow-up step via AI, custom text, or template"
-                ):
-                    render_add_followup_dialog(
-                        initial_subject=st.session_state.get("compose_subject", ""),
-                        initial_body=st.session_state.get("compose_body_html", ""),
-                        current_followups_count=0,
-                        sample_lead=chosen_lead_obj
-                    )
 
         # Build tabs
         tab_titles = ["📧 Initial Email"] + [
@@ -994,7 +1201,8 @@ def render_compose_tab(contacts=None, templates=None):
                     initial_html=st.session_state.get("compose_body_html", ""),
                     key="compose_rich_editor",
                     height=200,
-                    owner_type="compose"
+                    owner_type="compose",
+                    lead_id=lead_id_str
                 )
             else:
                 current_body = render_dual_mode_editor(
@@ -1044,7 +1252,8 @@ def render_compose_tab(contacts=None, templates=None):
                         initial_html=fu.get("body", ""),
                         key=f"comp_fu_{idx}_rich_editor",
                         height=160,
-                        owner_type="compose_followup"
+                        owner_type="compose_followup",
+                        lead_id=lead_id_str
                     )
                 else:
                     fu["body"] = st.text_area(
@@ -1096,15 +1305,34 @@ def render_compose_tab(contacts=None, templates=None):
         audit          = audit_email_deliverability(body_html=final_body, subject=final_subj, custom_negative_keywords=neg_keywords)
         triggers       = audit.get("detected_spam_words", [])
 
+        spam_policy = (get_config("negative_keywords_action", "") or get_config("spam_policy", "warn") or "warn").strip().lower()
+        is_warn_only = (spam_policy in ["warn", "warn_only"])
+
         if triggers:
-            trig_names = ", ".join(f'"{t.get("word")}"' for t in triggers[:2])
-            st.markdown(
-                f'<div class="spam"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
-                f'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
-                f' {len(triggers)} spam trigger: <b>&nbsp;{trig_names}</b> &nbsp;·&nbsp; edit to enable send</div>',
-                unsafe_allow_html=True
-            )
-            can_send = False
+            trig_names = ", ".join(f'"{t.get("word")}"' for t in triggers)
+            sugg_list = []
+            for t in triggers[:2]:
+                if t.get("suggestions"):
+                    sugg_list.append(f"'{t['word']}' → {', '.join(t['suggestions'][:2])}")
+            sugg_txt = f" (Suggested fixes: {'; '.join(sugg_list)})" if sugg_list else ""
+
+            if is_warn_only:
+                st.markdown(
+                    f'<div class="spam" style="background:#FFFBEB; border:1px solid #F59E0B; color:#92400E; padding:8px 12px; border-radius:6px; margin:8px 0; font-size:12px;">'
+                    f'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#D97706" stroke-width="2" style="vertical-align:middle; margin-right:4px;">'
+                    f'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
+                    f' <b>Deliverability Advisory:</b> {len(triggers)} spam trigger word(s): <b>{trig_names}</b>{sugg_txt} · Warn-only mode (sending permitted)</div>',
+                    unsafe_allow_html=True
+                )
+                can_send = bool((current_lead.get("email") or "").strip())
+            else:
+                st.markdown(
+                    f'<div class="spam"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
+                    f'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
+                    f' {len(triggers)} spam trigger: <b>&nbsp;{trig_names}</b>{sugg_txt} &nbsp;·&nbsp; edit to enable send</div>',
+                    unsafe_allow_html=True
+                )
+                can_send = False
         else:
             can_send = bool((current_lead.get("email") or "").strip())
 
@@ -1135,7 +1363,7 @@ def render_compose_tab(contacts=None, templates=None):
             if st.session_state["compose_followups"]:
                 send_btn_label += f" (+{len(st.session_state['compose_followups'])} FU)"
 
-            if st.button(send_btn_label, type="primary", use_container_width=True, disabled=not can_send):
+            if st.button(send_btn_label, type="primary", use_container_width=True, disabled=not can_send, key="comp_btn_send_now_cta"):
                 if not selected_mb:
                     st.error("No active mailbox configured to send.")
                 else:
@@ -1155,7 +1383,7 @@ def render_compose_tab(contacts=None, templates=None):
             if st.session_state["compose_followups"]:
                 sched_label += f" (+{len(st.session_state['compose_followups'])} FU)"
 
-            if st.button(sched_label, use_container_width=True, disabled=not can_send):
+            if st.button(sched_label, use_container_width=True, disabled=not can_send, key="comp_btn_sched_cta"):
                 if not selected_mb:
                     st.error("No active mailbox configured.")
                 else:
@@ -1254,7 +1482,9 @@ def render_compose_tab(contacts=None, templates=None):
             f'</div>'
         ) if bcc_active_str else ''
 
-        sig_box_html = f'<div class="sig">{signature_html}</div>' if (show_sig_in_preview and signature_html) else ''
+        # Avoid duplicate preview signature if preview_body already contains the signature HTML or branding
+        already_has_sig = (signature_html and signature_html in preview_body) or ("Sellomize Logo" in preview_body) or ("Jack Connor" in preview_body)
+        sig_box_html = f'<div class="sig">{signature_html}</div>' if (show_sig_in_preview and signature_html and not already_has_sig) else ''
 
         preview_box_html = (
             '<div class="preview">'

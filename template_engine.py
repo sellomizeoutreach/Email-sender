@@ -272,6 +272,23 @@ def parse_spintax(text: str) -> str:
 
     return text
 
+_EXEMPT_FREE_PREFIXES = {
+    "fragrance", "sulfate", "gluten", "cruelty", "sugar", "paraben",
+    "alcohol", "chemical", "toxin", "smoke", "hassle", "stress",
+    "duty", "tax", "interest", "lead", "iron", "dairy", "fat",
+    "oil", "grain", "preservative", "odor", "odour", "caffeine",
+    "plastic", "lint", "rust", "leak", "dye", "guilt", "fuss"
+}
+
+def _has_unexempt_free_match(text: str) -> bool:
+    """Check if 'free' occurs without being preceded by a benign qualifier like 'fragrance-free'."""
+    pattern = re.compile(r'(\b[\w\-]+\s+|\b[\w\-]+-)?\bfree\b', re.IGNORECASE)
+    for m in pattern.finditer(text):
+        prefix_token = (m.group(1) or "").strip().rstrip("-").lower()
+        if prefix_token not in _EXEMPT_FREE_PREFIXES:
+            return True
+    return False
+
 def scan_all_negative_keywords(text: str, negative_keywords_str: str) -> List[str]:
     """
     Run a text scan against the saved negative_keywords list.
@@ -286,13 +303,19 @@ def scan_all_negative_keywords(text: str, negative_keywords_str: str) -> List[st
     seen = set()
 
     for kw in keywords:
-        escaped_kw = re.escape(kw)
-        pattern = rf'(?:\b|_){escaped_kw}(?:\b|_)'
-        if re.search(pattern, plain_text, re.IGNORECASE):
-            lower_kw = kw.lower()
-            if lower_kw not in seen:
-                seen.add(lower_kw)
-                detected.append(kw)
+        lower_kw = kw.lower()
+        if lower_kw == "free":
+            if _has_unexempt_free_match(plain_text):
+                if lower_kw not in seen:
+                    seen.add(lower_kw)
+                    detected.append(kw)
+        else:
+            escaped_kw = re.escape(kw)
+            pattern = rf'(?:\b|_){escaped_kw}(?:\b|_)'
+            if re.search(pattern, plain_text, re.IGNORECASE):
+                if lower_kw not in seen:
+                    seen.add(lower_kw)
+                    detected.append(kw)
 
     return detected
 
@@ -361,8 +384,13 @@ def audit_email_deliverability(
     passes = []
     detected_words = []
 
-    # Strip HTML tags
-    clean_body = re.sub(r'<[^>]+>', ' ', body_html or '')
+    # Strip HTML tags while preserving image alt text for deliverability audit (Spec Section 8)
+    def _extract_img_alt(m):
+        alt_match = re.search(r'alt=["\']([^"\']+)["\']', m.group(0), re.IGNORECASE)
+        return f" {alt_match.group(1)} " if alt_match and alt_match.group(1).strip() else " "
+
+    body_with_alts = re.sub(r'<img[^>]*>', _extract_img_alt, body_html or '')
+    clean_body = re.sub(r'<[^>]+>', ' ', body_with_alts)
     full_text = f"{subject} {clean_body}".strip()
 
     # 1. Subject Line Analysis (if provided)
@@ -410,9 +438,13 @@ def audit_email_deliverability(
                 combined_trigger_dict[c_clean] = ["alternative wording", "clean phrasing"]
 
     for trigger, alternatives in combined_trigger_dict.items():
-        escaped = re.escape(trigger)
-        pattern = rf'(?:\b|_){escaped}(?:\b|_)'
-        matches = re.findall(pattern, full_text, re.IGNORECASE)
+        if trigger.lower() == "free":
+            matches = [m.group(0) for m in re.finditer(r'(\b[\w\-]+\s+|\b[\w\-]+-)?\bfree\b', full_text, re.IGNORECASE)
+                       if (m.group(1) or "").strip().rstrip("-").lower() not in _EXEMPT_FREE_PREFIXES]
+        else:
+            escaped = re.escape(trigger)
+            pattern = rf'(?:\b|_){escaped}(?:\b|_)'
+            matches = re.findall(pattern, full_text, re.IGNORECASE)
         if matches and trigger not in found_triggers:
             found_triggers.add(trigger)
             count = len(matches)
@@ -585,9 +617,16 @@ _TOKEN_RE = re.compile(r'\[([a-zA-Z0-9_\s\-]+)\]')
 
 
 def _missing_tokens(text: str) -> List[str]:
-    """Return list of unfilled [Token] placeholders remaining in text."""
+    """Return list of unfilled [Token] placeholders remaining in text, excluding image references."""
     if not text:
         return []
-    return list({f"[{m.group(1).strip()}]" for m in _TOKEN_RE.finditer(text)})
+    missing = set()
+    for m in _TOKEN_RE.finditer(text):
+        inner = m.group(1).strip()
+        # Ignore image placeholders like [Image 1], [Image 2], etc.
+        if re.match(r'^Image\s+\d+$', inner, re.IGNORECASE):
+            continue
+        missing.add(f"[{inner}]")
+    return list(missing)
 
 

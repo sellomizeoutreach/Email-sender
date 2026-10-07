@@ -29,6 +29,7 @@ from database import (
 from timezone_helper import get_engine_now, get_engine_now_str
 from scheduler import dispatch_email_hostinger, run_scheduler_cycle
 from ui.editor import render_dual_mode_editor
+from ui.rich_editor import render_rich_editor, is_rich_editor_enabled
 from ui.components import trigger_toast
 
 
@@ -52,7 +53,7 @@ def format_outreach_timestamp(raw_ts: Optional[str], sched_ts: Optional[str] = N
 # ---------------------------------------------------------------------------
 # Dialog: View Sent Outreach Details & Tracking
 # ---------------------------------------------------------------------------
-@st.dialog("👁️ Sent Outreach Details & Tracking")
+@st.dialog("👁️ Sent Outreach Details & Tracking", width="large")
 def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional[Dict[str, Any]] = None):
     """Modal dialog displaying exact sent body HTML, delivery metadata, and real-time engagement telemetry."""
     eid = email_record["id"]
@@ -70,17 +71,38 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
     is_bounced = int(email_record.get("is_bounced") or 0) == 1
     bounce_reason = email_record.get("bounce_reason") or ""
     body_html = email_record.get("email_html") or ""
+    bcc_str = (email_record.get("bcc_email") or "").strip()
 
-    st.markdown(f"#### Outreach #OUT-{eid:04d}")
-    st.markdown(f"**Subject:** *{html.escape(subj)}*")
-    st.caption(f"**To:** {recip} · **Mailbox:** {html.escape(mailbox)} · **Delivered:** {sent_time}")
+    lead_display = (matched_lead.get("name") if matched_lead else "") or recip
+    company_display = (matched_lead.get("company") if matched_lead else "") or ""
 
-    # Engagement summary telemetry
+    # Modern Email Client Header
+    bcc_line = f" · <span style='color:#64748B;'>BCC:</span> <span style='font-family:monospace; color:#083731;'>{html.escape(bcc_str)}</span>" if bcc_str else ""
+    comp_badge = f" <span style='background:#E0F2FE; color:#0369A1; font-weight:600; padding:2px 6px; border-radius:4px; font-size:11px; margin-left:6px;'>{html.escape(company_display)}</span>" if company_display else ""
+
+    st.markdown(
+        f'<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:12px 16px; margin-bottom:12px;">'
+        f'<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">'
+        f'<span style="font-size:11px; font-weight:700; color:#0F766E; text-transform:uppercase; letter-spacing:0.5px;">Outreach #OUT-{eid:04d}</span>'
+        f'<span style="font-size:11px; color:#64748B;">📅 {sent_time}</span>'
+        f'</div>'
+        f'<div style="font-size:15px; font-weight:700; color:#083731; margin-bottom:6px;">{html.escape(subj)}</div>'
+        f'<div style="font-size:12px; color:#334155;">'
+        f'<b>To:</b> {html.escape(lead_display)} &lt;<span style="font-family:monospace;">{html.escape(recip)}</span>&gt;{comp_badge}'
+        f'</div>'
+        f'<div style="font-size:12px; color:#475569; margin-top:2px;">'
+        f'<b>From:</b> <span style="font-family:monospace; color:#083731;">{html.escape(mailbox)}</span>{bcc_line}'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # Engagement summary telemetry badges
     c_op, c_clk, c_rep = st.columns(3)
     with c_op:
         if open_count > 0 or opened_at:
             op_html = (
-                f'<div style="background:#ECFDF5; border:1px solid #A7F3D0; border-radius:6px; padding:8px 10px;">'
+                f'<div style="background:#ECFDF5; border:1px solid #A7F3D0; border-radius:8px; padding:8px 12px;">'
                 f'<b style="color:#065F46; font-size:13px;">👁️ Opened ({open_count}x)</b>'
                 f'<div style="font-size:11px; color:#047857; margin-top:2px;">Last: {opened_at[:16]}</div>'
                 f'</div>'
@@ -88,7 +110,7 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
             st.markdown(op_html, unsafe_allow_html=True)
         else:
             unop_html = (
-                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">'
+                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:8px 12px;">'
                 '<b style="color:#64748B; font-size:13px;">⏳ Unopened</b>'
                 '<div style="font-size:11px; color:#94A3B8; margin-top:2px;">No opens detected yet</div>'
                 '</div>'
@@ -98,7 +120,7 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
     with c_clk:
         if click_count > 0:
             clk_html = (
-                f'<div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:6px; padding:8px 10px;">'
+                f'<div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:8px 12px;">'
                 f'<b style="color:#1D4ED8; font-size:13px;">🔗 Clicked ({click_count}x)</b>'
                 f'<div style="font-size:11px; color:#1E40AF; margin-top:2px;">Last: {clicked_at[:16]}</div>'
                 f'</div>'
@@ -106,7 +128,7 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
             st.markdown(clk_html, unsafe_allow_html=True)
         else:
             noc_html = (
-                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">'
+                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:8px 12px;">'
                 '<b style="color:#64748B; font-size:13px;">🔗 0 Clicks</b>'
                 '<div style="font-size:11px; color:#94A3B8; margin-top:2px;">No link clicks</div>'
                 '</div>'
@@ -116,40 +138,41 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
     with c_rep:
         if replied_at:
             rep_html = (
-                f'<div style="background:#FEF3C7; border:1px solid #FDE68A; border-radius:6px; padding:8px 10px;">'
+                f'<div style="background:#FEF3C7; border:1px solid #FDE68A; border-radius:8px; padding:8px 12px;">'
                 f'<b style="color:#B45309; font-size:13px;">💬 Replied</b>'
                 f'<div style="font-size:11px; color:#92400E; margin-top:2px;">Received: {replied_at[:16]}</div>'
                 f'</div>'
             )
             st.markdown(rep_html, unsafe_allow_html=True)
         elif is_bounced:
+            bnc_reason_full = html.escape(str(bounce_reason or "Mailbox rejected or invalid recipient domain").strip())
             bnc_html = (
-                f'<div style="background:#FEE2E2; border:1px solid #FECACA; border-radius:6px; padding:8px 10px;">'
+                f'<div style="background:#FEE2E2; border:1px solid #FECACA; border-radius:8px; padding:10px 14px;" title="Bounce Reason: {bnc_reason_full}">'
                 f'<b style="color:#991B1B; font-size:13px;">⚠️ Bounced</b>'
-                f'<div style="font-size:11px; color:#7F1D1D; margin-top:2px;">{html.escape(bounce_reason[:28])}</div>'
+                f'<div style="font-size:11px; color:#7F1D1D; margin-top:3px; word-break:break-word;">{html.escape(bounce_reason[:75])}</div>'
                 f'</div>'
             )
             st.markdown(bnc_html, unsafe_allow_html=True)
         else:
             nor_html = (
-                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px;">'
+                '<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:8px 12px;">'
                 '<b style="color:#64748B; font-size:13px;">💬 No Reply</b>'
                 '<div style="font-size:11px; color:#94A3B8; margin-top:2px;">Follow-up eligible</div>'
                 '</div>'
             )
             st.markdown(nor_html, unsafe_allow_html=True)
 
-    st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:12px 0 8px;'>", unsafe_allow_html=True)
-    st.markdown("<span style='font-size:12px; font-weight:700; color:#083731; text-transform:uppercase;'>Delivered Email Content</span>", unsafe_allow_html=True)
+    # Email Body Content Viewer (Spacious, elegant reading viewport)
+    st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
     st.markdown(
-        f"<div style='border:1px solid #E2E8F0; border-radius:8px; padding:12px 14px; background:#FFFFFF; max-height:220px; overflow-y:auto; font-size:13px; line-height:1.5; color:#1E293B;'>"
-        f"{body_html}"
-        f"</div>",
+        f'<div style="border:1px solid #CBD5E1; border-radius:10px; padding:22px 26px; background:#FFFFFF; min-height:260px; max-height:540px; overflow-y:auto; font-size:14.5px; line-height:1.65; color:#0F172A; box-shadow:0 1px 4px rgba(0,0,0,0.04); font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, Helvetica, Arial, sans-serif;">'
+        f'{body_html}'
+        f'</div>',
         unsafe_allow_html=True
     )
 
-    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-    b1, b2, b3, b4 = st.columns(4)
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+    b1, b2, b3, b4 = st.columns(4, vertical_alignment="center")
     with b1:
         if st.button("↩️ Quick Follow-Up", type="primary", use_container_width=True, key=f"dlg_fu_{eid}"):
             st.session_state["compose_recipient"] = recip
@@ -185,9 +208,9 @@ def render_view_sent_dialog(email_record: Dict[str, Any], matched_lead: Optional
 
 
 # ---------------------------------------------------------------------------
-# Dialog: Edit Scheduled Outreach
+# Dialog: Edit Outreach / Draft
 # ---------------------------------------------------------------------------
-@st.dialog("✏️ Edit Scheduled Outreach", width="large")
+@st.dialog("✏️ Edit Outreach Message", width="large")
 def render_edit_email_dialog(email_record: Dict[str, Any]):
     """Modal dialog to edit subject, recipient, scheduled date/time, mailbox, and email body with live rendered preview."""
     eid = email_record["id"]
@@ -196,6 +219,8 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
     current_sched = email_record.get("scheduled_time") or ""
     current_html = email_record.get("email_html") or ""
     current_mb_id = email_record.get("smtp_account_id")
+    current_status = email_record.get("status") or "Scheduled"
+    is_draft_item = current_status in ["Draft", "Pending"]
 
     all_mailboxes = get_smtp_accounts(active_only=True)
 
@@ -215,7 +240,17 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
         current_subj = inject_variables(parse_spintax(current_subj), lead_match)
         current_html = inject_variables(current_html, lead_match)
 
-    st.markdown(f"#### Edit Outreach #OUT-{eid:04d}")
+    status_badge_color = "#FEF3C7" if is_draft_item else "#ECFDF5"
+    status_text_color = "#92400E" if is_draft_item else "#065F46"
+    status_title = "Draft" if is_draft_item else current_status
+
+    st.markdown(
+        f'<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #E2E8F0;">'
+        f'<div style="font-size:17px; font-weight:800; color:#083731;">Edit Outreach #OUT-{eid:04d}</div>'
+        f'<span style="background:{status_badge_color}; color:{status_text_color}; font-size:12px; font-weight:700; padding:3px 10px; border-radius:12px; border:1px solid #CBD5E1;">{status_title}</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
     tab_edit, tab_preview = st.tabs(["✏️ Edit Message", "📨 Live Final Preview"])
 
@@ -246,14 +281,23 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
         with c_date:
             new_date = st.date_input("Scheduled Date", value=dt_val.date(), key=f"edit_date_{eid}")
         with c_time:
-            new_time = st.time_input("Scheduled Time (UTC+5)", value=dt_val.time(), key=f"edit_time_{eid}")
+            new_time = st.time_input("Scheduled Time (UTC+5)", value=dt_val.time(), step=60, key=f"edit_time_{eid}")
 
         st.markdown("<span class='lbl' style='margin-top:6px;'>Email Body Content</span>", unsafe_allow_html=True)
-        new_body = render_dual_mode_editor(
-            key_prefix=f"edit_outbox_{eid}",
-            initial_content=current_html,
-            height=220
-        )
+        if is_rich_editor_enabled():
+            new_body = render_rich_editor(
+                initial_html=current_html,
+                key=f"edit_outbox_rich_{eid}",
+                height=320,
+                owner_type="outbox_edit",
+                lead_id=str(lead_match.get("id") or current_recip) if lead_match else None
+            )
+        else:
+            new_body = render_dual_mode_editor(
+                key_prefix=f"edit_outbox_{eid}",
+                initial_content=current_html,
+                height=300
+            )
 
     with tab_preview:
         sender_display = chosen_mb_label if all_mailboxes else "Default Mailbox"
@@ -275,8 +319,8 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
         combined_sched_str = f"{new_date.strftime('%Y-%m-%d')} {new_time.strftime('%H:%M:%S')} (UTC+5)"
 
         preview_card_html = (
-            f'<div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:13px; line-height:1.5;">'
-            f'<div style="color:#083731; font-weight:700; font-size:14px; margin-bottom:6px; border-bottom:1px solid #E2E8F0; padding-bottom:6px;">'
+            f'<div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:12px 16px; margin-bottom:12px; font-size:13px; line-height:1.5;">'
+            f'<div style="color:#083731; font-weight:700; font-size:15px; margin-bottom:6px; border-bottom:1px solid #E2E8F0; padding-bottom:6px;">'
             f'Subject: {html.escape(new_subj.strip() or "(No Subject)")}'
             f'</div>'
             f'<div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px; color:#334155; margin-bottom:4px;">'
@@ -288,7 +332,7 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
             f'</div>'
             f'{bcc_row}'
             f'</div>'
-            f'<div class="preview" style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:18px 20px; font-size:14px; line-height:1.6; color:#1E293B; max-height:400px; overflow-y:auto; box-shadow:0 1px 3px rgba(0,0,0,0.05);">'
+            f'<div class="preview" style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:22px 26px; font-size:14.5px; line-height:1.65; color:#1E293B; min-height:240px; max-height:480px; overflow-y:auto; box-shadow:0 1px 4px rgba(0,0,0,0.05); font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, Helvetica, Arial, sans-serif;">'
             f'{safe_preview_html}'
             f'</div>'
             f'<div class="banner banner-info" style="margin-top:10px; font-size:12px;">'
@@ -298,56 +342,142 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
         st.markdown(preview_card_html, unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
-    btn_save, btn_send_now = st.columns(2)
-    with btn_save:
-        if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_{eid}"):
-            combined_dt = datetime.combine(new_date, new_time)
-            sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
-            update_email(
-                email_id=eid,
-                recipient=new_recip.strip(),
-                subject=new_subj.strip(),
-                email_html=new_body,
-                scheduled_time=sched_str,
-                smtp_account_id=chosen_mb_id,
-                bcc_email=new_bcc.strip()
-            )
-            # Clear editor session state for clean re-open
-            st.session_state.pop(f"edit_outbox_{eid}_body_html", None)
-            st.session_state.pop(f"edit_outbox_{eid}_visual_textarea", None)
-            st.session_state.pop(f"edit_outbox_{eid}_last_synced_html", None)
-            trigger_toast(f"Email #OUT-{eid:04d} updated!", icon="💾")
-            st.rerun()
+    if is_draft_item:
+        btn_save, btn_sched, btn_send_now = st.columns(3)
+        with btn_save:
+            if st.button("💾 Save Draft", type="primary", use_container_width=True, key=f"save_edit_{eid}"):
+                combined_dt = datetime.combine(new_date, new_time)
+                sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                update_email(
+                    email_id=eid,
+                    recipient=new_recip.strip(),
+                    subject=new_subj.strip(),
+                    email_html=new_body,
+                    scheduled_time=sched_str,
+                    smtp_account_id=chosen_mb_id,
+                    bcc_email=new_bcc.strip()
+                )
+                for k in [
+                    f"edit_outbox_{eid}_body_html", f"edit_outbox_{eid}_visual_textarea", f"edit_outbox_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_html_content", f"edit_outbox_rich_{eid}_visual_textarea", f"edit_outbox_rich_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_img_map", f"edit_outbox_rich_{eid}_edit_mode"
+                ]:
+                    st.session_state.pop(k, None)
+                trigger_toast(f"Draft #OUT-{eid:04d} saved!", icon="💾")
+                st.rerun()
 
-    with btn_send_now:
-        if st.button("🚀 Send Immediately", use_container_width=True, key=f"send_edit_{eid}"):
-            combined_dt = datetime.combine(new_date, new_time)
-            sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
-            update_email(
-                email_id=eid,
-                recipient=new_recip.strip(),
-                subject=new_subj.strip(),
-                email_html=new_body,
-                scheduled_time=sched_str,
-                smtp_account_id=chosen_mb_id,
-                bcc_email=new_bcc.strip()
-            )
-            st.session_state.pop(f"edit_outbox_{eid}_body_html", None)
-            st.session_state.pop(f"edit_outbox_{eid}_visual_textarea", None)
-            st.session_state.pop(f"edit_outbox_{eid}_last_synced_html", None)
-            updated_rec = get_email_by_id(eid)
-            with st.spinner("Dispatching via Hostinger..."):
-                try:
-                    ok = dispatch_email_hostinger(updated_rec)
-                    if ok:
-                        trigger_toast(f"Sent email to {new_recip.strip()}!", icon="🚀")
-                        st.rerun()
-                    else:
-                        updated_e = get_email_by_id(eid)
-                        err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox settings."
-                        st.error(f"Dispatch failed: {err_reason}")
-                except Exception as ex:
-                    st.error(f"Dispatch exception: {ex}")
+        with btn_sched:
+            if st.button("🕒 Schedule Send", use_container_width=True, key=f"sched_draft_btn_{eid}"):
+                combined_dt = datetime.combine(new_date, new_time)
+                sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                update_email(
+                    email_id=eid,
+                    recipient=new_recip.strip(),
+                    subject=new_subj.strip(),
+                    email_html=new_body,
+                    scheduled_time=sched_str,
+                    status="Approved",
+                    smtp_account_id=chosen_mb_id,
+                    bcc_email=new_bcc.strip()
+                )
+                for k in [
+                    f"edit_outbox_{eid}_body_html", f"edit_outbox_{eid}_visual_textarea", f"edit_outbox_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_html_content", f"edit_outbox_rich_{eid}_visual_textarea", f"edit_outbox_rich_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_img_map", f"edit_outbox_rich_{eid}_edit_mode"
+                ]:
+                    st.session_state.pop(k, None)
+                trigger_toast(f"Draft scheduled for {sched_str[:16]}!", icon="🕒")
+                st.rerun()
+
+        with btn_send_now:
+            if st.button("🚀 Send Immediately", use_container_width=True, key=f"send_edit_{eid}"):
+                combined_dt = datetime.combine(new_date, new_time)
+                sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                update_email(
+                    email_id=eid,
+                    recipient=new_recip.strip(),
+                    subject=new_subj.strip(),
+                    email_html=new_body,
+                    scheduled_time=sched_str,
+                    status="Approved",
+                    smtp_account_id=chosen_mb_id,
+                    bcc_email=new_bcc.strip()
+                )
+                for k in [
+                    f"edit_outbox_{eid}_body_html", f"edit_outbox_{eid}_visual_textarea", f"edit_outbox_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_html_content", f"edit_outbox_rich_{eid}_visual_textarea", f"edit_outbox_rich_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_img_map", f"edit_outbox_rich_{eid}_edit_mode"
+                ]:
+                    st.session_state.pop(k, None)
+                updated_rec = get_email_by_id(eid)
+                with st.spinner("Dispatching via Hostinger..."):
+                    try:
+                        ok = dispatch_email_hostinger(updated_rec)
+                        if ok:
+                            trigger_toast(f"Sent email to {new_recip.strip()}!", icon="🚀")
+                            st.rerun()
+                        else:
+                            updated_e = get_email_by_id(eid)
+                            err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox settings."
+                            st.error(f"Dispatch failed: {err_reason}")
+                    except Exception as ex:
+                        st.error(f"Dispatch exception: {ex}")
+    else:
+        btn_save, btn_send_now = st.columns(2)
+        with btn_save:
+            if st.button("💾 Save Changes", type="primary", use_container_width=True, key=f"save_edit_{eid}"):
+                combined_dt = datetime.combine(new_date, new_time)
+                sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                update_email(
+                    email_id=eid,
+                    recipient=new_recip.strip(),
+                    subject=new_subj.strip(),
+                    email_html=new_body,
+                    scheduled_time=sched_str,
+                    smtp_account_id=chosen_mb_id,
+                    bcc_email=new_bcc.strip()
+                )
+                for k in [
+                    f"edit_outbox_{eid}_body_html", f"edit_outbox_{eid}_visual_textarea", f"edit_outbox_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_html_content", f"edit_outbox_rich_{eid}_visual_textarea", f"edit_outbox_rich_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_img_map", f"edit_outbox_rich_{eid}_edit_mode"
+                ]:
+                    st.session_state.pop(k, None)
+                trigger_toast(f"Email #OUT-{eid:04d} updated!", icon="💾")
+                st.rerun()
+
+        with btn_send_now:
+            if st.button("🚀 Send Immediately", use_container_width=True, key=f"send_edit_{eid}"):
+                combined_dt = datetime.combine(new_date, new_time)
+                sched_str = combined_dt.strftime("%Y-%m-%d %H:%M:%S")
+                update_email(
+                    email_id=eid,
+                    recipient=new_recip.strip(),
+                    subject=new_subj.strip(),
+                    email_html=new_body,
+                    scheduled_time=sched_str,
+                    smtp_account_id=chosen_mb_id,
+                    bcc_email=new_bcc.strip()
+                )
+                for k in [
+                    f"edit_outbox_{eid}_body_html", f"edit_outbox_{eid}_visual_textarea", f"edit_outbox_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_html_content", f"edit_outbox_rich_{eid}_visual_textarea", f"edit_outbox_rich_{eid}_last_synced_html",
+                    f"edit_outbox_rich_{eid}_img_map", f"edit_outbox_rich_{eid}_edit_mode"
+                ]:
+                    st.session_state.pop(k, None)
+                updated_rec = get_email_by_id(eid)
+                with st.spinner("Dispatching via Hostinger..."):
+                    try:
+                        ok = dispatch_email_hostinger(updated_rec)
+                        if ok:
+                            trigger_toast(f"Sent email to {new_recip.strip()}!", icon="🚀")
+                            st.rerun()
+                        else:
+                            updated_e = get_email_by_id(eid)
+                            err_reason = (updated_e.get("error_message") if updated_e else "") or "Check mailbox settings."
+                            st.error(f"Dispatch failed: {err_reason}")
+                    except Exception as ex:
+                        st.error(f"Dispatch exception: {ex}")
 
 
 # ---------------------------------------------------------------------------
@@ -392,29 +522,36 @@ def render_outbox_tab():
     all_leads = get_contacts()
     lead_map = {c.get("email", "").lower().strip(): c for c in all_leads if c.get("email")}
 
-    # Main Filter Pills: Scheduled | Sent | Paused / failed
+    # Main Filter Pills: Drafts | Scheduled | Sent | Paused / failed
     if "outbox_filter" not in st.session_state:
         st.session_state["outbox_filter"] = "Scheduled"
 
     # Count items for main tabs
-    scheduled_count = sum(1 for e in all_emails if e.get("status") in ["Approved", "Pending", "Scheduled"])
-    sent_count = sum(1 for e in all_emails if e.get("status") == "Sent")
-    paused_failed_count = sum(1 for e in all_emails if e.get("status") in ["Paused", "Failed", "Bounced", "Cancelled"])
+    drafts_count = sum(1 for e in all_emails if e.get("status") in ["Draft", "Pending"])
+    scheduled_count = sum(1 for e in all_emails if e.get("status") in ["Approved", "Scheduled"])
+    sent_count = sum(1 for e in all_emails if e.get("status") == "Sent" and int(e.get("is_bounced") or 0) == 0)
+    paused_failed_count = sum(1 for e in all_emails if e.get("status") in ["Paused", "Failed", "Bounced", "Cancelled", "Error"] or int(e.get("is_bounced") or 0) == 1)
 
-    fp_col1, fp_col2, fp_col3, _ = st.columns([1.3, 1.2, 1.5, 3.5], vertical_alignment="center")
+    fp_col1, fp_col2, fp_col3, fp_col4, _ = st.columns([1.3, 1.4, 1.2, 1.6, 2.5], vertical_alignment="center")
     with fp_col1:
+        is_draft = st.session_state["outbox_filter"] == "Drafts"
+        if st.button(f"📝 Drafts ({drafts_count})", key="outbox_pill_drafts", type="primary" if is_draft else "secondary", use_container_width=True):
+            st.session_state["outbox_filter"] = "Drafts"
+            st.rerun()
+
+    with fp_col2:
         is_sched = st.session_state["outbox_filter"] == "Scheduled"
         if st.button(f"🕒 Scheduled ({scheduled_count})", key="outbox_pill_sched", type="primary" if is_sched else "secondary", use_container_width=True):
             st.session_state["outbox_filter"] = "Scheduled"
             st.rerun()
 
-    with fp_col2:
+    with fp_col3:
         is_sent = st.session_state["outbox_filter"] == "Sent"
         if st.button(f"📬 Sent ({sent_count})", key="outbox_pill_sent", type="primary" if is_sent else "secondary", use_container_width=True):
             st.session_state["outbox_filter"] = "Sent"
             st.rerun()
 
-    with fp_col3:
+    with fp_col4:
         is_pf = st.session_state["outbox_filter"] == "Paused / failed"
         if st.button(f"⏸️ Paused / failed ({paused_failed_count})", key="outbox_pill_pf", type="primary" if is_pf else "secondary", use_container_width=True):
             st.session_state["outbox_filter"] = "Paused / failed"
@@ -531,17 +668,20 @@ def render_outbox_tab():
                 st.rerun()
 
         # ── 3. Search and Secondary Filters Bar ──
-        sf1, sf2, sf3, sf4, sf5 = st.columns([2.5, 1.4, 1.2, 1.3, 1.1], vertical_alignment="bottom")
+        sf1, sf2, sf3, sf4, sf5, sf6 = st.columns([2.3, 1.3, 1.2, 1.2, 1.2, 0.9], vertical_alignment="bottom")
         with sf1:
             search_query = st.text_input("Search Outreach", placeholder="Recipient, subject, lead, company...", key="sent_search_input", label_visibility="collapsed")
         with sf2:
+            touch_type_opts = ["All Types", "📧 Initial Only", "↩️ Follow-ups Only"]
+            sel_touch = st.selectbox("Touch Type", touch_type_opts, key="sent_sel_touch", label_visibility="collapsed")
+        with sf3:
             unique_mbs = sorted(list(set([e.get("sent_via") or "Hostinger" for e in sent_items if e.get("sent_via")])))
             mb_opts = ["All Mailboxes"] + unique_mbs
             sel_mb = st.selectbox("Mailbox", mb_opts, key="sent_sel_mb", label_visibility="collapsed")
-        with sf3:
-            time_opts = ["All Time", "Today", "Last 7 Days", "Last 30 Days"]
-            sel_time = st.selectbox("Timeframe", time_opts, key="sent_sel_time", label_visibility="collapsed")
         with sf4:
+            time_opts = ["All Time", "⚡ Sent Today", "Last 7 Days", "Last 30 Days"]
+            sel_time = st.selectbox("Timeframe", time_opts, key="sent_sel_time", label_visibility="collapsed")
+        with sf5:
             sort_opts = ["Newest Sent First", "Oldest Sent First", "Most Opens First", "Recipient (A-Z)"]
             sel_sort = st.selectbox("Sort", sort_opts, key="sent_sel_sort", label_visibility="collapsed")
 
@@ -565,6 +705,14 @@ def render_outbox_tab():
             if cur_stat_f == "Bounced" and status_tag != "Bounced":
                 continue
 
+            # Match Touch Type filter (Initial vs Follow-ups)
+            var_num = e.get("variation_num") or 1
+            is_reply = bool(e.get("in_reply_to")) or (e.get("sequence_step") or 1) > 1 or var_num > 1
+            if sel_touch == "📧 Initial Only" and is_reply:
+                continue
+            if sel_touch == "↩️ Follow-ups Only" and not is_reply:
+                continue
+
             # Match mailbox
             if sel_mb != "All Mailboxes" and (e.get("sent_via") or "Hostinger") != sel_mb:
                 continue
@@ -575,7 +723,7 @@ def render_outbox_tab():
                 try:
                     s_dt = datetime.strptime(sent_str[:10], "%Y-%m-%d")
                     diff_days = (now_dt.date() - s_dt.date()).days
-                    if sel_time == "Today" and diff_days > 0:
+                    if sel_time == "⚡ Sent Today" and diff_days > 0:
                         continue
                     if sel_time == "Last 7 Days" and diff_days > 7:
                         continue
@@ -606,7 +754,7 @@ def render_outbox_tab():
             filtered_sent.sort(key=lambda x: (x[0].get("recipient") or "").lower())
 
         # ── 5. CSV Export ──
-        with sf5:
+        with sf6:
             csv_buf = io.StringIO()
             csv_writer = csv.writer(csv_buf)
             csv_writer.writerow([
@@ -670,11 +818,18 @@ def render_outbox_tab():
                 click_count = int(e.get("click_count") or 0)
                 pill_html = f'<span class="pill" style="background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; font-weight:700;">🔗 Clicked ({click_count}x)</span>'
             elif status_tag == "Bounced":
-                pill_html = f'<span class="pill" style="background:#FEE2E2; color:#991B1B; border:1px solid #FECACA; font-weight:700;">⚠️ Bounced</span>'
+                bounce_reason = e.get("error_message") or (matched_lead.get("notes") if matched_lead else "") or "Delivery failed / mailbox unavailable or rejected."
+                bounce_tooltip = html.escape(f"Bounce Reason: {bounce_reason}")
+                pill_html = f'<span class="pill" title="{bounce_tooltip}" style="background:#FEE2E2; color:#991B1B; border:1px solid #FECACA; font-weight:700; cursor:help;">⚠️ Bounced</span>'
             else:
                 pill_html = f'<span class="pill" style="background:#F1F5F9; color:#64748B; border:1px solid #CBD5E1; font-weight:600;">⏳ Unopened</span>'
 
             subj_clean = html.escape((e.get('subject') or 'No Subject')[:65])
+            bounce_notice_html = ""
+            if status_tag == "Bounced":
+                b_reason_display = html.escape(e.get("error_message") or "Mailbox rejected or bounced.")
+                bounce_notice_html = f'<div style="font-size:11px; color:#991B1B; background:#FEF2F2; padding:3px 8px; border-radius:4px; margin-top:4px; border:1px solid #FCA5A5;">💬 <b>Bounce Reason:</b> {b_reason_display}</div>'
+
             card_html = (
                 f'<div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">'
                 f'<div style="flex:2.2; min-width:0;">'
@@ -682,6 +837,7 @@ def render_outbox_tab():
                 f'<span style="font-size:12px; color:#64748B; margin-left:6px;">{html.escape(recip)}</span>'
                 f'{company_display}'
                 f'<div style="font-size:12px; color:#334155; margin-top:2px;">{subj_clean}</div>'
+                f'{bounce_notice_html}'
                 f'</div>'
                 f'<div style="flex:1.1; font-size:12px; color:#475569;">'
                 f'<b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mb_clean)}</span>'
@@ -736,12 +892,130 @@ def render_outbox_tab():
         return
 
     # =========================================================================
+    # TAB: DRAFTS QUEUE
+    # =========================================================================
+    if current_filter == "Drafts":
+        draft_items = [e for e in all_emails if e.get("status") in ["Draft", "Pending"]]
+
+        # Drafts filter bar
+        df_c1, df_c2, df_c3 = st.columns([2.5, 1.5, 1.2], vertical_alignment="center")
+        with df_c1:
+            draft_search = st.text_input("🔍 Search drafts...", placeholder="Recipient, subject, or domain", label_visibility="collapsed", key="outbox_draft_search").strip().lower()
+        with df_c2:
+            draft_touch_filter = st.selectbox("Touch Type", ["All Types", "📧 Initial Only", "↩️ Follow-ups Only"], label_visibility="collapsed", key="outbox_draft_touch")
+        with df_c3:
+            draft_sort = st.selectbox("Sort", ["Newest First", "Oldest First"], label_visibility="collapsed", key="outbox_draft_sort")
+
+        filtered_drafts = []
+        for e in draft_items:
+            recip = (e.get("recipient") or "").lower()
+            subj = (e.get("subject") or "").lower()
+            if draft_search and (draft_search not in recip and draft_search not in subj):
+                continue
+
+            var_num = e.get("variation_num") or 1
+            is_reply = bool(e.get("in_reply_to"))
+            is_fu = is_reply or var_num > 1
+            if draft_touch_filter == "📧 Initial Only" and is_fu:
+                continue
+            if draft_touch_filter == "↩️ Follow-ups Only" and not is_fu:
+                continue
+            filtered_drafts.append(e)
+
+        if draft_sort == "Oldest First":
+            filtered_drafts.reverse()
+
+        if not filtered_drafts:
+            if not draft_items:
+                st.info("📝 No drafts saved. Drafts saved from **Compose** or created in bulk will appear here.")
+            else:
+                st.info("🔍 No drafts match the current filter.")
+            return
+
+        st.markdown(f"<div style='font-size:12px; color:#64748B; margin-bottom:8px;'>Showing {len(filtered_drafts)} saved draft(s):</div>", unsafe_allow_html=True)
+
+        for e in filtered_drafts:
+            eid = e["id"]
+            recipient = (e.get("recipient") or "No recipient").strip()
+            matched_lead = lead_map.get(recipient.lower())
+            lead_display = matched_lead.get("name") if (matched_lead and matched_lead.get("name")) else recipient
+            company_display = f" · <span style='color:#0F766E;'>{html.escape(matched_lead.get('company'))}</span>" if (matched_lead and matched_lead.get("company")) else ""
+
+            var_num = e.get("variation_num") or 1
+            is_reply = bool(e.get("in_reply_to"))
+            touch_label = f"Follow-up {max(1, var_num - 1)}" if (is_reply or var_num > 1) else "Initial"
+
+            sent_via = e.get("sent_via") or ""
+            mailbox_display = sent_via.split("@")[0] + "@" if "@" in sent_via else (sent_via or "Hostinger")
+
+            saved_time = format_outreach_timestamp(e.get("updated_at") or e.get("created_at"), None)
+            pill_html = '<span class="pill" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; font-weight:700;">📝 Draft</span>'
+
+            subj_clean = html.escape((e.get('subject') or 'No Subject')[:60])
+            card_html = (
+                f'<div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">'
+                f'<div style="flex:2.2; min-width:0;">'
+                f'<strong style="color:#083731; font-size:14px;">{html.escape(lead_display)}</strong>'
+                f'<span style="font-size:12px; color:#64748B; margin-left:8px;">{html.escape(recipient)}</span>'
+                f'{company_display}'
+                f'<div style="font-size:12px; color:#334155; margin-top:2px;">{subj_clean}</div>'
+                f'</div>'
+                f'<div style="flex:1; font-size:12px; color:#475569;">'
+                f'<b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mailbox_display)}</span>'
+                f'</div>'
+                f'<div style="flex:1.2; font-size:12px; color:#64748B;">'
+                f'Saved {saved_time}'
+                f'</div>'
+                f'<div style="flex:0.8; text-align:right;">'
+                f'{pill_html}'
+                f'</div>'
+                f'</div>'
+            )
+
+            with st.container():
+                st.markdown(card_html, unsafe_allow_html=True)
+                d_c1, d_c2, d_c3, d_c4, _ = st.columns([1, 1, 1, 1, 2], vertical_alignment="center")
+                with d_c1:
+                    if st.button("✏️ Edit", key=f"draft_edit_{eid}", use_container_width=True):
+                        render_edit_email_dialog(e)
+                with d_c2:
+                    if st.button("🚀 Send now", key=f"draft_send_{eid}", use_container_width=True, type="primary"):
+                        with st.spinner("Dispatching draft..."):
+                            try:
+                                ok = dispatch_email_hostinger(e)
+                                if ok:
+                                    trigger_toast(f"Dispatched email to {recipient}!", icon="🚀")
+                                    st.rerun()
+                                else:
+                                    updated_e = get_email_by_id(eid)
+                                    err_reason = (updated_e.get("error_message") if updated_e else "") or "Unknown error"
+                                    st.error(f"Dispatch failed: {err_reason}")
+                            except Exception as ex:
+                                st.error(f"Dispatch exception: {ex}")
+                with d_c3:
+                    if st.button("🕒 Schedule", key=f"draft_sched_{eid}", use_container_width=True, help="Move draft into Scheduled outbox queue"):
+                        update_email(email_id=eid, status="Approved")
+                        trigger_toast(f"Draft #{eid} moved to Scheduled queue!", icon="🕒")
+                        st.rerun()
+                with d_c4:
+                    if st.button("🗑️ Delete", key=f"draft_del_{eid}", use_container_width=True):
+                        delete_email(eid)
+                        trigger_toast(f"Draft #{eid} deleted.", icon="🗑️")
+                        st.rerun()
+
+        return
+
+    # =========================================================================
     # TAB: SCHEDULED & PAUSED / FAILED QUEUES
     # =========================================================================
     if current_filter == "Scheduled":
-        items = [e for e in all_emails if e.get("status") in ["Approved", "Pending", "Scheduled"]]
+        items = [e for e in all_emails if e.get("status") in ["Approved", "Scheduled"]]
     else:
-        items = [e for e in all_emails if e.get("status") in ["Paused", "Failed", "Bounced", "Cancelled"]]
+        items = [
+            e for e in all_emails
+            if e.get("status") in ["Paused", "Failed", "Bounced", "Cancelled", "Error"]
+            or int(e.get("is_bounced") or 0) == 1
+        ]
 
     if not items:
         if current_filter == "Scheduled":
@@ -751,17 +1025,63 @@ def render_outbox_tab():
         return
 
     cur_now_ts = get_engine_now_str()
-    due_items = [e for e in items if e.get("scheduled_time") and e.get("scheduled_time") <= cur_now_ts]
-    if current_filter == "Scheduled" and due_items:
-        d_c1, d_c2 = st.columns([3, 1], vertical_alignment="center")
-        with d_c1:
-            st.info(f"⚡ **{len(due_items)} email(s) are due/overdue for dispatch.**")
-        with d_c2:
-            if st.button("🚀 Auto-send All Due Now", type="primary", use_container_width=True, key="btn_outbox_flush_due"):
-                with st.spinner("Dispatching due outreach..."):
-                    dispatched = run_scheduler_cycle(dry_run=False)
-                    trigger_toast(f"Dispatched {dispatched} email(s)!", icon="🚀")
-                    st.rerun()
+
+    if current_filter == "Scheduled":
+        # Scheduled queue filters
+        sf_c1, sf_c2, sf_c3, sf_c4 = st.columns([2.2, 1.4, 1.4, 1.2], vertical_alignment="center")
+        with sf_c1:
+            sched_search = st.text_input("🔍 Search scheduled...", placeholder="Recipient, subject, or domain", label_visibility="collapsed", key="outbox_sched_search").strip().lower()
+        with sf_c2:
+            sched_touch_filter = st.selectbox("Touch Type", ["All Types", "📧 Initial Only", "↩️ Follow-ups Only"], label_visibility="collapsed", key="outbox_sched_touch")
+        with sf_c3:
+            sched_time_filter = st.selectbox("Timing", ["All Scheduled", "⚡ Due Now", "🕒 Future Only"], label_visibility="collapsed", key="outbox_sched_timing")
+        with sf_c4:
+            sched_sort = st.selectbox("Sort", ["Earliest First", "Latest First"], label_visibility="collapsed", key="outbox_sched_sort")
+
+        filtered_items = []
+        for e in items:
+            recip = (e.get("recipient") or "").lower()
+            subj = (e.get("subject") or "").lower()
+            if sched_search and (sched_search not in recip and sched_search not in subj):
+                continue
+
+            var_num = e.get("variation_num") or 1
+            is_reply = bool(e.get("in_reply_to"))
+            is_fu = is_reply or var_num > 1
+            if sched_touch_filter == "📧 Initial Only" and is_fu:
+                continue
+            if sched_touch_filter == "↩️ Follow-ups Only" and not is_fu:
+                continue
+
+            s_time = e.get("scheduled_time") or ""
+            is_due = bool(s_time and s_time <= cur_now_ts)
+            if sched_time_filter == "⚡ Due Now" and not is_due:
+                continue
+            if sched_time_filter == "🕒 Future Only" and is_due:
+                continue
+
+            filtered_items.append(e)
+
+        if sched_sort == "Latest First":
+            filtered_items.reverse()
+
+        items = filtered_items
+
+        if not items:
+            st.info("🔍 No scheduled emails match the current filter.")
+            return
+
+        due_items = [e for e in items if e.get("scheduled_time") and e.get("scheduled_time") <= cur_now_ts]
+        if due_items:
+            d_c1, d_c2 = st.columns([3, 1], vertical_alignment="center")
+            with d_c1:
+                st.info(f"⚡ **{len(due_items)} email(s) are due/overdue for dispatch.**")
+            with d_c2:
+                if st.button("🚀 Auto-send All Due Now", type="primary", use_container_width=True, key="btn_outbox_flush_due"):
+                    with st.spinner("Dispatching due outreach..."):
+                        dispatched = run_scheduler_cycle(dry_run=False)
+                        trigger_toast(f"Dispatched {dispatched} email(s)!", icon="🚀")
+                        st.rerun()
 
     if current_filter == "Paused / failed":
         replied_paused_items = [
@@ -818,6 +1138,7 @@ def render_outbox_tab():
         status_raw = e.get("status") or "Scheduled"
         err_msg = e.get("error_message") or ""
         rev_notes = e.get("revision_notes") or ""
+        is_bounced_flag = status_raw == "Bounced" or int(e.get("is_bounced") or 0) == 1
         is_reply_paused = (
             "replied" in err_msg.lower()
             or "reply" in err_msg.lower()
@@ -835,8 +1156,10 @@ def render_outbox_tab():
                 pill_html = '<span class="pill" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-weight:700;">💬 Paused · Lead Replied</span>'
             else:
                 pill_html = f'<span class="pill p-warm">Paused · manual</span>'
-        elif status_raw == "Bounced":
-            pill_html = '<span class="pill p-bounce">Bounced</span>'
+        elif is_bounced_flag:
+            bounce_msg = err_msg or (matched_lead.get("notes") if matched_lead else "") or "Delivery failed / address bounced."
+            b_tooltip = html.escape(f"Bounce Reason: {bounce_msg}")
+            pill_html = f'<span class="pill" title="{b_tooltip}" style="background:#FEE2E2; color:#991B1B; border:1px solid #FECACA; font-weight:700; cursor:help;">⚠️ Bounced</span>'
         elif status_raw == "Cancelled":
             if is_reply_paused:
                 pill_html = '<span class="pill" style="background:#FEF3C7; color:#B45309; border:1px solid #FDE68A; font-weight:700;">💬 Cancelled · Lead Replied</span>'
@@ -846,6 +1169,14 @@ def render_outbox_tab():
             pill_html = f'<span class="pill p-fail">{html.escape(status_raw)}</span>'
 
         subj_clean = html.escape((e.get('subject') or 'No Subject')[:60])
+        bounce_notice_html = ""
+        if is_bounced_flag:
+            bounce_detail = html.escape(err_msg or "Recipient address rejected or mailbox unavailable.")
+            bounce_notice_html = f'<div style="font-size:11px; color:#991B1B; background:#FEF2F2; padding:3px 8px; border-radius:4px; margin-top:4px; border:1px solid #FCA5A5;">💬 <b>Bounce Reason:</b> {bounce_detail}</div>'
+        elif err_msg and status_raw in ["Failed", "Error"]:
+            err_detail = html.escape(err_msg[:120])
+            bounce_notice_html = f'<div style="font-size:11px; color:#991B1B; background:#FEF2F2; padding:3px 8px; border-radius:4px; margin-top:4px; border:1px solid #FCA5A5;">⚠️ <b>Error:</b> {err_detail}</div>'
+
         card_html = (
             f'<div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">'
             f'<div style="flex:2; min-width:0;">'
@@ -853,6 +1184,7 @@ def render_outbox_tab():
             f'<span style="font-size:12px; color:#64748B; margin-left:8px;">{html.escape(recipient)}</span>'
             f'{company_display}'
             f'<div style="font-size:12px; color:#334155; margin-top:2px;">{subj_clean}</div>'
+            f'{bounce_notice_html}'
             f'</div>'
             f'<div style="flex:1; font-size:12px; color:#475569;">'
             f'<b>{touch_label}</b> · <span style="font-family:monospace;">{html.escape(mailbox_display)}</span>'

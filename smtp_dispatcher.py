@@ -12,6 +12,9 @@ except ImportError:
 import email
 import ssl
 import re
+import os
+import io
+import html
 import base64
 import uuid
 import logging
@@ -24,7 +27,10 @@ from typing import Dict, Any, Tuple, Optional, List
 logger = logging.getLogger("smtp_dispatcher")
 
 def html_to_plain_text(html_content: str) -> str:
-    """Convert HTML content into clean plain text for multipart emails."""
+    """
+    Convert HTML content into clean plain text for multipart emails (Spec Section 8).
+    Extracts alt text inline (e.g. [Image: Storefront audit]) and strips raw HTML tags.
+    """
     try:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html_content, "html.parser")
@@ -32,16 +38,51 @@ def html_to_plain_text(html_content: str) -> str:
             br.replace_with("\n")
         for block in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li"]):
             block.append("\n")
+        for img in soup.find_all(["img"]):
+            alt = (img.get("alt") or "").strip()
+            if alt:
+                img.replace_with(f" [Image: {alt}] ")
+            else:
+                img.replace_with(" [Image] ")
         text = soup.get_text()
         lines = [line.strip() for line in text.splitlines()]
         return "\n".join(l for l in lines if l)
     except Exception:
         # Fallback regex strip
-        text = re.sub(r'<br\s*/?>', '\n', html_content, flags=re.IGNORECASE)
+        def _img_alt(m):
+            tag = m.group(0)
+            alt_m = re.search(r'alt=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+            alt_txt = alt_m.group(1).strip() if alt_m and alt_m.group(1).strip() else ""
+            return f" [Image: {alt_txt}] " if alt_txt else " [Image] "
+        text = re.sub(r'<img[^>]*>', _img_alt, html_content, flags=re.IGNORECASE)
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'</p>', '\n\n', text, flags=re.IGNORECASE)
         text = re.sub(r'<[^>]+>', '', text)
         lines = [line.strip() for line in text.splitlines()]
         return "\n".join(l for l in lines if l)
+
+
+def recompress_image_bytes(raw_bytes: bytes, max_width: int = 1000, quality: int = 70) -> bytes:
+    """
+    Auto-recompresses image binary to reduce total email payload under 10 MB (Spec Section 8).
+    """
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw_bytes))
+        w, h = img.size
+        if w > max_width:
+            h = int(h * max_width / w)
+            w = max_width
+            img = img.resize((w, h), Image.Resampling.LANCZOS)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        compressed = buf.getvalue()
+        return compressed if len(compressed) < len(raw_bytes) else raw_bytes
+    except Exception as rec_err:
+        logger.warning(f"Image recompression error: {rec_err}")
+        return raw_bytes
 
 def test_smtp_connection(
     smtp_host: Any = "",
@@ -184,12 +225,46 @@ def send_smtp_email(
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
     # -------------------------------------------------------------------------
-    # Inline image handling: Convert base64 data URIs into CID attachments.
-    # Gmail clips messages when the HTML payload exceeds 102 KB (base64 is huge).
-    # Using multipart/related with Content-ID (cid:...) keeps HTML < 5 KB so
-    # Gmail NEVER clips the message, and images display crisp and inline.
+    # Spec Section 8: Send-time inline image CID rendering + Token resolution
     # -------------------------------------------------------------------------
-    inline_images: List[Tuple[str, bytes, str]] = []  # (cid, binary_data, subtype)
+    inline_images: List[Dict[str, Any]] = []  # list of {cid, bytes, subtype, filename, alt, size}
+
+    # 1. Resolve {{img:<uuid>}} tokens from images table / storage
+    img_token_pattern = re.compile(r'\{\{img:([a-zA-Z0-9_\-]+)(?:\|([^}]+))?\}\}', re.IGNORECASE)
+
+    def _token_replacer(match):
+        img_id = match.group(1).strip()
+        custom_alt = (match.group(2) or "").strip()
+        try:
+            from database import get_image_by_id
+            rec = get_image_by_id(img_id)
+            if rec:
+                s_key = rec.get("storage_key", "")
+                f_path = os.path.join("assets/uploads", s_key) if not os.path.isabs(s_key) else s_key
+                if os.path.exists(f_path):
+                    with open(f_path, "rb") as fp:
+                        raw_b = fp.read()
+                    mime = (rec.get("mime_type") or "image/jpeg").lower()
+                    sub = "jpeg" if "jp" in mime else ("png" if "png" in mime else "jpeg")
+                    cid = f"img_{img_id}@{domain}"
+                    alt_text = custom_alt or rec.get("filename") or "Screenshot"
+                    w = rec.get("width") or 600
+                    inline_images.append({
+                        "cid": cid,
+                        "bytes": raw_b,
+                        "subtype": sub,
+                        "filename": rec.get("filename") or f"{img_id}.{sub}",
+                        "alt": alt_text,
+                        "size": len(raw_b)
+                    })
+                    return f'<img src="cid:{cid}" alt="{html.escape(alt_text)}" style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />'
+        except Exception as t_err:
+            logger.warning(f"Error resolving {{img:{img_id}}}: {t_err}")
+        return match.group(0)
+
+    resolved_html = img_token_pattern.sub(_token_replacer, html_content)
+
+    # 2. Convert base64 data URIs into CID attachments
     data_uri_pattern = re.compile(r'data:image/([a-zA-Z0-9\+\-]+);base64,([A-Za-z0-9+/=\s]+)', re.IGNORECASE)
 
     def _cid_replacer(match):
@@ -199,15 +274,35 @@ def send_smtp_email(
         try:
             img_bytes = base64.b64decode(b64_str)
             cid = f"img_{uuid.uuid4().hex[:12]}@{domain}"
-            inline_images.append((cid, img_bytes, subtype))
+            inline_images.append({
+                "cid": cid,
+                "bytes": img_bytes,
+                "subtype": subtype,
+                "filename": f"screenshot_{len(inline_images)+1}.{subtype}",
+                "alt": "Screenshot",
+                "size": len(img_bytes)
+            })
             return f"cid:{cid}"
         except Exception as b64_err:
             logger.warning(f"Could not decode base64 inline image: {b64_err}")
             return match.group(0)
 
-    final_html = data_uri_pattern.sub(_cid_replacer, html_content)
+    final_html = data_uri_pattern.sub(_cid_replacer, resolved_html)
 
-    # Attach plain text version
+    # 3. Size guard: total message < 10 MB (Hostinger/Gmail ceiling).
+    # If over 8.5 MB total image bytes, auto-recompress images down to 1000px and 70% JPEG quality.
+    total_img_size = sum(img_obj["size"] for img_obj in inline_images)
+    if total_img_size > 8.5 * 1024 * 1024:
+        logger.info(f"Total image payload ({round(total_img_size/(1024*1024), 2)} MB) approaching 10 MB ceiling. Auto-recompressing...")
+        for img_obj in inline_images:
+            if img_obj["size"] > 1.2 * 1024 * 1024:
+                recompressed = recompress_image_bytes(img_obj["bytes"], max_width=1000, quality=70)
+                if len(recompressed) < img_obj["size"]:
+                    img_obj["bytes"] = recompressed
+                    img_obj["size"] = len(recompressed)
+                    img_obj["subtype"] = "jpeg"
+
+    # Attach plain text version (images omitted, alt text inline)
     plain_text = html_to_plain_text(final_html)
     part_text = MIMEText(plain_text, "plain", "utf-8")
 
@@ -215,7 +310,7 @@ def send_smtp_email(
     part_html = MIMEText(final_html, "html", "utf-8")
 
     if inline_images:
-        # Re-initialize msg as multipart/related so images are embedded inline
+        # Structure: multipart/related (HTML + inline images) inside multipart/alternative
         headers_dict = dict(msg.items())
         msg = MIMEMultipart("related")
         for h_key, h_val in headers_dict.items():
@@ -226,17 +321,33 @@ def send_smtp_email(
         alt_part.attach(part_html)
         msg.attach(alt_part)
 
-        for idx, (cid, img_bytes, subtype) in enumerate(inline_images):
+        for img_obj in inline_images:
             try:
-                img_part = MIMEImage(img_bytes, _subtype=subtype)
-                img_part.add_header("Content-ID", f"<{cid}>")
-                img_part.add_header("Content-Disposition", "inline", filename=f"image_{idx+1}.{subtype}")
+                img_part = MIMEImage(img_obj["bytes"], _subtype=img_obj["subtype"])
+                img_part.add_header("Content-ID", f"<{img_obj['cid']}>")
+                img_part.add_header("Content-Disposition", "inline", filename=img_obj["filename"])
+                if img_obj.get("alt"):
+                    img_part.add_header("Content-Description", img_obj["alt"])
                 msg.attach(img_part)
             except Exception as img_err:
-                logger.warning(f"Error attaching MIME inline image {cid}: {img_err}")
+                logger.warning(f"Error attaching MIME inline image {img_obj['cid']}: {img_err}")
     else:
         msg.attach(part_text)
         msg.attach(part_html)
+
+    # Final size guard verification before network dispatch
+    raw_msg_bytes = msg.as_bytes()
+    if len(raw_msg_bytes) >= 10 * 1024 * 1024:
+        largest_img = max(inline_images, key=lambda x: x["size"], default=None)
+        offender_name = largest_img["filename"] if largest_img else "attached files"
+        offender_mb = round(largest_img["size"] / (1024 * 1024), 2) if largest_img else 0
+        total_mb = round(len(raw_msg_bytes) / (1024 * 1024), 2)
+        err_msg = (
+            f"Message payload ({total_mb} MB) exceeds Hostinger/Gmail 10 MB ceiling. "
+            f"Offending image: '{offender_name}' ({offender_mb} MB). Please reduce image size."
+        )
+        logger.error(err_msg)
+        return False, err_msg
 
     # Append optional BCC to SMTP envelope destinations
     if bcc_email and bcc_email.strip():

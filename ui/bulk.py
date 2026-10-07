@@ -26,6 +26,7 @@ from database import (
     get_effective_daily_limit,
     get_config,
     create_email,
+    create_send_job,
     LEAD_STATUSES,
 )
 from template_engine import (
@@ -51,7 +52,7 @@ from ui.lead_selector import (
 # Dialog: Confirm Batch Schedule & Sequence Timing (UTC+5)
 # ---------------------------------------------------------------------------
 
-@st.dialog("🚀 Confirm Batch Outreach & Timing (UTC+5)")
+@st.dialog("🚀 Confirm Batch Outreach & Timing (UTC+5)", width="large")
 def render_bulk_schedule_dialog(
     mode: str,
     selected_leads: List[Dict[str, Any]],
@@ -158,8 +159,9 @@ def render_bulk_schedule_dialog(
 
             step_seconds = max(45, int((spread_hours * 3600) / max(1, len(clean_leads))))
 
-            # Fetch signature HTML once
+            # Fetch signature HTML and global BCC once
             sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
+            bulk_bcc = (get_config("bcc_email", "") or "").strip()
 
             # 1. Initial emails
             for i, lead in enumerate(clean_leads):
@@ -184,8 +186,24 @@ def render_bulk_schedule_dialog(
                     recipient=lead["email"].strip(),
                     status="Approved",
                     scheduled_time=target_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    target_timezone=lead_tz
+                    target_timezone=lead_tz,
+                    bcc_email=bulk_bcc
                 )
+
+                # Spec Section 3 & 9: Also enqueue in DB-backed send_jobs queue with idempotency
+                try:
+                    create_send_job(
+                        lead_id=str(lead.get("id") or lead.get("email")).strip(),
+                        to_addrs=lead["email"].strip(),
+                        subject=lead_subj,
+                        body_html=formatted_body,
+                        send_at=target_dt,
+                        bcc_addrs=bulk_bcc,
+                        idempotency_key=f"{lead.get('email', '').strip()}:{target_dt.strftime('%Y-%m-%d %H:%M:%S')}:step1"
+                    )
+                except Exception:
+                    pass
+
                 queued_count += 1
 
             # 2. Follow-up emails for each step with individually chosen start date and time
@@ -201,19 +219,36 @@ def render_bulk_schedule_dialog(
 
                     fu_subj_resolved = inject_variables(parse_spintax(step["subject"]), lead)
                     fu_body_resolved = resolve_template(fu_body_html, lead)
-                    if fu_inc_sig and sig_html and sig_html not in fu_body_resolved:
+                    fu_has_sig = (sig_html and sig_html in fu_body_resolved) or ("Sellomize Logo" in fu_body_resolved) or ("Jack Connor" in fu_body_resolved)
+                    if fu_inc_sig and sig_html and not fu_has_sig:
                         fu_body_resolved = f"{fu_body_resolved}<br><br>{sig_html}"
 
+                    formatted_fu = format_email_html(fu_body_resolved)
                     create_email(
-                        email_html=format_email_html(fu_body_resolved),
+                        email_html=formatted_fu,
                         subject=fu_subj_resolved,
                         recipient=lead["email"].strip(),
                         status="Approved",
                         scheduled_time=fu_target.strftime("%Y-%m-%d %H:%M:%S"),
                         target_timezone=lead_tz,
                         sequence_step=idx + 2,
-                        variation_num=idx + 2
+                        variation_num=idx + 2,
+                        bcc_email=bulk_bcc
                     )
+
+                    try:
+                        create_send_job(
+                            lead_id=str(lead.get("id") or lead.get("email")).strip(),
+                            to_addrs=lead["email"].strip(),
+                            subject=fu_subj_resolved,
+                            body_html=formatted_fu,
+                            send_at=fu_target,
+                            bcc_addrs=bulk_bcc,
+                            idempotency_key=f"{lead.get('email', '').strip()}:{fu_target.strftime('%Y-%m-%d %H:%M:%S')}:step{idx + 2}"
+                        )
+                    except Exception:
+                        pass
+
                     fu_queued += 1
 
         if fu_queued:
@@ -231,14 +266,24 @@ def render_bulk_schedule_dialog(
 
 
 def render_bulk_tab():
-    """Render the 3-section Bulk Send screen with follow-up sequences and live preview."""
-    all_templates = get_templates()
-    all_leads     = get_contacts()
+    """Render the 3-Section Bulk Send screen with Campaign Sequence and CSV Upload & Bulk Schedule."""
     all_mailboxes = get_smtp_accounts(active_only=True)
-
     if not all_mailboxes:
         st.error("⚠️ No active Hostinger mailboxes configured. Connect a mailbox in **Settings**.")
         return
+
+    bulk_subtab1, bulk_subtab2 = st.tabs(["🚀 Sequence & Campaigns", "📂 CSV Upload & Bulk Schedule"])
+    with bulk_subtab1:
+        render_bulk_sequence_subtab()
+    with bulk_subtab2:
+        render_bulk_csv_upload_subtab()
+
+
+def render_bulk_sequence_subtab():
+    """Render the standard 3-section Bulk Send screen with follow-up sequences and live preview."""
+    all_templates = get_templates()
+    all_leads     = get_contacts()
+    all_mailboxes = get_smtp_accounts(active_only=True)
 
     # ── Follow-up steps state ─────────────────────────────────────────────
     if "bulk_followup_steps" not in st.session_state:
@@ -293,8 +338,7 @@ def render_bulk_tab():
                         "body":       (
                             "Hi {first_name},\n\n"
                             "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
-                            "Would love to connect if the timing works.\n\n"
-                            "Best regards,"
+                            "Would love to connect if the timing works."
                         ),
                     })
                     st.rerun()
@@ -337,8 +381,7 @@ def render_bulk_tab():
                         "body":       (
                             "Hi {first_name},\n\n"
                             "Just following up on my previous note — wanted to make sure it didn't get buried.\n\n"
-                            "Would love to connect if the timing works.\n\n"
-                            "Best regards,"
+                            "Would love to connect if the timing works."
                         ),
                     })
                     st.rerun()
@@ -595,7 +638,8 @@ def render_bulk_tab():
             preview_body = format_email_html(resolve_template(current_body, sample_lead))
             show_sig_in_prev = st.session_state.get("bulk_include_sig", True)
 
-        sig_box_html = f'<div class="sig">{signature_html}</div>' if (show_sig_in_prev and signature_html) else ''
+        already_has_sig = (signature_html and signature_html in preview_body) or ("Sellomize Logo" in preview_body) or ("Jack Connor" in preview_body)
+        sig_box_html = f'<div class="sig">{signature_html}</div>' if (show_sig_in_prev and signature_html and not already_has_sig) else ''
 
         preview_box_html = (
             '<div class="preview">'
@@ -1001,3 +1045,209 @@ def render_bulk_tab():
                     followup_steps=st.session_state.get("bulk_followup_steps", []),
                     include_signature=st.session_state.get("bulk_include_sig", True)
                 )
+
+
+# =========================================================================
+# Spec Section 10: Bulk CSV Upload & Validation with Slot Mapping
+# =========================================================================
+
+def render_bulk_csv_upload_subtab():
+    """
+    Spec Section 10: Bulk path (the speed win)
+    - CSV upload with columns: to, subject, body, send_at, image_1, image_2, bcc
+    - Validate everything up front: email format, image IDs exist, spam-check every rendered body, duplicate detection
+    - Stagger helper: start time + interval auto-fills send_at
+    - Progress & Enqueue into DB-backed send_jobs queue
+    """
+    import csv
+    import io
+    import re
+    from database import get_image_by_id, get_send_jobs
+
+    st.markdown("### 📂 Bulk CSV Upload & Validation")
+    st.caption(
+        "Upload a CSV containing your outreach campaigns. Columns supported: "
+        "<code>to</code>, <code>subject</code>, <code>body</code>, <code>send_at</code>, "
+        "<code>image_1</code>, <code>image_2</code>, <code>bcc</code>.",
+        unsafe_allow_html=True
+    )
+
+    with st.expander("ℹ️ CSV Column Specification & Slot Mapping Guide", expanded=False):
+        st.markdown("""
+        - **`to`** (required): Recipient email address(es) separated by commas or semicolons.
+        - **`subject`** (required): Subject line for the email.
+        - **`body`** (required): Email HTML or plain text body. Supports `{{screenshot_1}}` or `{{screenshot_2}}` slots.
+        - **`send_at`** (optional): Scheduled date & time (e.g. `2026-10-07 14:00:00`). If omitted, uses the Stagger Helper.
+        - **`image_1` / `image_2`** (optional): Image UUID from Lead Image Library or uploaded files. Replaces `{{screenshot_1}}` / `{{screenshot_2}}` or appends inline.
+        - **`bcc`** (optional): Blind carbon copy addresses.
+        """)
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"], key="bulk_csv_file_uploader")
+    if not uploaded_file:
+        st.info("👆 Upload a CSV file above to begin validation and scheduling.")
+        return
+
+    try:
+        content = uploaded_file.getvalue().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+        rows = list(reader)
+    except Exception as e:
+        st.error(f"Failed to parse CSV: {e}")
+        return
+
+    if not rows:
+        st.warning("The uploaded CSV contains no data rows.")
+        return
+
+    # Normalize column names to lowercase
+    normalized_rows = []
+    for r in rows:
+        norm_r = {k.strip().lower(): v.strip() for k, v in r.items() if k}
+        normalized_rows.append(norm_r)
+
+    st.success(f"Loaded **{len(normalized_rows)} rows** from `{uploaded_file.name}`.")
+
+    # ── Stagger Helper ──
+    st.markdown("#### ⏱️ Dispatch Pacing & Stagger Helper")
+    stg_col1, stg_col2, stg_col3 = st.columns([1.5, 1.2, 1.2])
+    with stg_col1:
+        stg_start_date = st.date_input("Start Date", value=datetime.now().date(), key="bulk_stg_date")
+        stg_start_time = st.time_input("Start Time", value=(datetime.now() + timedelta(minutes=10)).time(), key="bulk_stg_time")
+    with stg_col2:
+        stg_interval_mins = st.number_input("Interval between sends (mins)", min_value=1, max_value=1440, value=3, key="bulk_stg_int")
+    with stg_col3:
+        override_existing_send_at = st.checkbox("Override send_at from CSV", value=False, key="bulk_stg_override")
+
+    base_stagger_dt = datetime.combine(stg_start_date, stg_start_time)
+
+    # ── Upfront Validation ──
+    EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    validation_errors = []
+    validation_warnings = []
+    valid_jobs_to_queue = []
+
+    # Pre-fetch existing scheduled recipient emails for duplicate detection
+    existing_scheduled = get_send_jobs(status="scheduled", limit=500)
+    existing_recipients = set()
+    for ej in existing_scheduled:
+        for addr in ej.get("to_addrs", []):
+            existing_recipients.add(addr.lower().strip())
+
+    for idx, row in enumerate(normalized_rows, start=1):
+        to_raw = row.get("to") or row.get("email") or row.get("recipient") or ""
+        subject = row.get("subject") or ""
+        body = row.get("body") or row.get("message") or ""
+        send_at_raw = row.get("send_at") or ""
+        img1 = row.get("image_1") or row.get("image1") or ""
+        img2 = row.get("image_2") or row.get("image2") or ""
+        bcc = row.get("bcc") or ""
+
+        row_errors = []
+
+        # 1. Validate email format
+        to_list = [a.strip() for a in re.split(r'[,;]+', to_raw) if a.strip()]
+        if not to_list:
+            row_errors.append("Missing recipient 'to' email")
+        else:
+            for em in to_list:
+                if not EMAIL_REGEX.match(em):
+                    row_errors.append(f"Invalid email format: '{em}'")
+                elif em.lower() in existing_recipients:
+                    validation_warnings.append(f"Row #{idx}: '{em}' already has a pending scheduled job in queue.")
+
+        # 2. Validate subject & body
+        if not subject.strip():
+            row_errors.append("Subject line is empty")
+        if not body.strip():
+            row_errors.append("Body content is empty")
+
+        # 3. Slot mapping & Image validation
+        image_ids = []
+        resolved_body = body
+        for slot_num, img_token in enumerate([img1, img2], start=1):
+            if img_token:
+                img_rec = get_image_by_id(img_token)
+                if not img_rec:
+                    row_errors.append(f"image_{slot_num} ID '{img_token}' not found in database")
+                else:
+                    image_ids.append(img_token)
+                    slot_placeholder = f"{{{{screenshot_{slot_num}}}}}"
+                    if slot_placeholder in resolved_body:
+                        resolved_body = resolved_body.replace(slot_placeholder, f"{{{{img:{img_token}}}}}")
+                    elif f"{{{{img:{img_token}}}}}" not in resolved_body:
+                        # Append image at end if slot not explicitly present
+                        resolved_body = f"{resolved_body}<br><br>{{{{img:{img_token}}}}}"
+
+        # 4. Spam pre-check
+        if body.strip():
+            spam_triggers, _ = audit_email_deliverability(subject, resolved_body)
+            if spam_triggers:
+                trigger_names = [t.get("word") for t in spam_triggers if t.get("word")]
+                validation_warnings.append(f"Row #{idx}: Deliverability spam warning triggers: {', '.join(trigger_names)}")
+
+        # 5. Timing calculation
+        job_send_dt = base_stagger_dt + timedelta(minutes=((idx - 1) * int(stg_interval_mins)))
+        if send_at_raw and not override_existing_send_at:
+            try:
+                job_send_dt = datetime.strptime(send_at_raw, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                try:
+                    job_send_dt = datetime.strptime(send_at_raw, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    row_errors.append(f"Invalid send_at format '{send_at_raw}'. Expected 'YYYY-MM-DD HH:MM:SS'")
+
+        if row_errors:
+            validation_errors.append(f"Row #{idx}: {'; '.join(row_errors)}")
+        else:
+            valid_jobs_to_queue.append({
+                "lead_id": to_list[0] if to_list else f"row_{idx}",
+                "to_addrs": to_list,
+                "bcc_addrs": [b.strip() for b in re.split(r'[,;]+', bcc) if b.strip()],
+                "subject": subject,
+                "body_html": resolved_body,
+                "image_ids": image_ids,
+                "send_at": job_send_dt,
+            })
+
+    # ── Display Validation Report ──
+    st.markdown("#### 📋 Pre-Flight Validation Report")
+    r_col1, r_col2, r_col3 = st.columns(3)
+    with r_col1:
+        st.metric("Total Rows", len(normalized_rows))
+    with r_col2:
+        st.metric("Ready to Schedule", len(valid_jobs_to_queue))
+    with r_col3:
+        st.metric("Errors Detected", len(validation_errors))
+
+    if validation_errors:
+        st.error(f"⛔ **{len(validation_errors)} error(s) must be resolved:**")
+        for err in validation_errors[:10]:
+            st.markdown(f"- {err}")
+        if len(validation_errors) > 10:
+            st.caption(f"... and {len(validation_errors) - 10} more errors.")
+
+    if validation_warnings:
+        with st.expander(f"⚠️ Deliverability & Duplicate Warnings ({len(validation_warnings)})", expanded=False):
+            for wrn in validation_warnings[:15]:
+                st.markdown(f"- {wrn}")
+
+    # ── Schedule Action Button ──
+    can_enqueue = len(valid_jobs_to_queue) > 0 and len(validation_errors) == 0
+    if st.button("🚀 Schedule Validated Batch in Queue", type="primary", disabled=not can_enqueue, use_container_width=True):
+        enqueued_count = 0
+        for job_data in valid_jobs_to_queue:
+            create_send_job(
+                lead_id=job_data["lead_id"],
+                to_addrs=job_data["to_addrs"],
+                subject=job_data["subject"],
+                body_html=job_data["body_html"],
+                send_at=job_data["send_at"],
+                image_ids=job_data["image_ids"],
+                bcc_addrs=job_data["bcc_addrs"]
+            )
+            enqueued_count += 1
+
+        trigger_toast(f"Successfully enqueued {enqueued_count} outreach jobs in DB delivery queue!", icon="🚀")
+        st.success(f"🎉 Enqueued **{enqueued_count} jobs** for automated delivery by the worker.")
+        st.rerun()
+

@@ -172,8 +172,10 @@ from cloud_db import (
 try:
     import psycopg2
     DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError, psycopg2.OperationalError, psycopg2.ProgrammingError)
+    DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg2.IntegrityError)
 except ImportError:
     DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError,)
+    DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
 
 
 def get_connection(db_path: str = DB_FILE) -> Union[sqlite3.Connection, PostgresConnectionWrapper]:
@@ -650,6 +652,48 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                     created_at TEXT NOT NULL
                 )
             """)
+
+            # 10. Spec Section 3: images table (Per-Lead Image Library)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS images (
+                    id TEXT PRIMARY KEY,
+                    lead_id TEXT NOT NULL,
+                    storage_key TEXT NOT NULL,
+                    filename TEXT DEFAULT '',
+                    mime_type TEXT DEFAULT 'image/jpeg',
+                    width INTEGER DEFAULT 0,
+                    height INTEGER DEFAULT 0,
+                    bytes INTEGER DEFAULT 0,
+                    annotated_from TEXT DEFAULT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT DEFAULT 'user'
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_images_lead ON images(lead_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_images_annotated ON images(annotated_from)")
+
+            # 11. Spec Section 3 & 9: send_jobs table (DB-backed job queue with idempotency)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS send_jobs (
+                    id TEXT PRIMARY KEY,
+                    idempotency_key TEXT UNIQUE NOT NULL,
+                    lead_id TEXT NOT NULL,
+                    to_addrs TEXT NOT NULL,
+                    bcc_addrs TEXT NOT NULL DEFAULT '[]',
+                    subject TEXT NOT NULL,
+                    body_html TEXT NOT NULL,
+                    image_ids TEXT NOT NULL DEFAULT '[]',
+                    send_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'scheduled',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT DEFAULT '',
+                    sent_at TEXT DEFAULT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_send_jobs_status_send_at ON send_jobs(status, send_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_send_jobs_lead ON send_jobs(lead_id)")
 
             # Populate default configuration keys if not already present
             default_configs = {
@@ -2494,6 +2538,12 @@ def create_email(
     db_path: str = DB_FILE,
     **kwargs
 ) -> int:
+    clean_bcc = (bcc_email or "").strip()
+    if not clean_bcc:
+        try:
+            clean_bcc = (get_config("bcc_email", "", db_path=db_path) or "").strip()
+        except Exception:
+            clean_bcc = ""
     now_iso = get_engine_now_str()
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -2510,7 +2560,7 @@ def create_email(
         subject, recipient, email_html, status, scheduled_time,
         variation_num, revision_notes, sequence_step, sequence_id,
         target_timezone.strip(), target_country.strip(), market_key.strip(),
-        message_id.strip(), in_reply_to.strip(), thread_id.strip(), bcc_email.strip(),
+        message_id.strip(), in_reply_to.strip(), thread_id.strip(), clean_bcc,
         now_iso, now_iso
     ))
     email_id = cursor.lastrowid
@@ -4827,6 +4877,352 @@ def get_all_campaigns_summary_stats(campaign_ids: List[int], db_path: str = DB_F
         res["click_rate"] = (res["clicked"] / sent * 100.0) if sent > 0 else 0.0
 
     return result
+
+
+# ------------------------------------------------------------------------------
+# LEAD IMAGE SUBSYSTEM HELPERS (Spec Section 3 & 5)
+# ------------------------------------------------------------------------------
+
+def save_lead_image(
+    image_id: str,
+    lead_id: str,
+    storage_key: str,
+    filename: str = "",
+    mime_type: str = "image/jpeg",
+    width: int = 0,
+    height: int = 0,
+    num_bytes: int = 0,
+    annotated_from: Optional[str] = None,
+    created_by: str = "user",
+    db_path: str = DB_FILE
+) -> Dict[str, Any]:
+    """Save image metadata into images table."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        INSERT INTO images (
+            id, lead_id, storage_key, filename, mime_type,
+            width, height, bytes, annotated_from, created_at, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            lead_id = excluded.lead_id,
+            storage_key = excluded.storage_key,
+            filename = excluded.filename,
+            mime_type = excluded.mime_type,
+            width = excluded.width,
+            height = excluded.height,
+            bytes = excluded.bytes,
+            annotated_from = excluded.annotated_from,
+            created_by = excluded.created_by
+    """, (
+        str(image_id).strip(), str(lead_id).strip(), str(storage_key).strip(),
+        str(filename or "").strip(), str(mime_type or "image/jpeg").strip(),
+        int(width or 0), int(height or 0), int(num_bytes or 0),
+        str(annotated_from).strip() if annotated_from else None,
+        now_str, str(created_by or "user").strip()
+    ))
+    conn.commit()
+    conn.close()
+    return {
+        "id": str(image_id).strip(),
+        "lead_id": str(lead_id).strip(),
+        "storage_key": str(storage_key).strip(),
+        "filename": filename,
+        "mime_type": mime_type,
+        "width": width,
+        "height": height,
+        "bytes": num_bytes,
+        "annotated_from": annotated_from,
+        "created_at": now_str,
+        "created_by": created_by
+    }
+
+
+def get_lead_images(lead_id: str, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all images belonging to a specific lead."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    clean_lid = str(lead_id).strip()
+    cursor.execute("""
+        SELECT * FROM images
+        WHERE lead_id = ?
+        ORDER BY created_at DESC
+    """, (clean_lid,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_image_by_id(image_id: str, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    """Retrieve single image metadata record by UUID / ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM images WHERE id = ? LIMIT 1", (str(image_id).strip(),))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_lead_image(image_id: str, db_path: str = DB_FILE) -> bool:
+    """Delete image metadata record from database."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM images WHERE id = ?", (str(image_id).strip(),))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def update_image_filename(image_id: str, filename: str, db_path: str = DB_FILE) -> bool:
+    """Rename / update friendly filename for an image."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE images SET filename = ? WHERE id = ?", (str(filename).strip(), str(image_id).strip()))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+# =========================================================================
+# Spec Section 3 & 9: DB-backed send_jobs Queue CRUD & Idempotency
+# =========================================================================
+
+def create_send_job(
+    lead_id: str,
+    to_addrs: Union[List[str], str],
+    subject: str,
+    body_html: str,
+    send_at: Union[str, datetime],
+    image_ids: Optional[List[str]] = None,
+    bcc_addrs: Optional[Union[List[str], str]] = None,
+    idempotency_key: Optional[str] = None,
+    job_id: Optional[str] = None,
+    db_path: str = DB_FILE
+) -> Dict[str, Any]:
+    """
+    Enqueue a send job into send_jobs with strict idempotency protection.
+    If idempotency_key is not specified, auto-generates {lead_id}:{slot_iso}.
+    If a job with the same idempotency_key already exists, returns the existing job.
+    """
+    import uuid
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    if isinstance(to_addrs, str):
+        to_list = [a.strip() for a in re.split(r'[,;]+', to_addrs) if a.strip()]
+    else:
+        to_list = [str(a).strip() for a in (to_addrs or []) if str(a).strip()]
+
+    if isinstance(bcc_addrs, str):
+        bcc_list = [a.strip() for a in re.split(r'[,;]+', bcc_addrs) if a.strip()]
+    else:
+        bcc_list = [str(a).strip() for a in (bcc_addrs or []) if str(a).strip()]
+
+    img_list = [str(i).strip() for i in (image_ids or []) if str(i).strip()]
+
+    if isinstance(send_at, datetime):
+        send_at_str = send_at.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        send_at_str = str(send_at).strip()
+
+    clean_lead = str(lead_id).strip()
+    clean_job_id = str(job_id or uuid.uuid4()).strip()
+    clean_idem = str(idempotency_key or f"{clean_lead}:{send_at_str}").strip()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    to_json = json.dumps(to_list)
+    bcc_json = json.dumps(bcc_list)
+    img_json = json.dumps(img_list)
+
+    try:
+        cursor.execute("""
+            INSERT INTO send_jobs (
+                id, idempotency_key, lead_id, to_addrs, bcc_addrs,
+                subject, body_html, image_ids, send_at, status,
+                attempts, last_error, sent_at, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', 0, '', NULL, ?, ?)
+        """, (
+            clean_job_id, clean_idem, clean_lead, to_json, bcc_json,
+            subject, body_html, img_json, send_at_str, now_str, now_str
+        ))
+        conn.commit()
+    except DB_INTEGRITY_ERRORS:
+        # Idempotency collision: fetch and return the existing job
+        cursor.execute("SELECT * FROM send_jobs WHERE idempotency_key = ? LIMIT 1", (clean_idem,))
+        existing = cursor.fetchone()
+        conn.close()
+        if existing:
+            job_dict = dict(existing)
+            try:
+                job_dict["to_addrs"] = json.loads(job_dict.get("to_addrs") or "[]")
+                job_dict["bcc_addrs"] = json.loads(job_dict.get("bcc_addrs") or "[]")
+                job_dict["image_ids"] = json.loads(job_dict.get("image_ids") or "[]")
+            except Exception:
+                pass
+            return job_dict
+        raise
+
+    conn.close()
+    return {
+        "id": clean_job_id,
+        "idempotency_key": clean_idem,
+        "lead_id": clean_lead,
+        "to_addrs": to_list,
+        "bcc_addrs": bcc_list,
+        "subject": subject,
+        "body_html": body_html,
+        "image_ids": img_list,
+        "send_at": send_at_str,
+        "status": "scheduled",
+        "attempts": 0,
+        "last_error": "",
+        "sent_at": None,
+        "created_at": now_str,
+        "updated_at": now_str
+    }
+
+
+def get_send_job_by_id(job_id: str, db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
+    """Retrieve send_job by ID."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM send_jobs WHERE id = ? LIMIT 1", (str(job_id).strip(),))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["to_addrs"] = json.loads(d.get("to_addrs") or "[]")
+        d["bcc_addrs"] = json.loads(d.get("bcc_addrs") or "[]")
+        d["image_ids"] = json.loads(d.get("image_ids") or "[]")
+    except Exception:
+        pass
+    return d
+
+
+def get_due_send_jobs(cutoff_dt: Optional[datetime] = None, limit: int = 50, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve pending scheduled send_jobs ready for dispatch (send_at <= cutoff)."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    ref_str = (cutoff_dt or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        SELECT * FROM send_jobs
+        WHERE status = 'scheduled' AND send_at <= ?
+        ORDER BY send_at ASC
+        LIMIT ?
+    """, (ref_str, int(limit)))
+    rows = cursor.fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["to_addrs"] = json.loads(d.get("to_addrs") or "[]")
+            d["bcc_addrs"] = json.loads(d.get("bcc_addrs") or "[]")
+            d["image_ids"] = json.loads(d.get("image_ids") or "[]")
+        except Exception:
+            pass
+        results.append(d)
+    return results
+
+
+def claim_send_job_for_sending(job_id: str, db_path: str = DB_FILE) -> bool:
+    """
+    Atomically transition job status from 'scheduled' to 'sending' and increment attempts.
+    Guarantees no race condition or double dispatch across concurrent workers.
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        UPDATE send_jobs
+        SET status = 'sending', attempts = attempts + 1, updated_at = ?
+        WHERE id = ? AND status = 'scheduled'
+    """, (now_str, str(job_id).strip()))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def mark_send_job_sent(job_id: str, sent_at: Optional[datetime] = None, db_path: str = DB_FILE) -> bool:
+    """Mark send_job as successfully dispatched ('sent')."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    sent_str = (sent_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        UPDATE send_jobs
+        SET status = 'sent', sent_at = ?, last_error = '', updated_at = ?
+        WHERE id = ?
+    """, (sent_str, sent_str, str(job_id).strip()))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def mark_send_job_failed(job_id: str, error_message: str, is_bounce: bool = False, db_path: str = DB_FILE) -> bool:
+    """Mark send_job as 'bounced' or 'failed' with descriptive last_error."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_status = "bounced" if is_bounce else "failed"
+    cursor.execute("""
+        UPDATE send_jobs
+        SET status = ?, last_error = ?, updated_at = ?
+        WHERE id = ?
+    """, (new_status, str(error_message).strip(), now_str, str(job_id).strip()))
+    affected = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def get_send_jobs(
+    status: Optional[str] = None,
+    lead_id: Optional[str] = None,
+    limit: int = 100,
+    db_path: str = DB_FILE
+) -> List[Dict[str, Any]]:
+    """Retrieve send_jobs by status and/or lead filter."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    clauses = []
+    params: List[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status.strip().lower())
+    if lead_id:
+        clauses.append("lead_id = ?")
+        params.append(str(lead_id).strip())
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(int(limit))
+    cursor.execute(f"""
+        SELECT * FROM send_jobs
+        {where_sql}
+        ORDER BY send_at DESC
+        LIMIT ?
+    """, tuple(params))
+    rows = cursor.fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["to_addrs"] = json.loads(d.get("to_addrs") or "[]")
+            d["bcc_addrs"] = json.loads(d.get("bcc_addrs") or "[]")
+            d["image_ids"] = json.loads(d.get("image_ids") or "[]")
+        except Exception:
+            pass
+        results.append(d)
+    return results
+
 
 # Initialize upon import
 if is_postgres_active():

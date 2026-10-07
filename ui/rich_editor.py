@@ -52,8 +52,35 @@ from ui.editor import (
 logger = logging.getLogger("rich_editor")
 
 UPLOADS_DIR = "assets/uploads"
-MAX_IMAGE_WIDTH = 600
-MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024  # 2 MB cap
+MAX_IMAGE_WIDTH = 1200  # Spec Section 4: max 1200px wide
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024  # Spec Section 8: size guard ceiling 10 MB
+
+
+class ProcessedImage(tuple):
+    """
+    Tuple subclass maintaining backward-compatible 4-tuple unpacking
+    (data_uri, filepath, width, height) while exposing .image_id and .storage_key.
+    """
+    data_uri: str
+    filepath: str
+    width: int
+    height: int
+    image_id: str
+    storage_key: str
+
+    def __new__(cls, data_uri: str, filepath: str, width: int, height: int, image_id: str = "", storage_key: str = ""):
+        obj = super().__new__(cls, (data_uri, filepath, width, height))
+        obj.data_uri = data_uri
+        obj.filepath = filepath
+        obj.width = width
+        obj.height = height
+        obj.image_id = image_id
+        obj.storage_key = storage_key
+        return obj
+
+    @property
+    def id(self) -> str:
+        return self.image_id
 
 
 def is_rich_editor_enabled() -> bool:
@@ -66,17 +93,27 @@ def process_and_store_image(
     raw_bytes: bytes,
     mime_type: str = "image/png",
     alt_text: str = "Screenshot",
-    target_width: Optional[int] = None
-) -> Tuple[str, str, int, int]:
+    target_width: Optional[int] = None,
+    lead_id: Optional[str] = None,
+    original_filename: str = "",
+    annotated_from: Optional[str] = None
+) -> ProcessedImage:
     """
-    Process image binary:
-    - Downscales to MAX_IMAGE_WIDTH (600px) or target_width if specified.
-    - Compresses to JPEG/PNG (quality 85%).
-    - Ensures size <= 2MB.
-    - Saves to assets/uploads/.
-    - Returns (data_uri, file_path, width, height).
+    Process image binary (Spec Section 4 & 5):
+    - Downscales to MAX_IMAGE_WIDTH (1200px) or target_width if specified.
+    - Compresses to JPEG/PNG (quality 82%).
+    - Ensures size <= 10MB.
+    - Saves to assets/uploads/leads/{lead_id}/{image_id}.{ext} (or assets/uploads/ if general).
+    - Persists metadata in images database table.
+    - Returns ProcessedImage(data_uri, file_path, width, height, image_id, storage_key).
     """
+    clean_lid = str(lead_id).strip() if lead_id else "general"
+    clean_lid = re.sub(r'[^a-zA-Z0-9_\-]', '_', clean_lid) or "general"
+
+    lead_dir = os.path.join(UPLOADS_DIR, "leads", clean_lid)
+    os.makedirs(lead_dir, exist_ok=True)
     os.makedirs(UPLOADS_DIR, exist_ok=True)
+
     pil_img = Image.open(io.BytesIO(raw_bytes))
     
     orig_w, orig_h = pil_img.size
@@ -90,6 +127,7 @@ def process_and_store_image(
     else:
         w, h = orig_w, orig_h
 
+    # Convert screenshots to JPEG unless transparency matters (RGBA/LA)
     save_format = "PNG" if pil_img.mode in ("RGBA", "LA") else "JPEG"
     ext = "png" if save_format == "PNG" else "jpg"
     final_mime = "image/png" if save_format == "PNG" else "image/jpeg"
@@ -97,14 +135,15 @@ def process_and_store_image(
     if save_format == "JPEG" and pil_img.mode != "RGB":
         pil_img = pil_img.convert("RGB")
 
-    unique_id = uuid.uuid4().hex[:10]
-    filename = f"img_{int(time.time())}_{unique_id}_{w}x{h}.{ext}"
-    filepath = os.path.join(UPLOADS_DIR, filename)
+    unique_id = str(uuid.uuid4())
+    filename = f"{unique_id}.{ext}"
+    storage_key = f"leads/{clean_lid}/{filename}"
+    filepath = os.path.join(lead_dir, filename)
 
     buf = io.BytesIO()
     if save_format == "JPEG":
-        pil_img.save(filepath, format="JPEG", quality=85, optimize=True)
-        pil_img.save(buf, format="JPEG", quality=85, optimize=True)
+        pil_img.save(filepath, format="JPEG", quality=82, optimize=True)
+        pil_img.save(buf, format="JPEG", quality=82, optimize=True)
     else:
         pil_img.save(filepath, format="PNG", optimize=True)
         pil_img.save(buf, format="PNG", optimize=True)
@@ -113,7 +152,24 @@ def process_and_store_image(
     b64_str = base64.b64encode(file_bytes).decode("utf-8")
     data_uri = f"data:{final_mime};base64,{b64_str}"
 
-    return data_uri, filepath, w, h
+    try:
+        from database import save_lead_image
+        save_lead_image(
+            image_id=unique_id,
+            lead_id=clean_lid,
+            storage_key=storage_key,
+            filename=original_filename or f"screenshot_{unique_id[:8]}.{ext}",
+            mime_type=final_mime,
+            width=w,
+            height=h,
+            num_bytes=len(file_bytes),
+            annotated_from=annotated_from,
+            created_by="user"
+        )
+    except Exception as db_err:
+        logger.warning(f"Failed to record image in images table: {db_err}")
+
+    return ProcessedImage(data_uri, filepath, w, h, unique_id, storage_key)
 
 
 def sanitize_pasted_html(raw_html: str) -> str:
@@ -145,7 +201,8 @@ def render_rich_editor(
     height: int = 280,
     owner_type: str = "general",
     owner_id: Optional[int] = None,
-    allow_source_mode: bool = True
+    allow_source_mode: bool = True,
+    lead_id: Optional[str] = None
 ) -> str:
     """
     Main entry point for the shared rich editor.
@@ -316,7 +373,7 @@ def render_rich_editor(
                     b64_raw = re.sub(r'^data:image/[a-zA-Z0-9\+\-]+;base64,', '', pasted_data)
                     raw_bytes = base64.b64decode(b64_raw)
 
-                    data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=mime)
+                    data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=mime, lead_id=lead_id)
                     tag = (f'<img src="{data_uri}" alt="Pasted Screenshot" '
                            f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
                     
@@ -377,75 +434,127 @@ def render_rich_editor(
 
     with tb_cols[4]:
         with st.popover("🖼️ Image", help="Paste (Ctrl+V), Drag & Drop, or Upload Screenshot", use_container_width=True):
-            st.markdown("<div style='font-size:13px; font-weight:700; color:#083731; margin-bottom:2px;'>🖼️ Insert Image / Screenshot</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-size:13px; font-weight:700; color:#083731; margin-bottom:4px;'>🖼️ Insert Image / Screenshot</div>", unsafe_allow_html=True)
             st.caption("💡 **Tip:** Press **Ctrl+V** or **Drag & Drop** any image directly into the text area!")
 
-            c_p1, c_p2 = st.columns([2.0, 1.2], vertical_alignment="center")
-            with c_p1:
-                st.markdown("<div style='font-size:12px; color:#475569;'><b>Clipboard grab:</b></div>", unsafe_allow_html=True)
-            with c_p2:
-                if st.button("📋 Grab Clip", type="primary", key=f"{key}_btn_paste_clip", use_container_width=True):
-                    try:
-                        clip = ImageGrab.grabclipboard()
-                        if isinstance(clip, Image.Image):
-                            buf = io.BytesIO()
-                            clip.save(buf, format="PNG")
-                            data_uri, fpath, w, h = process_and_store_image(buf.getvalue(), mime_type="image/png")
-                            tag = (f'<img src="{data_uri}" alt="Screenshot" '
-                                   f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
-                            _insert_image_tag(tag)
-                            trigger_toast(f"Pasted image ({w}x{h}px) inserted!", icon="📋")
-                        elif isinstance(clip, list) and clip:
-                            f_path = str(clip[0])
-                            if os.path.exists(f_path) and f_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')):
-                                with open(f_path, 'rb') as fp:
-                                    raw_f = fp.read()
-                                data_uri, fpath, w, h = process_and_store_image(raw_f, mime_type="image/png")
+            tabs_img = st.tabs(["📤 Upload / Paste", "🖼️ Lead Library", "🔗 Web URL"])
+
+            with tabs_img[0]:
+                c_p1, c_p2 = st.columns([2.0, 1.2], vertical_alignment="center")
+                with c_p1:
+                    st.markdown("<div style='font-size:12px; color:#475569;'><b>Clipboard grab:</b></div>", unsafe_allow_html=True)
+                with c_p2:
+                    if st.button("📋 Grab Clip", type="primary", key=f"{key}_btn_paste_clip", use_container_width=True):
+                        try:
+                            clip = ImageGrab.grabclipboard()
+                            if isinstance(clip, Image.Image):
+                                buf = io.BytesIO()
+                                clip.save(buf, format="PNG")
+                                data_uri, fpath, w, h = process_and_store_image(buf.getvalue(), mime_type="image/png", lead_id=lead_id)
                                 tag = (f'<img src="{data_uri}" alt="Screenshot" '
                                        f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
                                 _insert_image_tag(tag)
-                                trigger_toast(f"Clipboard file ({w}x{h}px) inserted!", icon="📋")
+                                trigger_toast(f"Pasted image ({w}x{h}px) inserted!", icon="📋")
+                            elif isinstance(clip, list) and clip:
+                                f_path = str(clip[0])
+                                if os.path.exists(f_path) and f_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')):
+                                    with open(f_path, 'rb') as fp:
+                                        raw_f = fp.read()
+                                    data_uri, fpath, w, h = process_and_store_image(raw_f, mime_type="image/png", lead_id=lead_id)
+                                    tag = (f'<img src="{data_uri}" alt="Screenshot" '
+                                           f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                                    _insert_image_tag(tag)
+                                    trigger_toast(f"Clipboard file ({w}x{h}px) inserted!", icon="📋")
+                                else:
+                                    st.warning("Clipboard file is not a supported image format.")
                             else:
-                                st.warning("Clipboard file is not a supported image format.")
-                        else:
-                            st.warning("No image found on clipboard. You can press Ctrl+V in the editor or upload below.")
-                    except Exception as clip_err:
-                        st.warning(f"Clipboard access: {clip_err}")
+                                st.warning("No image found on clipboard. You can press Ctrl+V in the editor or upload below.")
+                        except Exception as clip_err:
+                            st.warning(f"Clipboard access: {clip_err}")
 
-            st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:8px 0;'>", unsafe_allow_html=True)
+                st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:8px 0;'>", unsafe_allow_html=True)
 
-            up_file = st.file_uploader(
-                "Upload Image",
-                type=["png", "jpg", "jpeg", "webp"],
-                key=f"{key}_img_up",
-                label_visibility="collapsed"
-            )
-            if up_file:
-                up_file.seek(0)
-                raw_bytes = up_file.read()
-                if raw_bytes:
+                up_file = st.file_uploader(
+                    "Upload Image",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"{key}_img_up",
+                    label_visibility="collapsed"
+                )
+                if up_file:
+                    up_file.seek(0)
+                    raw_bytes = up_file.read()
+                    if raw_bytes:
+                        try:
+                            file_sig = f"{up_file.name}_{len(raw_bytes)}"
+                            last_sig_key = f"{key}_last_uploaded_sig"
+                            is_new_upload = (st.session_state.get(last_sig_key) != file_sig)
+
+                            data_uri, fpath, w, h = process_and_store_image(
+                                raw_bytes, mime_type=up_file.type or "image/png",
+                                lead_id=lead_id, original_filename=up_file.name
+                            )
+                            tag = (f'<img src="{data_uri}" alt="{html.escape(up_file.name)}" '
+                                   f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+
+                            btn_manual_ins = st.button("➕ Insert Uploaded Image", type="primary", key=f"{key}_btn_ins_up_img", use_container_width=True)
+
+                            if is_new_upload:
+                                st.session_state[last_sig_key] = file_sig
+                                _insert_image_tag(tag)
+                                trigger_toast(f"Image '{up_file.name}' inserted into email body!", icon="🖼️")
+                            elif btn_manual_ins:
+                                _insert_image_tag(tag)
+                                trigger_toast("Image inserted into email body!", icon="🖼️")
+                        except Exception as img_err:
+                            st.error(f"Error processing image: {img_err}")
+
+            with tabs_img[1]:
+                clean_lid = str(lead_id).strip() if lead_id else ""
+                if not clean_lid or clean_lid == "general":
+                    st.caption("Select a lead in Compose to view their dedicated image gallery.")
+                else:
                     try:
-                        file_sig = f"{up_file.name}_{len(raw_bytes)}"
-                        last_sig_key = f"{key}_last_uploaded_sig"
-                        is_new_upload = (st.session_state.get(last_sig_key) != file_sig)
+                        from database import get_lead_images
+                        saved_lead_imgs = get_lead_images(clean_lid)
+                    except Exception:
+                        saved_lead_imgs = []
 
-                        data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type=up_file.type or "image/png")
-                        tag = (f'<img src="{data_uri}" alt="{html.escape(up_file.name)}" '
-                               f'style="max-width:100%; width:{w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                    if not saved_lead_imgs:
+                        st.info(f"No saved images yet for lead **{clean_lid}**. Upload or paste an image to save it here!")
+                    else:
+                        st.caption(f"📁 {len(saved_lead_imgs)} saved screenshot(s) for **{clean_lid}**")
+                        for img_rec in saved_lead_imgs[:8]:
+                            with st.container(border=True):
+                                ic1, ic2 = st.columns([1.2, 2.8], vertical_alignment="center")
+                                s_key = img_rec.get("storage_key", "")
+                                full_fpath = os.path.join(UPLOADS_DIR, s_key) if not os.path.isabs(s_key) else s_key
+                                with ic1:
+                                    if os.path.exists(full_fpath):
+                                        try:
+                                            with open(full_fpath, "rb") as fp_prev:
+                                                b64_p = base64.b64encode(fp_prev.read()).decode("utf-8")
+                                            st.markdown(f'<img src="data:{img_rec.get("mime_type","image/jpeg")};base64,{b64_p}" style="max-height:44px; max-width:80px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1;" />', unsafe_allow_html=True)
+                                        except Exception:
+                                            st.caption("🖼️")
+                                    else:
+                                        st.caption("🖼️")
+                                with ic2:
+                                    f_name = img_rec.get("filename") or f"image_{img_rec['id'][:6]}"
+                                    st.markdown(f"<div style='font-size:11px; font-weight:600; line-height:1.2; word-break:break-all;'>{html.escape(f_name)}</div>", unsafe_allow_html=True)
+                                    st.caption(f"{img_rec.get('width', 0)}x{img_rec.get('height', 0)}px · {round(img_rec.get('bytes', 0)/1024, 1)} KB")
+                                    if st.button("➕ Insert at Cursor", key=f"{key}_lead_ins_{img_rec['id']}", use_container_width=True, type="secondary"):
+                                        if os.path.exists(full_fpath):
+                                            with open(full_fpath, "rb") as fp_ins:
+                                                ins_bytes = fp_ins.read()
+                                            ins_b64 = base64.b64encode(ins_bytes).decode("utf-8")
+                                            ins_data_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{ins_b64}"
+                                            ins_w = img_rec.get("width") or 600
+                                            ins_tag = (f'<img src="{ins_data_uri}" alt="{html.escape(f_name)}" '
+                                                       f'style="max-width:100%; width:{ins_w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')
+                                            _insert_image_tag(ins_tag)
+                                            trigger_toast(f"Inserted '{f_name}' at cursor!", icon="🖼️")
 
-                        btn_manual_ins = st.button("➕ Insert Uploaded Image", type="primary", key=f"{key}_btn_ins_up_img", use_container_width=True)
-
-                        if is_new_upload:
-                            st.session_state[last_sig_key] = file_sig
-                            _insert_image_tag(tag)
-                            trigger_toast(f"Image '{up_file.name}' inserted into email body!", icon="🖼️")
-                        elif btn_manual_ins:
-                            _insert_image_tag(tag)
-                            trigger_toast("Image inserted into email body!", icon="🖼️")
-                    except Exception as img_err:
-                        st.error(f"Error processing image: {img_err}")
-
-            with st.expander("🔗 Or Web URL"):
+            with tabs_img[2]:
                 img_url = st.text_input("Direct URL", placeholder="https://sellomize.com/logo.png", key=f"{key}_img_url_val")
                 img_alt = st.text_input("Alt Text", value="Screenshot", key=f"{key}_img_alt_val")
                 if st.button("Insert URL Image", key=f"{key}_btn_ins_url_img", use_container_width=True):
@@ -635,7 +744,7 @@ def render_rich_editor(
                         const img = new Image();
                         img.onload = function() {{
                             let w = img.width, h = img.height;
-                            const maxW = 600;
+                            const maxW = 1200;
                             if (w > maxW) {{
                                 h = Math.round((h * maxW) / w);
                                 w = maxW;
@@ -645,7 +754,7 @@ def render_rich_editor(
                             canvas.height = h;
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(img, 0, 0, w, h);
-                            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
                             completed.push(dataUrl);
                             pending--;
 

@@ -19,24 +19,33 @@ from ui.rich_editor import (
 class TestRichEditor(unittest.TestCase):
 
     def test_image_processing_downscale(self):
-        # Create a large dummy 1200x800 image
-        img = Image.new("RGB", (1200, 800), color=(255, 90, 31))
+        # Create a large dummy 2400x1600 image
+        img = Image.new("RGB", (2400, 1600), color=(255, 90, 31))
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
         raw_bytes = buf.getvalue()
 
-        data_uri, fpath, w, h = process_and_store_image(raw_bytes, mime_type="image/jpeg")
+        res = process_and_store_image(raw_bytes, mime_type="image/jpeg", lead_id="test_lead_99")
+        data_uri, fpath, w, h = res
 
         self.assertTrue(data_uri.startswith("data:image/jpeg;base64,"))
         self.assertTrue(os.path.exists(fpath))
-        self.assertEqual(w, MAX_IMAGE_WIDTH)  # Downscaled to 600px
-        self.assertEqual(h, 400)  # Proportional height (800 * 600 / 1200)
+        self.assertEqual(w, MAX_IMAGE_WIDTH)  # Downscaled to 1200px
+        self.assertEqual(h, 800)  # Proportional height (1600 * 1200 / 2400)
+        self.assertTrue(hasattr(res, "image_id"))
+        self.assertTrue(bool(res.image_id))
 
-        # File size under 2MB cap
+        # Check DB images record
+        from database import get_lead_images, delete_lead_image
+        lead_imgs = get_lead_images("test_lead_99")
+        self.assertTrue(any(img["id"] == res.image_id for img in lead_imgs))
+
+        # File size under 10MB cap
         fsize = os.path.getsize(fpath)
-        self.assertLess(fsize, 2 * 1024 * 1024)
+        self.assertLess(fsize, 10 * 1024 * 1024)
 
-        # Clean up test file
+        # Clean up test
+        delete_lead_image(res.image_id)
         if os.path.exists(fpath):
             try:
                 os.remove(fpath)

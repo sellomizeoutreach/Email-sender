@@ -41,6 +41,8 @@ TABLES_WITH_ID = {
     'campaign_contacts',
     'campaign_events',
     'campaign_images',
+    'images',
+    'send_jobs',
 }
 
 class RowProxy(dict):
@@ -832,6 +834,36 @@ def migrate_sqlite_to_postgres(sqlite_path: str, pg_url: Optional[str] = None) -
                     ON CONFLICT (id) DO NOTHING
                 """, tuple(r[k] for k in cols))
             safe_reset_seq("campaign_images")
+
+        # 14. images (Lead image library)
+        if table_exists_sq("images"):
+            cur_sq.execute("SELECT * FROM images")
+            img_rows = cur_sq.fetchall()
+            for r in img_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO images ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["images"] = len(img_rows)
+
+        # 15. send_jobs (DB-backed delivery queue)
+        if table_exists_sq("send_jobs"):
+            cur_sq.execute("SELECT * FROM send_jobs")
+            job_rows = cur_sq.fetchall()
+            for r in job_rows:
+                cols = list(r.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                col_str = ", ".join(cols)
+                cur_pg.execute(f"""
+                    INSERT INTO send_jobs ({col_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT (id) DO NOTHING
+                """, tuple(r[k] for k in cols))
+            stats["send_jobs"] = len(job_rows)
 
         # Deduplicate templates if any redundant records exist
         try:

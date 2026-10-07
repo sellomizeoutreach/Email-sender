@@ -41,6 +41,61 @@ from sellomize_templates import (
 )
 
 
+@st.dialog("👁️ Template Preview", width="large")
+def render_template_preview_dialog(template: Dict[str, Any], sample_lead: Optional[Dict[str, Any]] = None):
+    """Clean full-screen pop view for inspecting rendered email templates."""
+    tid = template["id"]
+    tname = template.get("template_name") or template.get("name") or f"Template #{tid}"
+    tcat = template.get("template_category") or template.get("category") or "General"
+    tsubj_raw = template.get("subject") or "No Subject"
+    tbody = template.get("body_content") or template.get("body_html") or ""
+
+    lead = sample_lead or {"name": "Alex Mercer", "first_name": "Alex", "company": "Mercer Retail", "email": "alex@mercerretail.com"}
+    resolved_subj = inject_variables(parse_spintax(tsubj_raw), lead)
+    resolved_body = resolve_template(tbody, lead)
+
+    st.markdown(
+        f'<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:12px 16px; margin-bottom:12px;">'
+        f'<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">'
+        f'<span style="font-size:11px; font-weight:700; color:#0F766E; text-transform:uppercase;">Template #{tid} · {html.escape(tcat)}</span>'
+        f'<span style="font-size:11px; color:#64748B;">Previewing as: <b>{html.escape(lead.get("name", ""))}</b> ({html.escape(lead.get("company", ""))})</span>'
+        f'</div>'
+        f'<div style="font-size:15px; font-weight:700; color:#083731;">{html.escape(tname)}</div>'
+        f'<div style="font-size:13px; color:#334155; margin-top:4px;"><b>Subject:</b> {html.escape(resolved_subj)}</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f'<div style="border:1px solid #CBD5E1; border-radius:10px; padding:18px 22px; background:#FFFFFF; max-height:420px; overflow-y:auto; font-size:14px; line-height:1.6; color:#0F172A; box-shadow:0 1px 3px rgba(0,0,0,0.04);">'
+        f'{resolved_body}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1.5, 1.5, 1], vertical_alignment="center")
+    with c1:
+        if st.button("✍️ Load into Compose", type="primary", use_container_width=True, key=f"prev_load_{tid}"):
+            st.session_state["compose_subject"] = tsubj_raw
+            st.session_state["compose_body_html"] = tbody
+            st.session_state.pop("compose_visual_textarea", None)
+            st.session_state["active_screen"] = "compose"
+            st.session_state["main_app_tabs"] = "✍️ Compose"
+            trigger_toast(f"Loaded '{tname}' into Compose!", icon="✍️")
+            st.rerun()
+    with c2:
+        if st.button("🚀 Use in Bulk Send", use_container_width=True, key=f"prev_bulk_{tid}"):
+            st.session_state["bulk_selected_template_id"] = tid
+            st.session_state["active_screen"] = "bulk"
+            st.session_state["main_app_tabs"] = "🚀 Bulk Send"
+            trigger_toast(f"Selected '{tname}' for Bulk Send!", icon="🚀")
+            st.rerun()
+    with c3:
+        if st.button("✖️ Close", use_container_width=True, key=f"prev_close_{tid}"):
+            st.rerun()
+
+
 def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
     """Render the Templates screen matching sellomize_reference.html."""
     purged_dups = deduplicate_templates()
@@ -312,7 +367,11 @@ def render_templates_tab(all_templates: Optional[List[Dict[str, Any]]] = None):
                     <div style="font-size:12px; color:#64748B; margin:3px 0 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Subject: {html.escape(tsubj_display)}</div>
                     """, unsafe_allow_html=True)
 
-                    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 0.8], vertical_alignment="center")
+                    c_view, c1, c2, c3, c4 = st.columns([0.9, 1.0, 1.0, 1.0, 0.7], vertical_alignment="center")
+                    with c_view:
+                        if st.button("👁️", key=f"tpl_prev_{tid}", use_container_width=True, help="Preview rendered email in pop view"):
+                            render_template_preview_dialog(t, sample_lead=all_leads[0] if all_leads else None)
+
                     with c1:
                         if st.button("📥 Load", key=f"tpl_load_{tid}", use_container_width=True):
                             st.session_state["compose_subject"]  = tsubj_raw
