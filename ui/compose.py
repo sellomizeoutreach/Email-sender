@@ -969,7 +969,8 @@ def render_compose_tab(contacts=None, templates=None):
                     st.rerun()
 
         # Build lead list + either dropdown or custom input
-        lead_choices: Dict[str, Any] = {}
+        EMPTY_LEAD_PLACEHOLDER = "— Select a recipient lead from CRM —"
+        lead_choices: Dict[str, Any] = {EMPTY_LEAD_PLACEHOLDER: None}
         for c in contacts:
             label = (
                 f"{c.get('name') or 'Lead'} <{c.get('email')}>"
@@ -1006,6 +1007,8 @@ def render_compose_tab(contacts=None, templates=None):
             chosen_lead_obj = lead_choices.get(sel_lead_label)
             if chosen_lead_obj and chosen_lead_obj.get("id"):
                 st.session_state["compose_selected_lead_id"] = chosen_lead_obj["id"]
+            else:
+                st.session_state.pop("compose_selected_lead_id", None)
             custom_email    = chosen_lead_obj.get("email", "") if chosen_lead_obj else ""
 
         if st.session_state.get("compose_show_bcc"):
@@ -1054,9 +1057,9 @@ def render_compose_tab(contacts=None, templates=None):
             current_lead = chosen_lead_obj
         else:
             current_lead = {
-                "name":    "Danessa Myricks",
-                "email":   "danessa@dmbeauty.com",
-                "company": "DM Beauty",
+                "name":    "",
+                "email":   "",
+                "company": "",
                 "country_or_timezone": "LOCAL",
             }
 
@@ -1338,6 +1341,16 @@ def render_compose_tab(contacts=None, templates=None):
         else:
             can_send = bool((current_lead.get("email") or "").strip())
 
+        recipient_is_specified = bool((current_lead.get("email") or "").strip())
+        if not recipient_is_specified:
+            st.markdown(
+                '<div class="banner banner-warn" style="margin-top:8px; font-size:12px; color:#B45309; background:#FEF3C7; border:1px solid #FDE68A; padding:6px 12px; border-radius:6px;">'
+                '⚠️ <b>No recipient selected:</b> Please choose a lead from the <b>To</b> dropdown or enter a custom address above before sending or scheduling.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            can_send = False
+
         if missing_tokens:
             toks_str = ", ".join(missing_tokens)
             st.markdown(
@@ -1347,7 +1360,7 @@ def render_compose_tab(contacts=None, templates=None):
                 unsafe_allow_html=True
             )
             can_send = False
-        else:
+        elif recipient_is_specified:
             st.markdown(
                 '<div class="guard"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">'
                 '<path d="M20 6 9 17l-5-5"/></svg>'
@@ -1428,12 +1441,15 @@ def render_compose_tab(contacts=None, templates=None):
                 trigger_toast("Saved as template!", icon="📋")
 
         with c_act5:
-            if st.button("🗑️ Discard", use_container_width=True, help="Clear email body, subject, and uploaded media"):
+            if st.button("🗑️ Discard", use_container_width=True, help="Clear email body, subject, recipient, and uploaded media"):
                 st.session_state["compose_subject"] = ""
                 st.session_state["compose_body_html"] = ""
                 st.session_state["compose_visual_textarea"] = ""
                 st.session_state["compose_last_synced_html"] = ""
                 st.session_state["compose_followups"] = []
+                st.session_state.pop("compose_selected_lead_id", None)
+                st.session_state.pop("comp_lead_pick", None)
+                st.session_state.pop("comp_custom_email_in", None)
                 st.session_state.pop("compose_img_up", None)
                 st.session_state.pop("comp_subj_in", None)
                 trigger_toast("Compose editor cleared.", icon="🗑️")
