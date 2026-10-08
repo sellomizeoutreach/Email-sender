@@ -711,15 +711,27 @@ def render_outbox_tab():
             mb_opts = ["All Mailboxes"] + unique_mbs
             sel_mb = st.selectbox("Mailbox", mb_opts, key="sent_sel_mb", label_visibility="collapsed")
         with sf4:
-            time_opts = ["All Time", "⚡ Sent Today", "Last 7 Days", "Last 30 Days"]
+            time_opts = ["All Time", "⚡ Sent Today", "📅 Specific Date", "📆 Date Range", "Last 7 Days", "Last 30 Days"]
             sel_time = st.selectbox("Timeframe", time_opts, key="sent_sel_time", label_visibility="collapsed")
         with sf5:
             sort_opts = ["Newest Sent First", "Oldest Sent First", "Most Opens First", "Recipient (A-Z)"]
             sel_sort = st.selectbox("Sort", sort_opts, key="sent_sel_sort", label_visibility="collapsed")
 
+        # ── 3.5 Specific Date / Date Range Pickers (Sent Tab) ──
+        now_dt = get_engine_now()
+        sent_pick_date = None
+        sent_date_range = None
+        if sel_time == "📅 Specific Date":
+            c_dp, _ = st.columns([2.5, 4.5], vertical_alignment="center")
+            with c_dp:
+                sent_pick_date = st.date_input("Filter by Sent Date (UTC+5)", value=now_dt.date(), key="sent_single_date_picker")
+        elif sel_time == "📆 Date Range":
+            c_dp, _ = st.columns([3.2, 3.8], vertical_alignment="center")
+            with c_dp:
+                sent_date_range = st.date_input("Filter by Sent Date Range (UTC+5)", value=(now_dt.date() - timedelta(days=7), now_dt.date()), key="sent_range_date_picker")
+
         # ── 4. Apply Filters ──
         filtered_sent = []
-        now_dt = get_engine_now()
         for e in sent_items:
             recip = (e.get("recipient") or "").lower().strip()
             lead = lead_map.get(recip)
@@ -749,18 +761,26 @@ def render_outbox_tab():
             if sel_mb != "All Mailboxes" and (e.get("sent_via") or "Hostinger") != sel_mb:
                 continue
 
-            # Match timeframe
+            # Match timeframe & datewise filters
             sent_str = e.get("updated_at") or e.get("created_at") or ""
             if sel_time != "All Time" and sent_str:
                 try:
-                    s_dt = datetime.strptime(sent_str[:10], "%Y-%m-%d")
-                    diff_days = (now_dt.date() - s_dt.date()).days
-                    if sel_time == "⚡ Sent Today" and diff_days > 0:
+                    s_dt = datetime.strptime(sent_str[:10], "%Y-%m-%d").date()
+                    if sel_time == "⚡ Sent Today" and s_dt != now_dt.date():
                         continue
-                    if sel_time == "Last 7 Days" and diff_days > 7:
+                    elif sel_time == "Last 7 Days" and (now_dt.date() - s_dt).days > 7:
                         continue
-                    if sel_time == "Last 30 Days" and diff_days > 30:
+                    elif sel_time == "Last 30 Days" and (now_dt.date() - s_dt).days > 30:
                         continue
+                    elif sel_time == "📅 Specific Date" and sent_pick_date:
+                        if s_dt != sent_pick_date:
+                            continue
+                    elif sel_time == "📆 Date Range" and sent_date_range:
+                        if isinstance(sent_date_range, (list, tuple)):
+                            if len(sent_date_range) == 2 and not (sent_date_range[0] <= s_dt <= sent_date_range[1]):
+                                continue
+                            elif len(sent_date_range) == 1 and s_dt < sent_date_range[0]:
+                                continue
                 except Exception:
                     pass
 
@@ -1163,15 +1183,35 @@ def render_outbox_tab():
                         st.rerun()
 
         # Scheduled queue filters
-        sf_c1, sf_c2, sf_c3, sf_c4 = st.columns([2.2, 1.4, 1.4, 1.2], vertical_alignment="center")
+        sched_time_opts = ["All Scheduled", "⚡ Due Now", "🕒 Future Only", "📅 Specific Date", "📆 Date Range", "Next 7 Days"]
+        sf_c1, sf_c2, sf_c3, sf_c4 = st.columns([2.0, 1.3, 1.5, 1.2], vertical_alignment="center")
         with sf_c1:
             sched_search = st.text_input("🔍 Search scheduled...", placeholder="Recipient, subject, or domain", label_visibility="collapsed", key="outbox_sched_search").strip().lower()
         with sf_c2:
             sched_touch_filter = st.selectbox("Touch Type", ["All Types", "📧 Initial Only", "↩️ Follow-ups Only"], label_visibility="collapsed", key="outbox_sched_touch")
         with sf_c3:
-            sched_time_filter = st.selectbox("Timing", ["All Scheduled", "⚡ Due Now", "🕒 Future Only"], label_visibility="collapsed", key="outbox_sched_timing")
+            sched_time_filter = st.selectbox("Timing", sched_time_opts, label_visibility="collapsed", key="outbox_sched_timing")
         with sf_c4:
             sched_sort = st.selectbox("Sort", ["Earliest First", "Latest First"], label_visibility="collapsed", key="outbox_sched_sort")
+
+        # ── 3.5 Specific Date / Date Range Pickers (Scheduled Tab) ──
+        now_engine_dt = get_engine_now()
+        sched_pick_date = None
+        sched_date_range = None
+        if sched_time_filter == "📅 Specific Date":
+            c_sd, _ = st.columns([2.5, 4.5], vertical_alignment="center")
+            with c_sd:
+                def_sched_date = now_engine_dt.date()
+                if distinct_sched_dates:
+                    try:
+                        def_sched_date = datetime.strptime(distinct_sched_dates[0], "%Y-%m-%d").date()
+                    except Exception:
+                        pass
+                sched_pick_date = st.date_input("Filter by Scheduled Date (UTC+5)", value=def_sched_date, key="sched_single_date_picker")
+        elif sched_time_filter == "📆 Date Range":
+            c_sd, _ = st.columns([3.2, 3.8], vertical_alignment="center")
+            with c_sd:
+                sched_date_range = st.date_input("Filter by Scheduled Date Range (UTC+5)", value=(now_engine_dt.date(), now_engine_dt.date() + timedelta(days=7)), key="sched_range_date_picker")
 
         filtered_items = []
         for e in items:
@@ -1194,6 +1234,24 @@ def render_outbox_tab():
                 continue
             if sched_time_filter == "🕒 Future Only" and is_due:
                 continue
+            if s_time and len(s_time) >= 10:
+                try:
+                    s_dt_obj = datetime.strptime(s_time[:10], "%Y-%m-%d").date()
+                    if sched_time_filter == "📅 Specific Date" and sched_pick_date:
+                        if s_dt_obj != sched_pick_date:
+                            continue
+                    elif sched_time_filter == "📆 Date Range" and sched_date_range:
+                        if isinstance(sched_date_range, (list, tuple)):
+                            if len(sched_date_range) == 2 and not (sched_date_range[0] <= s_dt_obj <= sched_date_range[1]):
+                                continue
+                            elif len(sched_date_range) == 1 and s_dt_obj < sched_date_range[0]:
+                                continue
+                    elif sched_time_filter == "Next 7 Days":
+                        diff_d = (s_dt_obj - now_engine_dt.date()).days
+                        if not (0 <= diff_d <= 7):
+                            continue
+                except Exception:
+                    pass
 
             filtered_items.append(e)
 
