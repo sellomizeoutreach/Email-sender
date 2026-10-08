@@ -23,6 +23,9 @@ from database import (
     delete_email,
     get_smtp_accounts,
     get_contacts,
+    get_contact_by_email,
+    update_contact,
+    get_config,
     mark_contact_do_not_contact,
     mark_contact_replied_manual,
     record_email_open,
@@ -246,7 +249,6 @@ def render_edit_email_dialog(email_record: Dict[str, Any]):
         except Exception:
             pass
 
-    from database import get_contact_by_email
     from template_engine import inject_variables, parse_spintax, format_email_html
     from security import sanitize_preview_html
 
@@ -1151,7 +1153,6 @@ def render_outbox_tab():
                         st.rerun()
                 with p_c2:
                     if st.button("▶️ Resume All Paused Emails", use_container_width=True, key="bulk_resume_all_btn"):
-                        from database import get_emails
                         all_e = get_emails()
                         resume_cnt = 0
                         for m_em in all_e:
