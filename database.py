@@ -667,11 +667,20 @@ def init_db(db_path: str = DB_FILE, conn: Optional[Union[sqlite3.Connection, Pos
                     bytes INTEGER DEFAULT 0,
                     annotated_from TEXT DEFAULT NULL,
                     created_at TEXT NOT NULL,
-                    created_by TEXT DEFAULT 'user'
+                    created_by TEXT DEFAULT 'user',
+                    data_uri TEXT DEFAULT ''
                 )
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_images_lead ON images(lead_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_images_annotated ON images(annotated_from)")
+
+            # Migration: Ensure data_uri column exists in images table
+            try:
+                cursor.execute("ALTER TABLE images ADD COLUMN data_uri TEXT DEFAULT ''")
+            except DB_OPERATIONAL_ERRORS as e:
+                if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                    logger.warning(f"OperationalError adding data_uri column to images: {e}")
+            conn.commit()
 
             # 11. Spec Section 3 & 9: send_jobs table (DB-backed job queue with idempotency)
             cursor.execute("""
@@ -5024,6 +5033,7 @@ def save_lead_image(
     num_bytes: int = 0,
     annotated_from: Optional[str] = None,
     created_by: str = "user",
+    data_uri: str = "",
     db_path: str = DB_FILE
 ) -> Dict[str, Any]:
     """Save image metadata into images table."""
@@ -5033,8 +5043,8 @@ def save_lead_image(
     cursor.execute("""
         INSERT INTO images (
             id, lead_id, storage_key, filename, mime_type,
-            width, height, bytes, annotated_from, created_at, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            width, height, bytes, annotated_from, created_at, created_by, data_uri
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
             lead_id = excluded.lead_id,
             storage_key = excluded.storage_key,
@@ -5044,13 +5054,15 @@ def save_lead_image(
             height = excluded.height,
             bytes = excluded.bytes,
             annotated_from = excluded.annotated_from,
-            created_by = excluded.created_by
+            created_by = excluded.created_by,
+            data_uri = excluded.data_uri
     """, (
         str(image_id).strip(), str(lead_id).strip(), str(storage_key).strip(),
         str(filename or "").strip(), str(mime_type or "image/jpeg").strip(),
         int(width or 0), int(height or 0), int(num_bytes or 0),
         str(annotated_from).strip() if annotated_from else None,
-        now_str, str(created_by or "user").strip()
+        now_str, str(created_by or "user").strip(),
+        str(data_uri or "").strip()
     ))
     conn.commit()
     conn.close()
@@ -5065,7 +5077,8 @@ def save_lead_image(
         "bytes": num_bytes,
         "annotated_from": annotated_from,
         "created_at": now_str,
-        "created_by": created_by
+        "created_by": created_by,
+        "data_uri": data_uri
     }
 
 

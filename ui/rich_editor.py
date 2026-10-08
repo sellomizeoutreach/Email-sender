@@ -165,7 +165,8 @@ def process_and_store_image(
             height=h,
             num_bytes=len(file_bytes),
             annotated_from=annotated_from,
-            created_by="user"
+            created_by="user",
+            data_uri=data_uri
         )
     except Exception as db_err:
         logger.warning(f"Failed to record image in images table: {db_err}")
@@ -532,14 +533,27 @@ def render_rich_editor(
                                 ic1, ic2 = st.columns([1.2, 2.8], vertical_alignment="center")
                                 s_key = img_rec.get("storage_key", "")
                                 full_fpath = os.path.join(UPLOADS_DIR, s_key) if not os.path.isabs(s_key) else s_key
+                                d_uri = img_rec.get("data_uri") or ""
+                                if not d_uri and os.path.exists(full_fpath):
+                                    try:
+                                        with open(full_fpath, "rb") as fp_prev:
+                                            b64_p = base64.b64encode(fp_prev.read()).decode("utf-8")
+                                        d_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{b64_p}"
+                                    except Exception:
+                                        d_uri = ""
+                                elif d_uri and not os.path.exists(full_fpath):
+                                    try:
+                                        os.makedirs(os.path.dirname(full_fpath), exist_ok=True)
+                                        if "," in d_uri:
+                                            raw_b = base64.b64decode(d_uri.split(",", 1)[1])
+                                            with open(full_fpath, "wb") as fp_w:
+                                                fp_w.write(raw_b)
+                                    except Exception:
+                                        pass
+
                                 with ic1:
-                                    if os.path.exists(full_fpath):
-                                        try:
-                                            with open(full_fpath, "rb") as fp_prev:
-                                                b64_p = base64.b64encode(fp_prev.read()).decode("utf-8")
-                                            st.markdown(f'<img src="data:{img_rec.get("mime_type","image/jpeg")};base64,{b64_p}" style="max-height:44px; max-width:80px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1;" />', unsafe_allow_html=True)
-                                        except Exception:
-                                            st.caption("🖼️")
+                                    if d_uri:
+                                        st.markdown(f'<img src="{d_uri}" style="max-height:44px; max-width:80px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1;" />', unsafe_allow_html=True)
                                     else:
                                         st.caption("🖼️")
                                 with ic2:
@@ -547,11 +561,16 @@ def render_rich_editor(
                                     st.markdown(f"<div style='font-size:11px; font-weight:600; line-height:1.2; word-break:break-all;'>{html.escape(f_name)}</div>", unsafe_allow_html=True)
                                     st.caption(f"{img_rec.get('width', 0)}x{img_rec.get('height', 0)}px · {round(img_rec.get('bytes', 0)/1024, 1)} KB")
                                     if st.button("➕ Insert at Cursor", key=f"{key}_lead_ins_{img_rec['id']}", use_container_width=True, type="secondary"):
-                                        if os.path.exists(full_fpath):
-                                            with open(full_fpath, "rb") as fp_ins:
-                                                ins_bytes = fp_ins.read()
-                                            ins_b64 = base64.b64encode(ins_bytes).decode("utf-8")
-                                            ins_data_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{ins_b64}"
+                                        ins_data_uri = d_uri
+                                        if not ins_data_uri and os.path.exists(full_fpath):
+                                            try:
+                                                with open(full_fpath, "rb") as fp_ins:
+                                                    ins_bytes = fp_ins.read()
+                                                ins_b64 = base64.b64encode(ins_bytes).decode("utf-8")
+                                                ins_data_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{ins_b64}"
+                                            except Exception:
+                                                ins_data_uri = ""
+                                        if ins_data_uri:
                                             ins_w = img_rec.get("width") or 600
                                             ins_tag = (f'<img src="{ins_data_uri}" alt="{html.escape(f_name)}" '
                                                        f'style="max-width:100%; width:{ins_w}px; height:auto; border-radius:6px; margin:14px 0; display:block; border:1px solid #E2E8F0;" />')

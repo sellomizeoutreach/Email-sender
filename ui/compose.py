@@ -142,12 +142,24 @@ def insert_lead_image_into_editor(
 
     s_key = image_rec.get("storage_key", "")
     full_fpath = os.path.join("assets/uploads", s_key) if not os.path.isabs(s_key) else s_key
-    if os.path.exists(full_fpath):
-        with open(full_fpath, "rb") as fp:
-            b64_raw = base64.b64encode(fp.read()).decode("utf-8")
-        data_uri = f"data:{image_rec.get('mime_type', 'image/jpeg')};base64,{b64_raw}"
-    else:
-        data_uri = ""
+    data_uri = image_rec.get("data_uri") or ""
+    if not data_uri and os.path.exists(full_fpath):
+        try:
+            with open(full_fpath, "rb") as fp:
+                b64_raw = base64.b64encode(fp.read()).decode("utf-8")
+            data_uri = f"data:{image_rec.get('mime_type', 'image/jpeg')};base64,{b64_raw}"
+        except Exception:
+            data_uri = ""
+    elif data_uri and not os.path.exists(full_fpath):
+        # Re-populate disk cache from persisted data_uri
+        try:
+            os.makedirs(os.path.dirname(full_fpath), exist_ok=True)
+            if "," in data_uri:
+                raw_bytes = base64.b64decode(data_uri.split(",", 1)[1])
+                with open(full_fpath, "wb") as fp_w:
+                    fp_w.write(raw_bytes)
+        except Exception:
+            pass
 
     f_name = image_rec.get("filename") or "Screenshot"
     w = image_rec.get("width") or 600
@@ -714,33 +726,26 @@ def render_compose_schedule_dialog(
     else:
         confirm_label = "🕒 Confirm Scheduled Sequence"
 
-    def _trigger_compose_submit():
-        st.session_state["_comp_dlg_do_submit"] = True
-
-    def _trigger_compose_draft():
-        st.session_state["_comp_dlg_do_draft"] = True
-
     col_act_main, col_act_draft, col_act_disc = st.columns([2.5, 1.4, 1.1], vertical_alignment="center")
     with col_act_main:
         submit_clicked = st.button(
             confirm_label,
             type="primary",
             use_container_width=True,
-            key="comp_dlg_confirm_cta",
-            on_click=_trigger_compose_submit
+            key="comp_dlg_confirm_cta"
         )
     with col_act_draft:
         save_draft_clicked = st.button(
             "💾 Save Draft",
             use_container_width=True,
             key="comp_dlg_save_draft_cta",
-            help="Save this message to Outbox as Pending draft",
-            on_click=_trigger_compose_draft
+            help="Save this message to Outbox as Pending draft"
         )
     with col_act_disc:
         discard_clicked = st.button("🗑️ Discard", use_container_width=True, key="comp_dlg_discard_cta", help="Discard outreach and close popup")
 
     if discard_clicked:
+        st.session_state["compose_dialog_open"] = False
         trigger_toast("Outreach dismissed without sending.", icon="ℹ️")
         st.rerun()
 
@@ -752,10 +757,8 @@ def render_compose_schedule_dialog(
     )
     initial_email_html = format_email_html(full_initial_body)
 
-    do_save_draft = save_draft_clicked or st.session_state.pop("_comp_dlg_do_draft", False)
-    do_submit = submit_clicked or st.session_state.pop("_comp_dlg_do_submit", False)
-
-    if do_save_draft:
+    if save_draft_clicked:
+        st.session_state["compose_dialog_open"] = False
         create_email(
             email_html=initial_email_html,
             subject=final_subj,
@@ -770,7 +773,8 @@ def render_compose_schedule_dialog(
         st.session_state["main_app_tabs"] = "📥 Outbox"
         st.rerun()
 
-    if do_submit:
+    if submit_clicked:
+        st.session_state["compose_dialog_open"] = False
         c_status = (current_lead.get("status") or "")
         if not c_status and recipient_clean:
             c_db = get_contact_by_email(recipient_clean)
@@ -1169,13 +1173,26 @@ def render_compose_tab(contacts=None, templates=None):
                             s_key = img_rec.get("storage_key", "")
                             full_fpath = os.path.join("assets/uploads", s_key) if not os.path.isabs(s_key) else s_key
                             with g_c1:
-                                if os.path.exists(full_fpath):
+                                d_uri = img_rec.get("data_uri") or ""
+                                if not d_uri and os.path.exists(full_fpath):
                                     try:
                                         with open(full_fpath, "rb") as fp_prev:
                                             b64_p = base64.b64encode(fp_prev.read()).decode("utf-8")
-                                        st.markdown(f'<img src="data:{img_rec.get("mime_type","image/jpeg")};base64,{b64_p}" style="max-height:44px; max-width:75px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1;" />', unsafe_allow_html=True)
+                                        d_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{b64_p}"
                                     except Exception:
-                                        st.caption("🖼️")
+                                        d_uri = ""
+                                elif d_uri and not os.path.exists(full_fpath):
+                                    try:
+                                        os.makedirs(os.path.dirname(full_fpath), exist_ok=True)
+                                        if "," in d_uri:
+                                            raw_b = base64.b64decode(d_uri.split(",", 1)[1])
+                                            with open(full_fpath, "wb") as fp_w:
+                                                fp_w.write(raw_b)
+                                    except Exception:
+                                        pass
+
+                                if d_uri:
+                                    st.markdown(f'<img src="{d_uri}" style="max-height:44px; max-width:75px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1;" />', unsafe_allow_html=True)
                                 else:
                                     st.caption("🖼️")
                             with g_c2:
@@ -1423,16 +1440,9 @@ def render_compose_tab(contacts=None, templates=None):
                 if not selected_mb:
                     st.error("No active mailbox configured to send.")
                 else:
-                    render_compose_schedule_dialog(
-                        mode="send_now",
-                        current_lead=current_lead,
-                        selected_mb=selected_mb,
-                        final_subj=final_subj,
-                        final_body=final_body,
-                        followup_steps=st.session_state.get("compose_followups", []),
-                        bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
-                        include_signature=st.session_state.get("compose_include_sig", True)
-                    )
+                    st.session_state["compose_dialog_open"] = True
+                    st.session_state["compose_dialog_mode"] = "send_now"
+                    st.rerun()
 
         with c_act2:
             sched_label = "🕒 Schedule"
@@ -1443,16 +1453,9 @@ def render_compose_tab(contacts=None, templates=None):
                 if not selected_mb:
                     st.error("No active mailbox configured.")
                 else:
-                    render_compose_schedule_dialog(
-                        mode="schedule",
-                        current_lead=current_lead,
-                        selected_mb=selected_mb,
-                        final_subj=final_subj,
-                        final_body=final_body,
-                        followup_steps=st.session_state.get("compose_followups", []),
-                        bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
-                        include_signature=st.session_state.get("compose_include_sig", True)
-                    )
+                    st.session_state["compose_dialog_open"] = True
+                    st.session_state["compose_dialog_mode"] = "schedule"
+                    st.rerun()
 
         with c_act3:
             if st.button("💾 Save draft", use_container_width=True, key="comp_btn_save_draft_cta"):
@@ -1568,3 +1571,22 @@ def render_compose_tab(contacts=None, templates=None):
             st.html(preview_box_html)
         else:
             st.markdown(preview_box_html, unsafe_allow_html=True)
+
+    # =========================================================================
+    # PERSISTENT MODAL DIALOG INVOCATION
+    # =========================================================================
+    if st.session_state.get("compose_dialog_open"):
+        if selected_mb and can_send:
+            render_compose_schedule_dialog(
+                mode=st.session_state.get("compose_dialog_mode", "schedule"),
+                current_lead=current_lead,
+                selected_mb=selected_mb,
+                final_subj=final_subj,
+                final_body=final_body,
+                followup_steps=st.session_state.get("compose_followups", []),
+                bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
+                include_signature=st.session_state.get("compose_include_sig", True)
+            )
+        else:
+            st.session_state["compose_dialog_open"] = False
+            st.rerun()
