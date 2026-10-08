@@ -334,6 +334,9 @@ def render_rich_editor(
         img_map[placeholder] = img_tag
 
         pos = _get_insertion_pos("image")
+        # Never insert image at position 0 before greetings when body already has content
+        if pos <= 0 and live_visual.strip():
+            pos = len(live_visual)
         before = live_visual[:pos].rstrip()
         after = live_visual[pos:].lstrip()
 
@@ -631,6 +634,12 @@ def render_rich_editor(
     # --------------------------------------------------------------------------
     # IMAGE GALLERY (THUMBNAILS + RESIZE CONTROLS)
     # --------------------------------------------------------------------------
+    # Prune phantom images from img_map that do not exist in live_visual text
+    cur_body_tokens = set(re.findall(r'\[Image\s+\d+\]', live_visual, re.IGNORECASE))
+    for ph_k in list(img_map.keys()):
+        if ph_k not in cur_body_tokens:
+            img_map.pop(ph_k, None)
+
     if img_map:
         st.markdown(
             f"<div style='font-size:12px; font-weight:700; color:#083731; margin:6px 0 4px;'>"

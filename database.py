@@ -1038,18 +1038,57 @@ def auto_restore_backup_if_needed(db_path: str = DB_FILE):
         logger.warning(f"auto_restore_backup_if_needed failed: {e}")
 
 # ------------------------------------------------------------------------------
-# SYSTEM CONFIGURATION HELPERS
+# SYSTEM CONFIGURATION HELPERS (Cached to Minimize Supabase Egress)
 # ------------------------------------------------------------------------------
 
+_CONFIG_CACHE: Dict[str, Tuple[Optional[str], float]] = {}
+_CONFIG_CACHE_TTL: float = 60.0  # 60s cache
+_CONFIG_CACHE_LOCK = threading.Lock()
+_CONFIG_CACHE_LOADED_AT: float = 0.0
+
+def invalidate_config_cache():
+    global _CONFIG_CACHE, _CONFIG_CACHE_LOADED_AT
+    with _CONFIG_CACHE_LOCK:
+        _CONFIG_CACHE.clear()
+        _CONFIG_CACHE_LOADED_AT = 0.0
+
 def get_config(key: str, default: Optional[str] = None, db_path: str = DB_FILE) -> Optional[str]:
+    global _CONFIG_CACHE, _CONFIG_CACHE_LOADED_AT
+    now = time.time()
+    is_default_db = (os.path.abspath(db_path) == os.path.abspath(DB_FILE))
+
+    if is_default_db:
+        with _CONFIG_CACHE_LOCK:
+            if key in _CONFIG_CACHE:
+                cached_val, cached_time = _CONFIG_CACHE[key]
+                if now - cached_time < _CONFIG_CACHE_TTL:
+                    return cached_val if cached_val is not None else default
+
     for attempt in range(5):
         conn = None
         try:
             conn = get_connection(db_path)
             cursor = conn.cursor()
+            if is_default_db and (now - _CONFIG_CACHE_LOADED_AT >= _CONFIG_CACHE_TTL):
+                cursor.execute("SELECT key, value FROM system_config")
+                rows = cursor.fetchall()
+                with _CONFIG_CACHE_LOCK:
+                    _CONFIG_CACHE_LOADED_AT = now
+                    for r in rows:
+                        _CONFIG_CACHE[r["key"]] = (r["value"], now)
+                    if key in _CONFIG_CACHE:
+                        return _CONFIG_CACHE[key][0]
+                    else:
+                        _CONFIG_CACHE[key] = (default, now)
+                        return default
+
             cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
             row = cursor.fetchone()
-            return row["value"] if row else default
+            val = row["value"] if row else default
+            if is_default_db:
+                with _CONFIG_CACHE_LOCK:
+                    _CONFIG_CACHE[key] = (val, now)
+            return val
         except DB_OPERATIONAL_ERRORS as e:
             err_str = str(e).lower()
             if "no such table" in err_str:
@@ -1080,6 +1119,9 @@ def set_config(key: str, value: str, db_path: str = DB_FILE):
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """, (key, value))
             conn.commit()
+            if os.path.abspath(db_path) == os.path.abspath(DB_FILE):
+                with _CONFIG_CACHE_LOCK:
+                    _CONFIG_CACHE[key] = (value, time.time())
             break
         except DB_OPERATIONAL_ERRORS as e:
             err_str = str(e).lower()

@@ -1087,6 +1087,80 @@ def render_outbox_tab():
     cur_now_ts = get_engine_now_str()
 
     if current_filter == "Scheduled":
+        # ── Bulk Reschedule / Shift Dates Toolbar (Feature / Bug #11) ──
+        with st.expander("⚡ Bulk Operations & Date Rescheduler", expanded=False):
+            st.markdown(
+                "<div style='font-size:12px; color:#475569; margin-bottom:8px;'>"
+                "Shift scheduled emails from one date to another with 1 click, or perform bulk pause/resume. "
+                "Time-of-day offsets and sequence order are preserved automatically."
+                "</div>",
+                unsafe_allow_html=True
+            )
+            distinct_sched_dates = sorted(list(set(
+                (e.get("scheduled_time") or "")[:10] for e in items if (e.get("scheduled_time") and len(e.get("scheduled_time")) >= 10)
+            )))
+
+            if not distinct_sched_dates:
+                st.caption("No dates with scheduled emails found.")
+            else:
+                b_c1, b_c2, b_c3 = st.columns([1.5, 1.5, 1.2], vertical_alignment="bottom")
+                with b_c1:
+                    src_date = st.selectbox(
+                        "Source Date to Move",
+                        options=distinct_sched_dates,
+                        format_func=lambda d: f"{d} ({sum(1 for x in items if (x.get('scheduled_time') or '')[:10] == d)} emails)",
+                        key="bulk_resched_src_date"
+                    )
+                with b_c2:
+                    default_target = (get_engine_now() + timedelta(days=1)).date()
+                    target_date = st.date_input(
+                        "Target Date to Shift Into",
+                        value=default_target,
+                        min_value=get_engine_now().date(),
+                        key="bulk_resched_target_date"
+                    )
+                with b_c3:
+                    if st.button("📅 Shift Emails", type="primary", use_container_width=True, key="bulk_resched_btn_cta"):
+                        target_date_str = target_date.strftime("%Y-%m-%d")
+                        if src_date == target_date_str:
+                            st.warning("Source and target dates are the same.")
+                        else:
+                            moved_count = 0
+                            matching_emails = [x for x in items if (x.get("scheduled_time") or "")[:10] == src_date]
+                            for m_em in matching_emails:
+                                old_sched = m_em.get("scheduled_time", "")
+                                new_sched = f"{target_date_str}{old_sched[10:]}"
+                                update_email(m_em["id"], scheduled_time=new_sched)
+                                # Sync lead next_follow_up date in CRM if applicable
+                                c_rec = get_contact_by_email(m_em.get("recipient", ""))
+                                if c_rec and c_rec.get("next_follow_up") == src_date:
+                                    update_contact(c_rec["id"], next_follow_up=target_date_str)
+                                moved_count += 1
+
+                            trigger_toast(f"Shifted {moved_count} scheduled email(s) from {src_date} to {target_date_str}!", icon="📅")
+                            st.rerun()
+
+                p_c1, p_c2 = st.columns(2)
+                with p_c1:
+                    if st.button(f"⏸️ Pause All Scheduled on {src_date}", use_container_width=True, key="bulk_pause_src_btn"):
+                        pause_cnt = 0
+                        for m_em in [x for x in items if (x.get("scheduled_time") or "")[:10] == src_date]:
+                            update_email(m_em["id"], status="Paused")
+                            pause_cnt += 1
+                        trigger_toast(f"Paused {pause_cnt} email(s) scheduled for {src_date}.", icon="⏸️")
+                        st.rerun()
+                with p_c2:
+                    if st.button("▶️ Resume All Paused Emails", use_container_width=True, key="bulk_resume_all_btn"):
+                        from database import get_emails
+                        all_e = get_emails()
+                        resume_cnt = 0
+                        for m_em in all_e:
+                            if m_em.get("status") == "Paused":
+                                update_email(m_em["id"], status="Approved")
+                                resume_cnt += 1
+                        trigger_toast(f"Resumed {resume_cnt} paused email(s) back to Scheduled queue.", icon="▶️")
+                        st.rerun()
+
         # Scheduled queue filters
         sf_c1, sf_c2, sf_c3, sf_c4 = st.columns([2.2, 1.4, 1.4, 1.2], vertical_alignment="center")
         with sf_c1:

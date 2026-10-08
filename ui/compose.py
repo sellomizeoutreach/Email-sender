@@ -106,9 +106,10 @@ def get_lead_identifier(lead: Optional[Dict[str, Any]]) -> str:
 
 def insert_lead_image_into_editor(
     image_rec: Dict[str, Any],
-    editor_key: str = "compose_rich_editor"
+    editor_key: str = "compose_rich_editor",
+    append_mode: bool = False
 ):
-    """Inserts a lead library image directly at the editor's current cursor position."""
+    """Inserts a lead library image directly into the editor body."""
     textarea_key = f"{editor_key}_visual_textarea"
     cursor_tracker_key = f"{editor_key}_cursor_pos"
     cursor_input_key = f"{editor_key}_cursor_input"
@@ -122,9 +123,11 @@ def insert_lead_image_into_editor(
     if inp_val and str(inp_val).strip().isdigit():
         current_pos = int(str(inp_val).strip())
 
-    if current_pos < 0:
+    if append_mode or (current_pos <= 0 and live_visual.strip()):
+        current_pos = len(live_visual)
+    elif current_pos < 0:
         current_pos = 0
-    if current_pos > len(live_visual):
+    elif current_pos > len(live_visual):
         current_pos = len(live_visual)
 
     if img_map_key not in st.session_state:
@@ -620,10 +623,7 @@ def render_compose_schedule_dialog(
     include_signature: bool = True,
 ):
     """Modal popup allowing exact custom date and time setting for initial email and each follow-up separately."""
-    effective_bcc = (bcc_email or "").strip()
-    if not effective_bcc:
-        effective_bcc = (get_config("bcc_email", "") or "").strip()
-    bcc_email = effective_bcc
+    bcc_email = (bcc_email or "").strip()
 
     recipient_clean = (current_lead.get("email") or "").strip()
     recipient_name  = current_lead.get("name") or recipient_clean
@@ -713,12 +713,30 @@ def render_compose_schedule_dialog(
         confirm_label = "🚀 Send Now" if not followup_steps else f"🚀 Send Now (+{len(followup_steps)} FU)"
     else:
         confirm_label = "🕒 Confirm Scheduled Sequence"
-    
+
+    def _trigger_compose_submit():
+        st.session_state["_comp_dlg_do_submit"] = True
+
+    def _trigger_compose_draft():
+        st.session_state["_comp_dlg_do_draft"] = True
+
     col_act_main, col_act_draft, col_act_disc = st.columns([2.5, 1.4, 1.1], vertical_alignment="center")
     with col_act_main:
-        submit_clicked = st.button(confirm_label, type="primary", use_container_width=True, key="comp_dlg_confirm_cta")
+        submit_clicked = st.button(
+            confirm_label,
+            type="primary",
+            use_container_width=True,
+            key="comp_dlg_confirm_cta",
+            on_click=_trigger_compose_submit
+        )
     with col_act_draft:
-        save_draft_clicked = st.button("💾 Save Draft", use_container_width=True, key="comp_dlg_save_draft_cta", help="Save this message to Outbox as Pending draft")
+        save_draft_clicked = st.button(
+            "💾 Save Draft",
+            use_container_width=True,
+            key="comp_dlg_save_draft_cta",
+            help="Save this message to Outbox as Pending draft",
+            on_click=_trigger_compose_draft
+        )
     with col_act_disc:
         discard_clicked = st.button("🗑️ Discard", use_container_width=True, key="comp_dlg_discard_cta", help="Discard outreach and close popup")
 
@@ -734,7 +752,10 @@ def render_compose_schedule_dialog(
     )
     initial_email_html = format_email_html(full_initial_body)
 
-    if save_draft_clicked:
+    do_save_draft = save_draft_clicked or st.session_state.pop("_comp_dlg_do_draft", False)
+    do_submit = submit_clicked or st.session_state.pop("_comp_dlg_do_submit", False)
+
+    if do_save_draft:
         create_email(
             email_html=initial_email_html,
             subject=final_subj,
@@ -749,7 +770,7 @@ def render_compose_schedule_dialog(
         st.session_state["main_app_tabs"] = "📥 Outbox"
         st.rerun()
 
-    if submit_clicked:
+    if do_submit:
         c_status = (current_lead.get("status") or "")
         if not c_status and recipient_clean:
             c_db = get_contact_by_email(recipient_clean)
@@ -842,7 +863,7 @@ def render_compose_schedule_dialog(
                 if c_updates:
                     update_contact(c_match["id"], **c_updates)
 
-            # Auto-clean Compose fields and uploaded media after sending
+            # Auto-clean Compose fields, recipient, and uploaded media after sending
             st.session_state["compose_followups"] = []
             st.session_state["compose_subject"] = ""
             st.session_state["compose_body_html"] = ""
@@ -851,6 +872,11 @@ def render_compose_schedule_dialog(
             st.session_state.pop("compose_img_up", None)
             st.session_state.pop("comp_subj_in", None)
             st.session_state.pop("compose_custom_email_input", None)
+            st.session_state.pop("compose_selected_lead_id", None)
+            st.session_state.pop("comp_lead_pick", None)
+            st.session_state.pop("comp_custom_email_in", None)
+            st.session_state.pop("comp_recipient_email", None)
+            st.session_state.pop("compose_to_text", None)
 
             if init_dt is None:
                 if ok:
@@ -883,10 +909,21 @@ def render_compose_tab(contacts=None, templates=None):
 
     smtp_accounts = get_smtp_accounts(active_only=True)
 
+    # Ensure fresh compose starts with an EMPTY recipient unless an explicit prefill was passed
+    if "compose_active_session" not in st.session_state:
+        st.session_state["compose_active_session"] = True
+        st.session_state.pop("compose_selected_lead_id", None)
+        st.session_state.pop("comp_lead_pick", None)
+        st.session_state["comp_recipient_email"] = ""
+
     # Prefill from Leads tab, Outbox, or prior screen
     prefill_lead_id = st.session_state.pop("prefill_compose_lead_id", None)
     if prefill_lead_id:
         st.session_state["compose_selected_lead_id"] = prefill_lead_id
+        for c in (contacts or []):
+            if c.get("id") == prefill_lead_id:
+                st.session_state["comp_recipient_email"] = c.get("email", "")
+                break
 
     # Handle incoming compose_recipient (e.g. from Outbox follow-up or takeover)
     incoming_recipient = st.session_state.pop("compose_recipient", None)
@@ -895,16 +932,7 @@ def render_compose_tab(contacts=None, templates=None):
         matched_lead_for_inc = get_contact_by_email(inc_clean)
         if matched_lead_for_inc:
             st.session_state["compose_selected_lead_id"] = matched_lead_for_inc["id"]
-            st.session_state["compose_custom_mode"] = False
-            st.session_state.pop("comp_lead_pick", None)
-        else:
-            st.session_state["compose_custom_mode"] = True
-            st.session_state["compose_custom_email_in"] = inc_clean
-            st.session_state["comp_custom_email_in"] = inc_clean
-            st.session_state.pop("comp_lead_pick", None)
-    elif "compose_selected_lead_id" in st.session_state:
-        # If lead ID was updated externally, ensure selectbox key reflects it
-        pass
+        st.session_state["comp_recipient_email"] = inc_clean
 
     # Default body / subject
     if "compose_body_html" not in st.session_state:
@@ -916,10 +944,6 @@ def render_compose_tab(contacts=None, templates=None):
     if "compose_subject" not in st.session_state:
         st.session_state["compose_subject"] = "[Company] + Amazon"
 
-    # Custom-address mode flag
-    if "compose_custom_mode" not in st.session_state:
-        st.session_state["compose_custom_mode"] = False
-
     # Follow-up sequence state in Compose (same row tabs)
     if "compose_followups" not in st.session_state:
         st.session_state["compose_followups"] = []
@@ -928,7 +952,7 @@ def render_compose_tab(contacts=None, templates=None):
 
     with col_editor:
         # =====================================================================
-        # ROW 1 — Mailbox + Recipient + Custom-address toggle
+        # ROW 1 — Mailbox + Recipient + BCC toggle
         # =====================================================================
         c_mb, c_rcpt = st.columns(2)
 
@@ -949,13 +973,10 @@ def render_compose_tab(contacts=None, templates=None):
                 selected_mb = mb_choices[sel_mb_label]
 
         with c_rcpt:
-            st.markdown('<span class="lbl">To (lead or type an address)</span>', unsafe_allow_html=True)
-            custom_mode = st.session_state["compose_custom_mode"]
-            btn_label   = "📋 Pick CRM" if custom_mode else "✏️ Custom"
-
+            st.markdown('<span class="lbl">To (Lead or direct address)</span>', unsafe_allow_html=True)
             global_bcc = get_config("bcc_email", "") or ""
             if "compose_show_bcc" not in st.session_state:
-                st.session_state["compose_show_bcc"] = bool(global_bcc.strip())
+                st.session_state["compose_show_bcc"] = False
             if "compose_bcc_email" not in st.session_state:
                 st.session_state["compose_bcc_email"] = global_bcc
 
@@ -965,56 +986,63 @@ def render_compose_tab(contacts=None, templates=None):
 
             col_rcpt_b1, col_rcpt_b2 = st.columns([1.1, 0.9])
             with col_rcpt_b1:
-                if st.button(btn_label, key="comp_custom_toggle", use_container_width=True):
-                    st.session_state["compose_custom_mode"] = not custom_mode
+                if st.button("✖ Clear To", key="comp_clear_to_btn", use_container_width=True, help="Reset recipient field"):
+                    st.session_state.pop("compose_selected_lead_id", None)
+                    st.session_state.pop("comp_lead_pick", None)
+                    st.session_state["comp_recipient_email"] = ""
                     st.rerun()
             with col_rcpt_b2:
                 if st.button(bcc_btn_label, key="comp_bcc_toggle", use_container_width=True):
                     st.session_state["compose_show_bcc"] = not show_bcc
                     st.rerun()
 
-        # Build lead list + either dropdown or custom input
-        EMPTY_LEAD_PLACEHOLDER = "— Select a recipient lead from CRM —"
+        # Build lead list for CRM selector
+        EMPTY_LEAD_PLACEHOLDER = "— Pick from CRM leads (or type below) —"
         lead_choices: Dict[str, Any] = {EMPTY_LEAD_PLACEHOLDER: None}
-        for c in contacts:
+        for c in (contacts or []):
             label = (
                 f"{c.get('name') or 'Lead'} <{c.get('email')}>"
                 + (f" — {c.get('company')}" if c.get("company") else "")
             )
             lead_choices[label] = c
 
-        if st.session_state["compose_custom_mode"]:
-            custom_email = st.text_input(
-                "Custom recipient email",
-                placeholder="e.g. partner@example.com or Jane Doe <jane@example.com>",
-                label_visibility="collapsed",
-                key="comp_custom_email_in"
-            )
-            chosen_lead_obj = None
-        else:
-            preselected_idx = 0
-            target_prefill_id = st.session_state.get("compose_selected_lead_id")
-            lead_choice_keys = list(lead_choices.keys())
-            if target_prefill_id:
-                for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
-                    if l_obj and l_obj.get("id") == target_prefill_id:
-                        preselected_idx = idx
-                        if st.session_state.get("comp_lead_pick") != lbl:
-                            st.session_state["comp_lead_pick"] = lbl
-                        break
+        def _on_crm_select():
+            picked_lbl = st.session_state.get("comp_lead_pick")
+            matched_obj = lead_choices.get(picked_lbl)
+            if matched_obj:
+                st.session_state["compose_selected_lead_id"] = matched_obj.get("id")
+                st.session_state["comp_recipient_email"] = matched_obj.get("email", "")
+            elif picked_lbl == EMPTY_LEAD_PLACEHOLDER:
+                st.session_state.pop("compose_selected_lead_id", None)
 
-            sel_lead_label = st.selectbox(
-                "To", lead_choice_keys,
+        preselected_idx = 0
+        target_prefill_id = st.session_state.get("compose_selected_lead_id")
+        lead_choice_keys = list(lead_choices.keys())
+        if target_prefill_id:
+            for idx, (lbl, l_obj) in enumerate(lead_choices.items()):
+                if l_obj and l_obj.get("id") == target_prefill_id:
+                    preselected_idx = idx
+                    break
+
+        col_to_crm, col_to_in = st.columns([1.2, 1.8], gap="small")
+        with col_to_crm:
+            st.selectbox(
+                "CRM Leads",
+                lead_choice_keys,
                 index=preselected_idx if preselected_idx < len(lead_choice_keys) else 0,
                 label_visibility="collapsed",
-                key="comp_lead_pick"
+                key="comp_lead_pick",
+                on_change=_on_crm_select
             )
-            chosen_lead_obj = lead_choices.get(sel_lead_label)
-            if chosen_lead_obj and chosen_lead_obj.get("id"):
-                st.session_state["compose_selected_lead_id"] = chosen_lead_obj["id"]
-            else:
-                st.session_state.pop("compose_selected_lead_id", None)
-            custom_email    = chosen_lead_obj.get("email", "") if chosen_lead_obj else ""
+        with col_to_in:
+            if "comp_recipient_email" not in st.session_state:
+                st.session_state["comp_recipient_email"] = ""
+            recipient_email_val = st.text_input(
+                "To Email",
+                placeholder="e.g. partner@brand.com (or select from CRM on left)",
+                label_visibility="collapsed",
+                key="comp_recipient_email"
+            )
 
         if st.session_state.get("compose_show_bcc"):
             st.markdown(
@@ -1031,6 +1059,16 @@ def render_compose_tab(contacts=None, templates=None):
                 key="comp_bcc_input_field"
             )
             st.session_state["compose_bcc_email"] = comp_bcc_val
+
+        # Resolve active recipient
+        custom_email = (st.session_state.get("comp_recipient_email") or "").strip()
+        chosen_lead_obj = None
+        target_lead_id = st.session_state.get("compose_selected_lead_id")
+        if target_lead_id and contacts:
+            for c in contacts:
+                if c.get("id") == target_lead_id:
+                    chosen_lead_obj = c
+                    break
 
         # Resolve active recipient
         if custom_email.strip():
@@ -1116,14 +1154,8 @@ def render_compose_tab(contacts=None, templates=None):
                                 lead_id=lead_id_str,
                                 original_filename=up_lead_file.name
                             )
-                            # Auto-insert at cursor
-                            insert_lead_image_into_editor({
-                                "storage_key": proc_img.storage_key,
-                                "filename": up_lead_file.name,
-                                "mime_type": up_lead_file.type or "image/jpeg",
-                                "width": proc_img.width,
-                            }, editor_key="compose_rich_editor")
-                            trigger_toast(f"Saved & inserted '{up_lead_file.name}' at cursor!", icon="🖼️")
+                            # Save to Lead Library only - do NOT auto-insert at pos 0
+                            trigger_toast(f"Saved '{up_lead_file.name}' to Lead Library! Click 'Append' or 'Insert' below.", icon="🖼️")
                             st.rerun()
 
                 st.markdown("<hr style='border:0; border-top:1px solid #E2E8F0; margin:8px 0;'>", unsafe_allow_html=True)
@@ -1151,7 +1183,11 @@ def render_compose_tab(contacts=None, templates=None):
                                 st.markdown(f"<div style='font-size:11px; font-weight:600; line-height:1.2; word-break:break-all;'>{html.escape(f_name)}</div>", unsafe_allow_html=True)
                                 st.caption(f"{img_rec.get('width', 0)}x{img_rec.get('height', 0)}px · {round(img_rec.get('bytes', 0)/1024, 1)} KB")
                             with g_c3:
-                                if st.button("➕ Insert", key=f"comp_ins_btn_{img_rec['id']}", use_container_width=True, type="primary", help="Insert at cursor in email body"):
+                                if st.button("➕ Append", key=f"comp_app_btn_{img_rec['id']}", use_container_width=True, type="primary", help="Append safely at end of email body"):
+                                    insert_lead_image_into_editor(img_rec, editor_key="compose_rich_editor", append_mode=True)
+                                    trigger_toast(f"Appended image to email body!", icon="🖼️")
+                                    st.rerun()
+                                if st.button("➕ Insert", key=f"comp_ins_btn_{img_rec['id']}", use_container_width=True, help="Insert at cursor in email body"):
                                     insert_lead_image_into_editor(img_rec, editor_key="compose_rich_editor")
                                     trigger_toast(f"Inserted image at cursor!", icon="🖼️")
                                     st.rerun()
@@ -1419,23 +1455,28 @@ def render_compose_tab(contacts=None, templates=None):
                     )
 
         with c_act3:
-            if st.button("💾 Save draft", use_container_width=True):
+            if st.button("💾 Save draft", use_container_width=True, key="comp_btn_save_draft_cta"):
                 inc_sig = st.session_state.get("compose_include_sig", True)
                 sig_html = get_config("signature_html", "") or "Jack Connor · Sellomize · sales@sellomize.com"
                 draft_body = f"{final_body}<br><br>{sig_html}" if (inc_sig and sig_html and sig_html not in final_body) else final_body
+                recip_email = (current_lead.get("email") or "").strip() or (st.session_state.get("comp_recipient_email") or "").strip()
                 create_email(
                     email_html=format_email_html(draft_body),
                     subject=final_subj,
-                    recipient=current_lead.get("email", "").strip(),
-                    status="Pending",
+                    recipient=recip_email,
+                    status="Draft",
                     scheduled_time=get_engine_now_str(),
                     target_timezone="LOCAL",
                     bcc_email=st.session_state.get("compose_bcc_email", "").strip()
                 )
                 trigger_toast("Draft saved to Outbox.", icon="💾")
+                st.session_state["active_screen"] = "outbox"
+                st.session_state["main_app_tabs"] = "📥 Outbox"
+                st.session_state["outbox_filter"] = "Drafts"
+                st.rerun()
 
         with c_act4:
-            if st.button("📋 Save template", use_container_width=True):
+            if st.button("📋 Save template", use_container_width=True, key="comp_btn_save_tpl_cta"):
                 new_t_name = f"Template: {subj_val[:28]}" if subj_val else "Saved Template"
                 create_template(
                     template_name=new_t_name,
@@ -1446,7 +1487,7 @@ def render_compose_tab(contacts=None, templates=None):
                 trigger_toast("Saved as template!", icon="📋")
 
         with c_act5:
-            if st.button("🗑️ Discard", use_container_width=True, help="Clear email body, subject, recipient, and uploaded media"):
+            if st.button("🗑️ Discard", use_container_width=True, key="comp_btn_discard_cta", help="Clear email body, subject, recipient, and uploaded media"):
                 st.session_state["compose_subject"] = ""
                 st.session_state["compose_body_html"] = ""
                 st.session_state["compose_visual_textarea"] = ""
@@ -1455,6 +1496,7 @@ def render_compose_tab(contacts=None, templates=None):
                 st.session_state.pop("compose_selected_lead_id", None)
                 st.session_state.pop("comp_lead_pick", None)
                 st.session_state.pop("comp_custom_email_in", None)
+                st.session_state["comp_recipient_email"] = ""
                 st.session_state.pop("compose_img_up", None)
                 st.session_state.pop("comp_subj_in", None)
                 trigger_toast("Compose editor cleared.", icon="🗑️")

@@ -59,7 +59,7 @@ def ensure_background_scheduler():
         from scheduler import start_scheduler_loop
         t = threading.Thread(
             target=start_scheduler_loop,
-            kwargs={"interval": 15},
+            kwargs={"interval": 60},
             name="SellomizeSchedulerThread",
             daemon=True
         )
@@ -113,19 +113,30 @@ try:
 except Exception:
     pass
 
+@st.cache_data(ttl=60)
+def get_cached_contacts():
+    return get_contacts()
+
+@st.cache_data(ttl=60)
+def get_cached_templates():
+    return get_templates()
+
 # ==============================================================================
 # RENDER ACTIVE SCREEN (Lazy-load DB datasets only when required by active screen)
 # ==============================================================================
+if screen_key != "compose":
+    st.session_state.pop("compose_active_session", None)
+
 if screen_key == "compose":
-    render_compose_tab(get_contacts(), get_templates())
+    render_compose_tab(get_cached_contacts(), get_cached_templates())
 elif screen_key == "templates":
-    render_templates_tab(get_templates())
+    render_templates_tab(get_cached_templates())
 elif screen_key == "ai_studio":
-    render_ai_studio_tab(get_contacts())
+    render_ai_studio_tab(get_cached_contacts())
 elif screen_key == "leads":
-    render_leads_tab(get_contacts())
+    render_leads_tab(get_cached_contacts())
 elif screen_key == "campaigns":
-    render_campaigns_tab(get_contacts(), get_templates())
+    render_campaigns_tab(get_cached_contacts(), get_cached_templates())
 elif screen_key == "bulk":
     render_bulk_tab()
 elif screen_key == "outbox":

@@ -914,6 +914,8 @@ def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
 
     return generated_count
 
+_LAST_HEARTBEAT_WRITE: float = 0.0
+
 def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) -> int:
     """
     Check database for due approved emails and dispatch them.
@@ -921,13 +923,17 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     and validates whether current time falls within allowed business sending days & hours.
     Also processes automated follow-up sequence rules whose send delay has elapsed.
     """
+    global _LAST_HEARTBEAT_WRITE
     target_db = db_path or DB_FILE
 
-    # Record worker heartbeat timestamp in UTC+5
-    try:
-        set_config("worker_heartbeat", get_engine_now_str(), db_path=target_db)
-    except Exception:
-        pass
+    # Record worker heartbeat timestamp in UTC+5 (throttled to once every 3 minutes to save Supabase egress)
+    now_epoch = time.time()
+    if now_epoch - _LAST_HEARTBEAT_WRITE >= 180.0:
+        try:
+            set_config("worker_heartbeat", get_engine_now_str(), db_path=target_db)
+            _LAST_HEARTBEAT_WRITE = now_epoch
+        except Exception:
+            pass
 
     # 1. Process automated follow-up sequence rules waiting on send delays
     try:
@@ -1000,7 +1006,7 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
         logger.debug(f"Heartbeat: No due approved emails at Local Time {now_local_str}.")
         return 0
 
-def start_scheduler_loop(interval: int = 15, stop_event=None):
+def start_scheduler_loop(interval: int = 60, stop_event=None):
     """
     Run the scheduler loop continuously. Used by launcher.py to run the
     scheduler as a background thread within the unified desktop app.
@@ -1041,7 +1047,7 @@ def start_scheduler_loop(interval: int = 15, stop_event=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Standalone Outlook Email Dispatch Scheduler")
-    parser.add_argument("--interval", type=int, default=15, help="Polling interval in seconds (default: 15)")
+    parser.add_argument("--interval", type=int, default=60, help="Polling interval in seconds (default: 60)")
     parser.add_argument("--once", action="store_true", help="Run a single polling cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="Dry run without sending real Outlook emails")
     args = parser.parse_args()
