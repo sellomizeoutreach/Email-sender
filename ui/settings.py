@@ -604,15 +604,24 @@ def render_settings_tab():
         worker_active = False
         last_hb_display = "Never started"
 
+        import threading
+        thread_alive = any(t.name == "SellomizeSchedulerThread" and t.is_alive() for t in threading.enumerate())
+
         if heartbeat_str:
             try:
                 hb_dt = datetime.strptime(heartbeat_str[:19], "%Y-%m-%d %H:%M:%S")
-                sec_diff = (datetime.now() - hb_dt).total_seconds()
-                if sec_diff < 45:
+                now_dt = get_engine_now()
+                sec_diff = abs((now_dt.replace(tzinfo=None) - hb_dt).total_seconds())
+                if sec_diff < 150 or thread_alive:
                     worker_active = True
                 last_hb_display = f"{int(sec_diff)}s ago"
             except Exception:
                 last_hb_display = heartbeat_str
+                if thread_alive:
+                    worker_active = True
+        elif thread_alive:
+            worker_active = True
+            last_hb_display = "thread active"
 
         w_col1, w_col2, w_col3 = st.columns(3)
         with w_col1:

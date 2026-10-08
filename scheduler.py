@@ -509,12 +509,18 @@ def assign_sender_account(mail_item, account):
             logger.error(f"OLE Invoke fallback also failed: {ole_err}")
             raise RuntimeError(f"Could not bind Outlook account to message: {ole_err}")
 
-def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE):
+def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE) -> bool:
+    """Backward-compatible wrapper for dispatch_email_hostinger_detailed."""
+    success, _ = dispatch_email_hostinger_detailed(email_record, dry_run=dry_run, db_path=db_path)
+    return success
+
+def dispatch_email_hostinger_detailed(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE) -> Tuple[bool, str]:
     """
     Dispatch a single approved email record through Hostinger Direct SMTP.
     Rotates through active Hostinger SMTP accounts, respects daily limits,
     attaches HTML body and signature, and sends via SSL/TLS.
     Shields reputation with pre-flight MX and DNS sanity verification.
+    Returns (success: bool, detail_or_error_message: str).
     """
     email_id = email_record["id"]
     recipient = sanitize_header(email_record.get("recipient", ""))
@@ -536,7 +542,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         err_msg = "Recipient email address is missing or empty."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
         mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
-        return False
+        return False, err_msg
 
     # 1. Pre-flight Compliance Guard: Strictly suppress Do Not Contact / Unsubscribed recipients
     from database import get_contact_by_email
@@ -548,7 +554,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
                 suppress_msg = f"Suppressed (CAN-SPAM/DNC): Recipient '{rc}' is marked as 'Do Not Contact'."
                 logger.info(f"Email ID #{email_id}: {suppress_msg}")
                 mark_email_error(email_id, status="Cancelled", error_message=suppress_msg, db_path=db_path)
-                return False
+                return False, suppress_msg
 
     # 2. Pre-flight MX record and domain sanity check
     enforce_mx = (get_config("enforce_mx_check", "true", db_path=db_path) or "true").strip().lower() == "true"
@@ -559,7 +565,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
             logger.warning(f"Email ID #{email_id}: Intercepting dead domain dispatch for '{recipient}'. Reason: {bounce_err}")
             mark_email_error(email_id, status="Bounced", error_message=bounce_err, db_path=db_path)
             record_email_bounce(recipient_email=recipient, bounce_reason=bounce_err, db_path=db_path)
-            return False
+            return False, bounce_err
 
     # Fetch next active Hostinger account in rotation
     smtp_account = get_next_available_smtp_account(db_path=db_path)
@@ -567,7 +573,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         err_msg = "No active Hostinger SMTP account available (or all configured accounts have reached their daily sending limit)."
         logger.warning(f"Email ID #{email_id}: {err_msg}")
         mark_email_error(email_id, status="Error", error_message=err_msg, db_path=db_path)
-        return False
+        return False, err_msg
 
     # Prepare signature, tracking pixel, and payload
     signature_html = (get_config("signature_html", db_path=db_path) or "").strip()
@@ -584,7 +590,6 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         include_signature=(not is_followup or has_sig)
     )
 
-
     # Legal & Compliance: Opt-out footer notice if enabled in Settings
     opt_out_on = (get_config("append_opt_out_footer", "false", db_path=db_path) or "false").lower() in ["true", "1", "yes"]
     if opt_out_on:
@@ -599,7 +604,7 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
         logger.info(f"[DRY RUN Hostinger SMTP] Would send Email ID #{email_id} to '{recipient}' from '{smtp_account['email']}' via Hostinger.")
         mark_email_sent(email_id, db_path=db_path)
         advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
-        return True
+        return True, "Dry run simulated successfully"
 
     in_reply_to_header = email_record.get("in_reply_to") or None
     msg_id_tracker = []
@@ -634,14 +639,14 @@ def dispatch_email_hostinger(email_record: dict, dry_run: bool = False, db_path:
                     advance_contact_followup(rs, delay_days=followup_delay, db_path=db_path)
             advance_contact_followup(recipient, delay_days=followup_delay, db_path=db_path)
             logger.info(f"Successfully dispatched Email ID #{email_id} to '{recipient}' via Hostinger account '{smtp_account['email']}'.")
-            return True
+            return True, f"Sent via Hostinger ({smtp_account['email']})"
         else:
             mark_email_error(email_id, status="Error", error_message=msg, db_path=db_path)
-            return False
+            return False, msg
     except Exception as dispatch_err:
         logger.error(f"Error during post-dispatch processing for Email ID #{email_id}: {dispatch_err}")
         mark_email_error(email_id, status="Error", error_message=str(dispatch_err), db_path=db_path)
-        return False
+        return False, str(dispatch_err)
 
 def dispatch_email_outlook(email_record: dict, dry_run: bool = False, db_path: str = DB_FILE):
     """
@@ -926,9 +931,9 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     global _LAST_HEARTBEAT_WRITE
     target_db = db_path or DB_FILE
 
-    # Record worker heartbeat timestamp in UTC+5 (throttled to once every 3 minutes to save Supabase egress)
+    # Record worker heartbeat timestamp in UTC+5 (recorded every 60s so UI never flaps)
     now_epoch = time.time()
-    if now_epoch - _LAST_HEARTBEAT_WRITE >= 180.0:
+    if now_epoch - _LAST_HEARTBEAT_WRITE >= 60.0:
         try:
             set_config("worker_heartbeat", get_engine_now_str(), db_path=target_db)
             _LAST_HEARTBEAT_WRITE = now_epoch
@@ -1010,8 +1015,14 @@ def start_scheduler_loop(interval: int = 60, stop_event=None):
     """
     Run the scheduler loop continuously. Used by launcher.py to run the
     scheduler as a background thread within the unified desktop app.
+    Auto-restarts and catches unexpected exceptions so the daemon never crashes silently.
     """
     init_db()
+    try:
+        set_config("worker_heartbeat", get_engine_now_str())
+    except Exception:
+        pass
+
     try:
         start_tracking_server(port=8502)
     except Exception as t_err:
@@ -1026,6 +1037,7 @@ def start_scheduler_loop(interval: int = 60, stop_event=None):
             run_scheduler_cycle(dry_run=False)
         except Exception as cycle_err:
             logger.error(f"Unexpected error in scheduler cycle: {cycle_err}")
+            time.sleep(2)
 
         # Periodically scan Hostinger IMAP for NDR bounces & prospect replies (e.g. every 10 cycles)
         if cycle_counter % 10 == 0:

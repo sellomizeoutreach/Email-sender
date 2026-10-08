@@ -33,20 +33,27 @@ def get_logo_data_uri() -> str:
 
 
 def get_worker_status(db_path: str = DB_FILE) -> Tuple[bool, str, str]:
-    """Evaluate background worker daemon health based on worker_heartbeat in settings."""
+    """Evaluate background worker daemon health based on daemon thread & worker_heartbeat."""
+    import threading
+    thread_alive = any(t.name == "SellomizeSchedulerThread" and t.is_alive() for t in threading.enumerate())
     try:
         heartbeat_str = (get_config("worker_heartbeat", "", db_path=db_path) or "").strip()
-        if not heartbeat_str:
-            return False, "Sender Stopped", "Scheduled mail won't send until worker is started."
+        diff_seconds = None
+        if heartbeat_str:
+            hb_dt = datetime.strptime(heartbeat_str[:19], "%Y-%m-%d %H:%M:%S")
+            now_dt = get_engine_now()
+            diff_seconds = abs((now_dt.replace(tzinfo=None) - hb_dt).total_seconds())
 
-        hb_dt = datetime.strptime(heartbeat_str[:19], "%Y-%m-%d %H:%M:%S")
-        now_dt = get_engine_now()
-        diff_seconds = abs((now_dt.replace(tzinfo=None) - hb_dt).total_seconds())
-        if diff_seconds < 45:
-            return True, "Sender Running", f"Worker active (heartbeat: {int(diff_seconds)}s ago)"
-        else:
+        if thread_alive or (diff_seconds is not None and diff_seconds < 150):
+            hb_text = f"{int(diff_seconds)}s ago" if diff_seconds is not None else "daemon active"
+            return True, "Sender Running", f"Worker active (heartbeat: {hb_text})"
+        elif diff_seconds is not None:
             return False, "Sender Stale", f"Last heartbeat was {int(diff_seconds // 60)}m ago."
+        else:
+            return False, "Sender Stopped", "Scheduled mail won't send until worker is started."
     except Exception:
+        if thread_alive:
+            return True, "Sender Running", "Worker daemon active."
         return False, "Sender Stopped", "Could not check worker heartbeat."
 
 

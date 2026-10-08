@@ -52,11 +52,12 @@ from template_engine import (
     deduplicate_email_signature,
     has_signature_marker,
 )
-from scheduler import dispatch_email_hostinger
+from scheduler import dispatch_email_hostinger, dispatch_email_hostinger_detailed
 from timezone_helper import get_engine_now, get_engine_now_str
 from ui.editor import render_dual_mode_editor, visual_text_to_html
 from ui.rich_editor import render_rich_editor, is_rich_editor_enabled, process_and_store_image
 from ui.components import trigger_toast
+from ui.shell import get_worker_status
 
 _TOKEN_RE = re.compile(r'\[([A-Za-z0-9_]+)\]|\{([A-Za-z0-9_]+)\}')
 
@@ -619,6 +620,78 @@ def render_add_followup_dialog(
 
 
 # ---------------------------------------------------------------------------
+# Dialog: Outreach Send Confirmation Popup (Success / Failure)
+# ---------------------------------------------------------------------------
+
+@st.dialog("📤 Outreach Status", width="medium")
+def render_send_confirmation_popup():
+    """Persistent confirmation popup displayed after every send attempt (Send now or Scheduled)."""
+    info = st.session_state.get("send_confirmation_popup", {})
+    if not info:
+        return
+
+    status = info.get("status", "success")
+    action_type = info.get("type", "sent")
+    recipient = info.get("recipient", "")
+    timestamp = info.get("time", get_engine_now_str())
+    reason = info.get("reason", "")
+    followups_count = info.get("followups_count", 0)
+    subject = info.get("subject", "")
+
+    if status == "success":
+        if action_type == "sent":
+            st.success(f"### 🚀 Email sent to {recipient} at {timestamp}")
+        else:
+            st.success(f"### 🕒 Email scheduled for {recipient} at {timestamp}")
+
+        if subject:
+            st.markdown(f"**Subject:** *{html.escape(subject)}*")
+        if followups_count > 0:
+            st.caption(f"↩️ Along with {followups_count} follow-up step(s) with customized schedule.")
+
+        st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+        col_outbox, col_compose = st.columns(2)
+        with col_outbox:
+            if st.button("📥 View in Outbox", type="primary", use_container_width=True, key="popup_btn_outbox"):
+                st.session_state.pop("send_confirmation_popup", None)
+                st.session_state["active_screen"] = "outbox"
+                st.session_state["main_app_tabs"] = "📥 Outbox"
+                st.rerun()
+        with col_compose:
+            if st.button("✍️ Compose Another", use_container_width=True, key="popup_btn_compose"):
+                st.session_state.pop("send_confirmation_popup", None)
+                st.rerun()
+    else:
+        err_msg = reason or "Unknown dispatch error"
+        st.error(f"### ⚠️ Failed to send — {err_msg}")
+        if recipient:
+            st.markdown(f"**Recipient:** `{html.escape(recipient)}`")
+        if subject:
+            st.markdown(f"**Subject:** *{html.escape(subject)}*")
+        st.markdown(f"**Attempted at:** {timestamp}")
+
+        st.markdown(
+            f"<div style='background:#FEF2F2; border:1px solid #FCA5A5; border-radius:6px; padding:10px 12px; margin-top:8px; font-size:12px; color:#991B1B;'>"
+            f"<b>Failure Reason:</b> {html.escape(err_msg)}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+        col_retry, col_settings = st.columns(2)
+        with col_retry:
+            if st.button("✏️ Edit & Retry", type="primary", use_container_width=True, key="popup_btn_retry"):
+                st.session_state.pop("send_confirmation_popup", None)
+                st.rerun()
+        with col_settings:
+            if st.button("⚙️ Mailbox Settings", use_container_width=True, key="popup_btn_settings"):
+                st.session_state.pop("send_confirmation_popup", None)
+                st.session_state["active_screen"] = "settings"
+                st.session_state["main_app_tabs"] = "⚙️ Settings"
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Dialog: Confirm Outreach & Schedule Sequence (UTC+5)
 # ---------------------------------------------------------------------------
 
@@ -649,11 +722,20 @@ def render_compose_schedule_dialog(
         recip_display_html = f"<b>Recipient:</b> {html.escape(recipient_name)} &lt;{html.escape(recipient_clean)}&gt;"
 
     bcc_badge_html = f"<br><b>BCC:</b> <span style='font-family:monospace; color:#083731;'>{html.escape(bcc_email)}</span>" if bcc_email.strip() else ""
+    mb_email_val = selected_mb.get('email', '') if selected_mb else '<No active mailbox configured>'
+    if not selected_mb:
+        mb_email_html = f"<span style='color:#DC2626; font-weight:600;'>{html.escape(mb_email_val)} (Configure in Settings)</span>"
+    else:
+        mb_email_html = f"<span style='font-family:monospace; color:#083731;'>{html.escape(mb_email_val)}</span>"
+
+    recip_warn_html = "<div style='background:#FEF3C7; border:1px solid #F59E0B; color:#92400E; padding:6px 10px; border-radius:6px; margin-top:6px; font-size:12px;'>⚠️ <b>Recipient address missing:</b> Set a recipient before confirming.</div>" if not recipient_clean else ""
+
     st.markdown(
         f"<div style='background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;'>"
         f"{recip_display_html}<br>"
-        f"<b>Sending Mailbox:</b> {html.escape(selected_mb.get('email', ''))}"
+        f"<b>Sending Mailbox:</b> {mb_email_html}"
         f"{bcc_badge_html}"
+        f"{recip_warn_html}"
         f"</div>",
         unsafe_allow_html=True
     )
@@ -775,17 +857,52 @@ def render_compose_schedule_dialog(
 
     if submit_clicked:
         st.session_state["compose_dialog_open"] = False
+
+        if not recipient_clean:
+            st.session_state["send_confirmation_popup"] = {
+                "status": "failure",
+                "type": "sent" if (mode == "send_now" and init_dt is None) else "scheduled",
+                "recipient": "",
+                "time": get_engine_now_str(),
+                "subject": final_subj,
+                "reason": "Recipient email address is missing or empty."
+            }
+            st.rerun()
+            return
+
+        if not selected_mb:
+            st.session_state["send_confirmation_popup"] = {
+                "status": "failure",
+                "type": "sent" if (mode == "send_now" and init_dt is None) else "scheduled",
+                "recipient": recipient_clean,
+                "time": get_engine_now_str(),
+                "subject": final_subj,
+                "reason": "No active sending mailbox configured in Settings. Please connect an SMTP mailbox."
+            }
+            st.rerun()
+            return
+
         c_status = (current_lead.get("status") or "")
         if not c_status and recipient_clean:
             c_db = get_contact_by_email(recipient_clean)
             if c_db:
                 c_status = c_db.get("status") or ""
         if c_status.lower() in ["do not contact", "unsubscribed"]:
-            st.error("🚫 Legal Compliance Block: This recipient is marked as 'Do Not Contact' (Opt-Out). Cannot dispatch outreach to suppressed contacts.")
+            st.session_state["send_confirmation_popup"] = {
+                "status": "failure",
+                "type": "sent" if (mode == "send_now" and init_dt is None) else "scheduled",
+                "recipient": recipient_clean,
+                "time": get_engine_now_str(),
+                "subject": final_subj,
+                "reason": "Recipient is marked as 'Do Not Contact' / Unsubscribed (Legal Compliance Suppression)."
+            }
+            st.rerun()
             return
 
         with st.spinner("Processing outreach..."):
             # 1. Initial Email
+            send_ok = True
+            err_reason = ""
             if init_dt is None:
                 email_id = create_email(
                     email_html=initial_email_html,
@@ -797,7 +914,7 @@ def render_compose_schedule_dialog(
                     bcc_email=bcc_email
                 )
                 try:
-                    ok = dispatch_email_hostinger({
+                    send_ok, err_reason = dispatch_email_hostinger_detailed({
                         "id": email_id,
                         "recipient": recipient_clean,
                         "subject": final_subj,
@@ -809,7 +926,28 @@ def render_compose_schedule_dialog(
                 except Exception as ex:
                     logger.error(f"Dispatch error in compose dialog: {ex}")
                     mark_email_error(email_id, status="Error", error_message=str(ex))
-                    ok = False
+                    send_ok = False
+                    err_reason = str(ex)
+
+                now_ts = get_engine_now_str()
+                if send_ok:
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "success",
+                        "type": "sent",
+                        "recipient": recipient_clean,
+                        "time": now_ts,
+                        "subject": final_subj,
+                        "followups_count": len(followup_steps)
+                    }
+                else:
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "failure",
+                        "type": "sent",
+                        "recipient": recipient_clean,
+                        "time": now_ts,
+                        "subject": final_subj,
+                        "reason": err_reason or "SMTP dispatch failed. Check mailbox connection in Settings."
+                    }
             else:
                 sched_str = init_dt.strftime("%Y-%m-%d %H:%M:%S")
                 create_email(
@@ -821,82 +959,76 @@ def render_compose_schedule_dialog(
                     target_timezone=lead_tz,
                     bcc_email=bcc_email
                 )
-                ok = True
+                send_ok = True
+                st.session_state["send_confirmation_popup"] = {
+                    "status": "success",
+                    "type": "scheduled",
+                    "recipient": recipient_clean,
+                    "time": sched_str,
+                    "subject": final_subj,
+                    "followups_count": len(followup_steps)
+                }
 
             # 2. Follow-ups with individually customized timing and signature option
-            for idx, fu in enumerate(followup_steps):
-                fu_target_dt = fu_dts[idx]
-                fu_sched_str = fu_target_dt.strftime("%Y-%m-%d %H:%M:%S")
-                fu_subj_res  = inject_variables(parse_spintax(fu["subject"]), current_lead)
-                fu_body_raw  = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
-                fu_body_res  = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
+            if send_ok:
+                for idx, fu in enumerate(followup_steps):
+                    fu_target_dt = fu_dts[idx]
+                    fu_sched_str = fu_target_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    fu_subj_res  = inject_variables(parse_spintax(fu["subject"]), current_lead)
+                    fu_body_raw  = fu["body"].replace("\n\n", "</p><p>").replace("\n", "<br>")
+                    fu_body_res  = resolve_template(f"<p>{fu_body_raw}</p>", current_lead)
 
-                # Attach or strip signature based on user setting for this follow-up step
-                fu_body_res = deduplicate_email_signature(
-                    fu_body_res,
-                    signature_html=sig_html,
-                    include_signature=fu.get("include_signature", False)
-                )
+                    # Attach or strip signature based on user setting for this follow-up step
+                    fu_body_res = deduplicate_email_signature(
+                        fu_body_res,
+                        signature_html=sig_html,
+                        include_signature=fu.get("include_signature", False)
+                    )
 
-                create_email(
-                    email_html=format_email_html(fu_body_res),
-                    subject=fu_subj_res,
-                    recipient=recipient_clean,
-                    status="Approved",
-                    scheduled_time=fu_sched_str,
-                    target_timezone=lead_tz,
-                    bcc_email=bcc_email,
-                    sequence_step=idx + 2,
-                    variation_num=idx + 2
-                )
+                    create_email(
+                        email_html=format_email_html(fu_body_res),
+                        subject=fu_subj_res,
+                        recipient=recipient_clean,
+                        status="Approved",
+                        scheduled_time=fu_sched_str,
+                        target_timezone=lead_tz,
+                        bcc_email=bcc_email,
+                        sequence_step=idx + 2,
+                        variation_num=idx + 2
+                    )
 
-            # Update lead outreach dates in CRM database
-            c_match = get_contact_by_email(recipient_clean)
-            if c_match:
-                c_updates = {}
-                first_date = init_dt.strftime("%Y-%m-%d") if init_dt else get_engine_now().strftime("%Y-%m-%d")
-                if not c_match.get("date_first_emailed"):
-                    c_updates["date_first_emailed"] = first_date
-                if init_dt is None:
-                    c_updates["last_contact_date"] = get_engine_now().strftime("%Y-%m-%d")
-                    c_updates["contacted"] = "Yes"
-                    if (c_match.get("status") or "").lower() not in ["opened", "replied", "bounced", "do not contact"]:
-                        c_updates["status"] = "Emailed"
-                if fu_dts:
-                    c_updates["next_follow_up"] = fu_dts[0].strftime("%Y-%m-%d")
-                if c_updates:
-                    update_contact(c_match["id"], **c_updates)
+                # Update lead outreach dates in CRM database
+                c_match = get_contact_by_email(recipient_clean)
+                if c_match:
+                    c_updates = {}
+                    first_date = init_dt.strftime("%Y-%m-%d") if init_dt else get_engine_now().strftime("%Y-%m-%d")
+                    if not c_match.get("date_first_emailed"):
+                        c_updates["date_first_emailed"] = first_date
+                    if init_dt is None:
+                        c_updates["last_contact_date"] = get_engine_now().strftime("%Y-%m-%d")
+                        c_updates["contacted"] = "Yes"
+                        if (c_match.get("status") or "").lower() not in ["opened", "replied", "bounced", "do not contact"]:
+                            c_updates["status"] = "Emailed"
+                    if fu_dts:
+                        c_updates["next_follow_up"] = fu_dts[0].strftime("%Y-%m-%d")
+                    if c_updates:
+                        update_contact(c_match["id"], **c_updates)
 
-            # Auto-clean Compose fields, recipient, and uploaded media after sending
-            st.session_state["compose_followups"] = []
-            st.session_state["compose_subject"] = ""
-            st.session_state["compose_body_html"] = ""
-            st.session_state["compose_visual_textarea"] = ""
-            st.session_state["compose_last_synced_html"] = ""
-            st.session_state.pop("compose_img_up", None)
-            st.session_state.pop("comp_subj_in", None)
-            st.session_state.pop("compose_custom_email_input", None)
-            st.session_state.pop("compose_selected_lead_id", None)
-            st.session_state.pop("comp_lead_pick", None)
-            st.session_state.pop("comp_custom_email_in", None)
-            st.session_state.pop("comp_recipient_email", None)
-            st.session_state.pop("compose_to_text", None)
+                # Auto-clean Compose fields, recipient, and uploaded media after successful dispatch
+                st.session_state["compose_followups"] = []
+                st.session_state["compose_subject"] = ""
+                st.session_state["compose_body_html"] = ""
+                st.session_state["compose_visual_textarea"] = ""
+                st.session_state["compose_last_synced_html"] = ""
+                st.session_state.pop("compose_img_up", None)
+                st.session_state.pop("comp_subj_in", None)
+                st.session_state.pop("compose_custom_email_input", None)
+                st.session_state.pop("compose_selected_lead_id", None)
+                st.session_state.pop("comp_lead_pick", None)
+                st.session_state.pop("comp_custom_email_in", None)
+                st.session_state.pop("comp_recipient_email", None)
+                st.session_state.pop("compose_to_text", None)
 
-            if init_dt is None:
-                if ok:
-                    msg = f"Sent initial email to {recipient_clean}!"
-                    if followup_steps:
-                        msg += f" Scheduled {len(followup_steps)} follow-up(s) with custom timing."
-                    trigger_toast(msg, icon="🚀")
-                else:
-                    trigger_toast(f"Email #{email_id} queued to Outbox with send error. Check mailbox connection in Settings.", icon="⚠️")
-            else:
-                msg = f"Scheduled initial email for {init_dt.strftime('%b %d at %H:%M')}!"
-                if followup_steps:
-                    msg += f" Along with {len(followup_steps)} follow-up(s)."
-                trigger_toast(msg, icon="🚀")
-            st.session_state["active_screen"] = "outbox"
-            st.session_state["main_app_tabs"] = "📥 Outbox"
             st.rerun()
 
 
@@ -906,6 +1038,10 @@ def render_compose_schedule_dialog(
 
 def render_compose_tab(contacts=None, templates=None):
     """Render the Compose screen matching sellomize_reference.html."""
+    # Render persistent Send/Schedule confirmation popup if triggered
+    if st.session_state.get("send_confirmation_popup"):
+        render_send_confirmation_popup()
+
     if contacts is None:
         contacts = get_contacts()
     if templates is None:
@@ -1427,6 +1563,30 @@ def render_compose_tab(contacts=None, templates=None):
             )
 
         # =====================================================================
+        # SENDER WORKER STATUS & RESILIENCE GUARD
+        # =====================================================================
+        worker_ok, worker_status_text, worker_sub = get_worker_status()
+        if not worker_ok:
+            col_w_msg, col_w_restart = st.columns([3.5, 1.3], vertical_alignment="center")
+            with col_w_msg:
+                st.markdown(
+                    '<div style="background:#FEF2F2; border:1px solid #FCA5A5; color:#991B1B; padding:8px 12px; border-radius:6px; font-size:12px;">'
+                    '⚠️ <b>Sender Worker is Stopped:</b> Background email sending and scheduling are paused. '
+                    'Please restart the worker daemon to send emails.'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+            with col_w_restart:
+                if st.button("🔄 Restart Worker", type="secondary", use_container_width=True, key="comp_restart_worker_cta"):
+                    try:
+                        from app import ensure_background_scheduler
+                        ensure_background_scheduler()
+                    except Exception:
+                        pass
+                    st.session_state["pending_toast"] = {"msg": "Worker daemon restarted!", "icon": "🟢"}
+                    st.rerun()
+
+        # =====================================================================
         # ACTION BUTTONS (Send now, Schedule, Save draft, Save template)
         # =====================================================================
         c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.4, 1.3, 1.1, 1.2, 1.1], vertical_alignment="center")
@@ -1436,9 +1596,64 @@ def render_compose_tab(contacts=None, templates=None):
             if st.session_state["compose_followups"]:
                 send_btn_label += f" (+{len(st.session_state['compose_followups'])} FU)"
 
-            if st.button(send_btn_label, type="primary", use_container_width=True, disabled=not can_send, key="comp_btn_send_now_cta"):
-                if not selected_mb:
-                    st.error("No active mailbox configured to send.")
+            if st.button(
+                send_btn_label,
+                type="primary",
+                use_container_width=True,
+                disabled=not worker_ok,
+                help="Sender worker daemon is stopped. Restart worker above to enable sending." if not worker_ok else None,
+                key="comp_btn_send_now_cta"
+            ):
+                if not recipient_is_specified:
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "failure",
+                        "type": "sent",
+                        "recipient": "",
+                        "time": get_engine_now_str(),
+                        "subject": final_subj,
+                        "reason": "No recipient selected. Please choose a lead from the 'To' selector or enter an email address."
+                    }
+                    st.rerun()
+                elif not selected_mb:
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "failure",
+                        "type": "sent",
+                        "recipient": (current_lead.get("email") or "").strip(),
+                        "time": get_engine_now_str(),
+                        "subject": final_subj,
+                        "reason": "No active sending mailbox configured. Please connect an SMTP mailbox in Settings."
+                    }
+                    st.rerun()
+                elif missing_tokens:
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "failure",
+                        "type": "sent",
+                        "recipient": (current_lead.get("email") or "").strip(),
+                        "time": get_engine_now_str(),
+                        "subject": final_subj,
+                        "reason": f"Unfilled personalization tokens: {', '.join(missing_tokens)}. Please replace or fill them before sending."
+                    }
+                    st.rerun()
+                elif triggers and not is_warn_only:
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "failure",
+                        "type": "sent",
+                        "recipient": (current_lead.get("email") or "").strip(),
+                        "time": get_engine_now_str(),
+                        "subject": final_subj,
+                        "reason": f"Email blocked by spam trigger guard ({len(triggers)} triggers: {trig_names}). Please edit the email copy."
+                    }
+                    st.rerun()
+                elif not final_subj.strip():
+                    st.session_state["send_confirmation_popup"] = {
+                        "status": "failure",
+                        "type": "sent",
+                        "recipient": (current_lead.get("email") or "").strip(),
+                        "time": get_engine_now_str(),
+                        "subject": "",
+                        "reason": "Email subject cannot be empty."
+                    }
+                    st.rerun()
                 else:
                     st.session_state["compose_dialog_open"] = True
                     st.session_state["compose_dialog_mode"] = "send_now"
@@ -1449,13 +1664,16 @@ def render_compose_tab(contacts=None, templates=None):
             if st.session_state["compose_followups"]:
                 sched_label += f" (+{len(st.session_state['compose_followups'])} FU)"
 
-            if st.button(sched_label, use_container_width=True, disabled=not can_send, key="comp_btn_sched_cta"):
-                if not selected_mb:
-                    st.error("No active mailbox configured.")
-                else:
-                    st.session_state["compose_dialog_open"] = True
-                    st.session_state["compose_dialog_mode"] = "schedule"
-                    st.rerun()
+            if st.button(
+                sched_label,
+                use_container_width=True,
+                disabled=not worker_ok,
+                help="Sender worker daemon is stopped. Restart worker above to enable scheduling." if not worker_ok else None,
+                key="comp_btn_sched_cta"
+            ):
+                st.session_state["compose_dialog_open"] = True
+                st.session_state["compose_dialog_mode"] = "schedule"
+                st.rerun()
 
         with c_act3:
             if st.button("💾 Save draft", use_container_width=True, key="comp_btn_save_draft_cta"):
@@ -1576,17 +1794,13 @@ def render_compose_tab(contacts=None, templates=None):
     # PERSISTENT MODAL DIALOG INVOCATION
     # =========================================================================
     if st.session_state.get("compose_dialog_open"):
-        if selected_mb and can_send:
-            render_compose_schedule_dialog(
-                mode=st.session_state.get("compose_dialog_mode", "schedule"),
-                current_lead=current_lead,
-                selected_mb=selected_mb,
-                final_subj=final_subj,
-                final_body=final_body,
-                followup_steps=st.session_state.get("compose_followups", []),
-                bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
-                include_signature=st.session_state.get("compose_include_sig", True)
-            )
-        else:
-            st.session_state["compose_dialog_open"] = False
-            st.rerun()
+        render_compose_schedule_dialog(
+            mode=st.session_state.get("compose_dialog_mode", "schedule"),
+            current_lead=current_lead,
+            selected_mb=selected_mb,
+            final_subj=final_subj,
+            final_body=final_body,
+            followup_steps=st.session_state.get("compose_followups", []),
+            bcc_email=st.session_state.get("compose_bcc_email", "").strip(),
+            include_signature=st.session_state.get("compose_include_sig", True)
+        )

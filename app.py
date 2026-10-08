@@ -51,10 +51,11 @@ except Exception:
     pass
 
 # Ensure background scheduler thread is running on Streamlit Cloud & local server
-def ensure_background_scheduler():
+# Ensure background scheduler thread is running on Streamlit Cloud & local server
+def ensure_background_scheduler() -> bool:
     for t in threading.enumerate():
         if t.name == "SellomizeSchedulerThread" and t.is_alive():
-            return
+            return True
     try:
         from scheduler import start_scheduler_loop
         t = threading.Thread(
@@ -64,8 +65,10 @@ def ensure_background_scheduler():
             daemon=True
         )
         t.start()
-    except Exception:
-        pass
+        return True
+    except Exception as e:
+        logger.error(f"Failed to auto-restart background scheduler thread: {e}")
+        return False
 
 ensure_background_scheduler()
 
