@@ -916,7 +916,7 @@ def render_settings_tab():
     with st.expander("💾 Data Persistence & CRM Backup / Restore", expanded=True):
         st.markdown("""
         <div style="font-size:13px; color:#475569; margin-bottom:12px;">
-            <b>Permanent Data Protection:</b> All your connected mailboxes, custom signatures, email templates, and CRM contacts are automatically protected with snapshots so cloud container reboots never erase your outreach configuration.
+            <b>Permanent Data Protection:</b> All your <b>scheduled emails</b>, follow-up sequences, connected mailboxes, custom signatures, email templates, and CRM contacts are automatically protected with full backup snapshots so your queued outreach is never lost.
         </div>
         """, unsafe_allow_html=True)
 
@@ -924,16 +924,21 @@ def render_settings_tab():
         mb_cnt = len(backup_dict.get("smtp_accounts", []))
         tpl_cnt = len(backup_dict.get("templates", []))
         c_cnt = len(backup_dict.get("contacts", []))
+        em_list = backup_dict.get("emails", [])
+        em_cnt = len(em_list)
+        sched_cnt = len([e for e in em_list if e.get("status") in ["Approved", "Pending"]])
         has_sig = bool((backup_dict.get("system_config", {}).get("signature_html") or "").strip())
 
-        s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+        s_col1, s_col2, s_col3, s_col4, s_col5 = st.columns(5)
         with s_col1:
-            st.metric("Connected Mailboxes", f"{mb_cnt}")
+            st.metric("Mailboxes", f"{mb_cnt}")
         with s_col2:
-            st.metric("Saved Templates", f"{tpl_cnt}")
+            st.metric("Templates", f"{tpl_cnt}")
         with s_col3:
-            st.metric("CRM Contacts", f"{c_cnt}")
+            st.metric("Contacts", f"{c_cnt}")
         with s_col4:
+            st.metric("Scheduled Emails", f"{sched_cnt}", help=f"Total emails recorded (sent + scheduled): {em_cnt}")
+        with s_col5:
             st.metric("Signature", "✅ Configured" if has_sig else "⚠️ Default")
 
         b_c1, b_c2 = st.columns([1.2, 1.2])

@@ -992,6 +992,19 @@ def import_backup_data(backup_data: Dict[str, Any], db_path: str = DB_FILE) -> T
                         em.get("replied_at", ""), em.get("sequence_step", 1), em.get("in_reply_to", ""),
                         em.get("bcc_email", ""), em.get("target_timezone", "LOCAL")
                     ))
+                else:
+                    cur.execute("""
+                        UPDATE emails SET
+                            subject = ?, recipient = ?, email_html = ?, status = ?,
+                            scheduled_time = ?, target_timezone = ?, sequence_step = ?,
+                            bcc_email = ?
+                        WHERE id = ?
+                    """, (
+                        em.get("subject"), em.get("recipient"), em.get("email_html", ""),
+                        em.get("status", "Pending"), em.get("scheduled_time"),
+                        em.get("target_timezone", "LOCAL"), em.get("sequence_step", 1),
+                        em.get("bcc_email", ""), em_id
+                    ))
 
         conn.commit()
         conn.close()
@@ -2705,6 +2718,7 @@ def create_email(
     email_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    auto_save_backup(db_path)
     return email_id
 
 def get_emails(status: Optional[str] = None, include_html: bool = True, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
