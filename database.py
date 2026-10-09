@@ -1308,6 +1308,7 @@ def create_contact(
     contact_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return contact_id
 
 def get_leads(status: Optional[str] = None, search: Optional[str] = None, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
@@ -1421,18 +1422,46 @@ def _populate_contact_defaults(d: Dict[str, Any]) -> Dict[str, Any]:
     d["reply_subject"] = d.get("reply_subject") or ""
     return d
 
+_CONTACTS_CACHE: Optional[List[Dict[str, Any]]] = None
+_CONTACTS_CACHE_TIME: float = 0.0
+_CONTACTS_CACHE_LOCK = threading.Lock()
+_CONTACTS_CACHE_TTL: float = 30.0  # 30-second cache to minimize Supabase egress
+
+def invalidate_contacts_cache():
+    """Clear in-memory contacts cache upon write operations."""
+    global _CONTACTS_CACHE, _CONTACTS_CACHE_TIME
+    with _CONTACTS_CACHE_LOCK:
+        _CONTACTS_CACHE = None
+        _CONTACTS_CACHE_TIME = 0.0
+
 def get_contacts(
     tags_filter: Optional[List[str]] = None,
     search_query: Optional[str] = None,
     status_filter: Optional[str] = None,
     db_path: str = DB_FILE
 ) -> List[Dict[str, Any]]:
-    """Retrieve contacts with optional filtering by tags, search query, and status."""
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contacts ORDER BY id DESC")
-    rows = cursor.fetchall()
-    conn.close()
+    """Retrieve contacts with optional filtering by tags, search query, and status (cached to save cloud egress)."""
+    global _CONTACTS_CACHE, _CONTACTS_CACHE_TIME
+    is_default_db = (os.path.abspath(db_path) == os.path.abspath(DB_FILE))
+    now = time.time()
+
+    rows = None
+    if is_default_db:
+        with _CONTACTS_CACHE_LOCK:
+            if _CONTACTS_CACHE is not None and (now - _CONTACTS_CACHE_TIME < _CONTACTS_CACHE_TTL):
+                rows = _CONTACTS_CACHE
+
+    if rows is None:
+        conn = get_connection(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM contacts ORDER BY id DESC")
+        fetched = cursor.fetchall()
+        conn.close()
+        rows = [dict(r) for r in fetched]
+        if is_default_db:
+            with _CONTACTS_CACHE_LOCK:
+                _CONTACTS_CACHE = rows
+                _CONTACTS_CACHE_TIME = now
 
     results = []
     normalized_tags_filter = [t.strip().lower() for t in (tags_filter or []) if t.strip()]
@@ -1576,6 +1605,7 @@ def update_contact(
         conn.commit()
 
     conn.close()
+    invalidate_contacts_cache()
 
 def upsert_contact_by_email(
     name: str,
@@ -1949,6 +1979,7 @@ def delete_contact(contact_id: int, db_path: str = DB_FILE):
     cursor.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
 
 def bulk_delete_contacts(contact_ids: List[int], db_path: str = DB_FILE) -> int:
     """Delete multiple contacts in a single transaction."""
@@ -1961,6 +1992,7 @@ def bulk_delete_contacts(contact_ids: List[int], db_path: str = DB_FILE) -> int:
     deleted_count = cursor.rowcount
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return deleted_count
 
 def bulk_add_tags_to_contacts(contact_ids: List[int], new_tags: List[str], db_path: str = DB_FILE) -> int:
@@ -1986,6 +2018,7 @@ def bulk_add_tags_to_contacts(contact_ids: List[int], new_tags: List[str], db_pa
 
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return len(rows)
 
 def bulk_remove_tags_from_contacts(contact_ids: List[int], tags_to_remove: List[str], db_path: str = DB_FILE) -> int:
@@ -2009,6 +2042,7 @@ def bulk_remove_tags_from_contacts(contact_ids: List[int], tags_to_remove: List[
 
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return len(rows)
 
 def bulk_set_tags_for_contacts(contact_ids: List[int], new_tags: List[str], db_path: str = DB_FILE) -> int:
@@ -2023,6 +2057,7 @@ def bulk_set_tags_for_contacts(contact_ids: List[int], new_tags: List[str], db_p
     updated_count = cursor.rowcount
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return updated_count
 
 def bulk_update_contacts_details(
@@ -2056,6 +2091,7 @@ def bulk_update_contacts_details(
 
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return len(contact_ids)
 
 def bulk_update_contacts(
@@ -2093,6 +2129,7 @@ def bulk_update_contacts(
     affected = cursor.rowcount
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return affected
 
 
@@ -2146,6 +2183,7 @@ def bulk_modify_contact_tags(
 
     conn.commit()
     conn.close()
+    invalidate_contacts_cache()
     return affected
 
 # ------------------------------------------------------------------------------
@@ -2205,16 +2243,25 @@ def create_template(
     return tpl_id
 
 
-def deduplicate_templates(conn=None, db_path: str = DB_FILE) -> int:
+_LAST_DEDUP_TEMPLATES_TIME: float = 0.0
+
+def deduplicate_templates(conn=None, force: bool = False, db_path: str = DB_FILE) -> int:
     """
     Find and remove duplicate templates with identical or normalized names/categories.
     Preserves custom user edits and re-links campaign steps to the retained template ID.
     Returns the number of duplicate template rows removed.
+    Throttled to run at most once per hour unless force=True to minimize database egress.
     """
+    global _LAST_DEDUP_TEMPLATES_TIME
+    now = time.time()
+    if conn is None and not force and (now - _LAST_DEDUP_TEMPLATES_TIME < 3600.0):
+        return 0
+
     should_close = False
     if conn is None:
         conn = get_connection(db_path)
         should_close = True
+        _LAST_DEDUP_TEMPLATES_TIME = now
 
     try:
         cursor = conn.cursor()
@@ -3798,6 +3845,33 @@ def get_bounced_contacts(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     conn.close()
     return [_populate_contact_defaults(dict(r)) for r in rows]
 
+def get_bounced_contacts_count(db_path: str = DB_FILE) -> int:
+    """Get count of bounced contacts without loading full records over network."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM contacts WHERE status = 'Bounced' OR tags LIKE '%Bounced%'")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row["cnt"]) if row and "cnt" in row else 0
+
+def get_replied_contacts_count(db_path: str = DB_FILE) -> int:
+    """Get count of replied contacts without loading full records over network."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM contacts WHERE status = 'Replied' OR tags LIKE '%Replied%'")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row["cnt"]) if row and "cnt" in row else 0
+
+def get_flagged_emails_count(db_path: str = DB_FILE) -> int:
+    """Get count of flagged/errored emails without loading heavy HTML email bodies."""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM emails WHERE status IN ('Flagged', 'Account Mismatch', 'Error')")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row["cnt"]) if row and "cnt" in row else 0
+
 # ------------------------------------------------------------------------------
 # SMTP ACCOUNTS HELPERS (HOSTINGER / MULTI-ACCOUNT ROTATION)
 # ------------------------------------------------------------------------------
@@ -5082,13 +5156,14 @@ def save_lead_image(
     }
 
 
-def get_lead_images(lead_id: str, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
-    """Retrieve all images belonging to a specific lead."""
+def get_lead_images(lead_id: str, include_data_uri: bool = False, db_path: str = DB_FILE) -> List[Dict[str, Any]]:
+    """Retrieve all images belonging to a specific lead. Omits large data_uri column by default to prevent high egress."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
     clean_lid = str(lead_id).strip()
-    cursor.execute("""
-        SELECT * FROM images
+    cols = "*" if include_data_uri else "id, lead_id, storage_key, filename, mime_type, width, height, bytes, annotated_from, created_at, created_by"
+    cursor.execute(f"""
+        SELECT {cols} FROM images
         WHERE lead_id = ?
         ORDER BY created_at DESC
     """, (clean_lid,))

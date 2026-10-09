@@ -519,7 +519,7 @@ def render_rich_editor(
                     st.caption("Select a lead in Compose to view their dedicated image gallery.")
                 else:
                     try:
-                        from database import get_lead_images
+                        from database import get_lead_images, get_image_by_id
                         saved_lead_imgs = get_lead_images(clean_lid)
                     except Exception:
                         saved_lead_imgs = []
@@ -541,7 +541,14 @@ def render_rich_editor(
                                         d_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{b64_p}"
                                     except Exception:
                                         d_uri = ""
-                                elif d_uri and not os.path.exists(full_fpath):
+                                elif not d_uri and not os.path.exists(full_fpath):
+                                    try:
+                                        full_img_rec = get_image_by_id(img_rec.get("id"))
+                                        if full_img_rec:
+                                            d_uri = full_img_rec.get("data_uri") or ""
+                                    except Exception:
+                                        d_uri = ""
+                                if d_uri and not os.path.exists(full_fpath):
                                     try:
                                         os.makedirs(os.path.dirname(full_fpath), exist_ok=True)
                                         if "," in d_uri:

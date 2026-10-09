@@ -1173,12 +1173,11 @@ def render_outbox_tab():
                         st.rerun()
                 with p_c2:
                     if st.button("▶️ Resume All Paused Emails", use_container_width=True, key="bulk_resume_all_btn"):
-                        all_e = get_emails()
+                        paused_emails = get_emails(status="Paused", include_html=False)
                         resume_cnt = 0
-                        for m_em in all_e:
-                            if m_em.get("status") == "Paused":
-                                update_email(m_em["id"], status="Approved")
-                                resume_cnt += 1
+                        for m_em in paused_emails:
+                            update_email(m_em["id"], status="Approved")
+                            resume_cnt += 1
                         trigger_toast(f"Resumed {resume_cnt} paused email(s) back to Scheduled queue.", icon="▶️")
                         st.rerun()
 

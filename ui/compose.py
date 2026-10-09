@@ -38,6 +38,7 @@ from database import (
     update_contact,
     mark_email_error,
     get_lead_images,
+    get_image_by_id,
     delete_lead_image,
     update_image_filename,
     DB_FILE,
@@ -1317,7 +1318,14 @@ def render_compose_tab(contacts=None, templates=None):
                                         d_uri = f"data:{img_rec.get('mime_type','image/jpeg')};base64,{b64_p}"
                                     except Exception:
                                         d_uri = ""
-                                elif d_uri and not os.path.exists(full_fpath):
+                                elif not d_uri and not os.path.exists(full_fpath):
+                                    try:
+                                        full_img_rec = get_image_by_id(img_rec.get("id"))
+                                        if full_img_rec:
+                                            d_uri = full_img_rec.get("data_uri") or ""
+                                    except Exception:
+                                        d_uri = ""
+                                if d_uri and not os.path.exists(full_fpath):
                                     try:
                                         os.makedirs(os.path.dirname(full_fpath), exist_ok=True)
                                         if "," in d_uri:

@@ -11,9 +11,9 @@ from database import (
     get_unread_notifications_count,
     get_notifications,
     mark_all_notifications_as_read,
-    get_bounced_contacts,
-    get_replied_contacts,
-    get_emails
+    get_bounced_contacts_count,
+    get_replied_contacts_count,
+    get_flagged_emails_count
 )
 from template_engine import sanitize_email_html
 from timezone_helper import get_engine_now
@@ -27,21 +27,35 @@ def trigger_toast(msg: str, icon: str = "✅"):
     st.session_state["pending_toast"] = {"msg": msg, "icon": icon}
 
 
+@st.cache_data(ttl=45)
+def _get_cached_notification_summary():
+    """Retrieve counts and recent alerts with a 45s cache to avoid burning Supabase egress."""
+    return {
+        "unread_count": get_unread_notifications_count(),
+        "bounced_count": get_bounced_contacts_count(),
+        "flagged_count": get_flagged_emails_count(),
+        "replied_count": get_replied_contacts_count(),
+        "db_notifs": get_notifications(limit=15)
+    }
+
+
 def render_notification_bell():
     """
     Renders the global notification bell popover in the top right header.
     Icon & Badge: 🔔 Notifications (X) where X is the count of unread alerts.
     Feed: Scrollable list of recent system events with [Clear All] button.
+    Optimized for zero-waste network egress.
     """
-    unread_count = get_unread_notifications_count()
-    bounced_leads = get_bounced_contacts()
-    flagged_emails = [e for e in get_emails() if e.get("status") in ["Flagged", "Account Mismatch", "Error"]]
-    replied_leads = get_replied_contacts()
+    summary = _get_cached_notification_summary()
+    unread_count = summary["unread_count"]
+    bounced_count = summary["bounced_count"]
+    flagged_count = summary["flagged_count"]
+    replied_count = summary["replied_count"]
 
     # Dynamic alert tally
     alert_count = unread_count
     if not st.session_state.get("notifications_cleared"):
-        alert_count += (1 if bounced_leads else 0) + (1 if flagged_emails else 0)
+        alert_count += (1 if bounced_count else 0) + (1 if flagged_count else 0)
 
     bell_label = f"🔔 {alert_count}" if alert_count > 0 else "🔔 Alerts"
 
@@ -52,6 +66,7 @@ def render_notification_bell():
         with c_clear:
             if st.button("Clear All", key="btn_clear_pop_notifs", use_container_width=True):
                 mark_all_notifications_as_read()
+                _get_cached_notification_summary.clear()
                 st.session_state["notifications_cleared"] = True
                 trigger_toast("All notifications cleared.", icon="🧹")
                 st.rerun()
@@ -63,30 +78,30 @@ def render_notification_bell():
 
             # Dynamic system events if not cleared
             if not st.session_state.get("notifications_cleared"):
-                if bounced_leads:
+                if bounced_count > 0:
                     events.append({
                         "icon": "🔴",
-                        "title": f"{len(bounced_leads)} Hard Bounce(s) Detected",
+                        "title": f"{bounced_count} Hard Bounce(s) Detected",
                         "desc": "Quarantined in Deliverability tab to protect sender reputation.",
                         "time": "Active"
                     })
-                if flagged_emails:
+                if flagged_count > 0:
                     events.append({
                         "icon": "⚠️",
-                        "title": f"{len(flagged_emails)} Draft(s) Flagged by Spam Shield",
+                        "title": f"{flagged_count} Draft(s) Flagged by Spam Shield",
                         "desc": "Action required in Review Queue before scheduled dispatch.",
                         "time": "Active"
                     })
-                if replied_leads:
+                if replied_count > 0:
                     events.append({
                         "icon": "💬",
-                        "title": f"{len(replied_leads)} Prospect Reply/Replies Received",
+                        "title": f"{replied_count} Prospect Reply/Replies Received",
                         "desc": "Automated sequence follow-ups safely paused.",
                         "time": "Recent"
                     })
 
             # Database notification feed
-            db_notifs = get_notifications(limit=20)
+            db_notifs = summary.get("db_notifs", [])
             for n in db_notifs:
                 n_type = n.get("type", "system")
                 icon = "💬" if n_type == "reply" else ("✅" if n_type == "campaign" else ("🔴" if n_type == "bounce" else "🔔"))

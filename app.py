@@ -102,12 +102,16 @@ if "pending_toast" in st.session_state and st.session_state["pending_toast"]:
     toast_info = st.session_state.pop("pending_toast")
     st.toast(toast_info["msg"], icon=toast_info.get("icon", "✅"))
 
-# Real-time Reply Notification Toaster
+# Real-time Reply Notification Toaster (Cached to minimize cloud DB egress)
 if "seen_notification_ids" not in st.session_state:
     st.session_state["seen_notification_ids"] = set()
 
+@st.cache_data(ttl=45)
+def get_cached_unread_reply_notifs():
+    return get_notifications(unread_only=True, limit=5)
+
 try:
-    unread_reply_notifs = get_notifications(unread_only=True, limit=5)
+    unread_reply_notifs = get_cached_unread_reply_notifs()
     for n in unread_reply_notifs:
         nid = n["id"]
         if nid not in st.session_state["seen_notification_ids"]:
