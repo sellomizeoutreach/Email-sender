@@ -625,9 +625,13 @@ def render_add_followup_dialog(
 # ---------------------------------------------------------------------------
 
 @st.dialog("📤 Outreach Status", width="medium")
-def render_send_confirmation_popup():
-    """Persistent confirmation popup displayed after every send attempt (Send now or Scheduled)."""
-    info = st.session_state.get("send_confirmation_popup", {})
+def render_send_confirmation_popup(info: Optional[Dict[str, Any]] = None):
+    """One-time confirmation popup displayed after every send attempt (Send now or Scheduled)."""
+    if info is None:
+        info = st.session_state.pop("send_confirmation_popup", {})
+    else:
+        st.session_state.pop("send_confirmation_popup", None)
+
     if not info:
         return
 
@@ -661,6 +665,12 @@ def render_send_confirmation_popup():
         with col_compose:
             if st.button("✍️ Compose Another", use_container_width=True, key="popup_btn_compose"):
                 st.session_state.pop("send_confirmation_popup", None)
+                st.session_state.pop("compose_active_session", None)
+                st.session_state.pop("compose_selected_lead_id", None)
+                st.session_state.pop("comp_lead_pick", None)
+                st.session_state.pop("comp_recipient_email", None)
+                st.session_state.pop("compose_to_text", None)
+                st.session_state.pop("compose_subject", None)
                 st.rerun()
     else:
         err_msg = reason or "Unknown dispatch error"
@@ -1039,9 +1049,10 @@ def render_compose_schedule_dialog(
 
 def render_compose_tab(contacts=None, templates=None):
     """Render the Compose screen matching sellomize_reference.html."""
-    # Render persistent Send/Schedule confirmation popup if triggered
+    # Render Send/Schedule confirmation popup if triggered (consumed immediately so it shows only once)
     if st.session_state.get("send_confirmation_popup"):
-        render_send_confirmation_popup()
+        popup_info = st.session_state.pop("send_confirmation_popup")
+        render_send_confirmation_popup(popup_info)
 
     if contacts is None:
         contacts = get_contacts()

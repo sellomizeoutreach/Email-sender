@@ -133,6 +133,7 @@ def get_cached_templates():
 # ==============================================================================
 if screen_key != "compose":
     st.session_state.pop("compose_active_session", None)
+    st.session_state.pop("send_confirmation_popup", None)
 
 if screen_key == "compose":
     render_compose_tab(get_cached_contacts(), get_cached_templates())
