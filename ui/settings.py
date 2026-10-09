@@ -32,6 +32,7 @@ from database import (
     export_backup_data,
     import_backup_data,
     auto_save_backup,
+    push_backup_to_github,
     WEEKDAY_NAMES,
     DB_FILE,
     get_database_url,
@@ -941,7 +942,7 @@ def render_settings_tab():
         with s_col5:
             st.metric("Signature", "✅ Configured" if has_sig else "⚠️ Default")
 
-        b_c1, b_c2 = st.columns([1.2, 1.2])
+        b_c1, b_c2, b_c3 = st.columns([1.2, 1.1, 1.4])
         with b_c1:
             backup_json_str = json.dumps(backup_dict, indent=2)
             st.download_button(
@@ -953,9 +954,17 @@ def render_settings_tab():
                 help="Download a portable snapshot of all your settings, mailboxes, templates, and leads"
             )
         with b_c2:
-            if st.button("🔄 Sync & Save Auto-Backup Now", key="btn_manual_sync_backup", use_container_width=True):
+            if st.button("🔄 Sync Local Backup", key="btn_manual_sync_backup", use_container_width=True):
                 auto_save_backup()
-                trigger_toast("Auto-backup snapshot saved successfully!", icon="💾")
+                trigger_toast("Local backup snapshot saved successfully!", icon="💾")
+        with b_c3:
+            if st.button("🚀 Push Backup to GitHub", key="btn_push_backup_github", type="primary", use_container_width=True, help="Auto-commit and push the complete database snapshot to GitHub"):
+                with st.spinner("Pushing database backup to GitHub..."):
+                    ok_gh, msg_gh = push_backup_to_github()
+                    if ok_gh:
+                        trigger_toast(msg_gh, icon="🚀")
+                    else:
+                        st.error(msg_gh)
 
         st.markdown("<div style='font-size:12px; font-weight:600; color:#083731; margin-top:14px;'>Upload Backup to Restore:</div>", unsafe_allow_html=True)
         up_backup = st.file_uploader("Restore from JSON backup file", type=["json"], key="up_backup_json", label_visibility="collapsed")

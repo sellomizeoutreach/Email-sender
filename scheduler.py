@@ -920,6 +920,7 @@ def process_due_sequence_rules(db_path: Optional[str] = None) -> int:
     return generated_count
 
 _LAST_HEARTBEAT_WRITE: float = 0.0
+_LAST_GITHUB_BACKUP_TIME: float = 0.0
 
 def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) -> int:
     """
@@ -928,7 +929,7 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
     and validates whether current time falls within allowed business sending days & hours.
     Also processes automated follow-up sequence rules whose send delay has elapsed.
     """
-    global _LAST_HEARTBEAT_WRITE
+    global _LAST_HEARTBEAT_WRITE, _LAST_GITHUB_BACKUP_TIME
     target_db = db_path or DB_FILE
 
     # Record worker heartbeat timestamp in UTC+5 (recorded every 60s so UI never flaps)
@@ -939,6 +940,15 @@ def run_scheduler_cycle(dry_run: bool = False, db_path: Optional[str] = None) ->
             _LAST_HEARTBEAT_WRITE = now_epoch
         except Exception:
             pass
+
+    # Periodically auto-update and push database backup to GitHub (every 60 mins)
+    if now_epoch - _LAST_GITHUB_BACKUP_TIME >= 3600.0:
+        _LAST_GITHUB_BACKUP_TIME = now_epoch
+        try:
+            from database import auto_push_backup_to_github_async
+            auto_push_backup_to_github_async()
+        except Exception as b_err:
+            logger.debug(f"Auto GitHub backup notice: {b_err}")
 
     # 1. Process automated follow-up sequence rules waiting on send delays
     try:

@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Any, Union, Tuple, Set
 import re
 import logging
 import threading
+import subprocess
 
 logger = logging.getLogger("database")
 
@@ -832,7 +833,17 @@ def export_backup_data(db_path: str = DB_FILE) -> Dict[str, Any]:
     cur = conn.cursor()
 
     cur.execute("SELECT key, value FROM system_config")
-    configs = {row["key"]: row["value"] for row in cur.fetchall()}
+    configs = {}
+    for row in cur.fetchall():
+        k = row["key"]
+        v = row["value"]
+        if k == "groq_api_key" and v and not str(v).startswith("gAAAAA"):
+            try:
+                from security import encrypt_smtp_password
+                v = encrypt_smtp_password(v)
+            except Exception:
+                pass
+        configs[k] = v
 
     cur.execute("SELECT * FROM smtp_accounts")
     mailboxes = [dict(row) for row in cur.fetchall()]
@@ -1059,6 +1070,66 @@ def auto_restore_backup_if_needed(db_path: str = DB_FILE):
     except Exception as e:
         logger.warning(f"auto_restore_backup_if_needed failed: {e}")
 
+_GITHUB_BACKUP_LOCK = threading.Lock()
+
+def push_backup_to_github(commit_msg: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Export database snapshot, sync to sellomize_backup.json and local SQLite,
+    and commit/push sellomize_backup.json to GitHub repository.
+    Ensures zero data modifications or deletions are made to database records.
+    """
+    with _GITHUB_BACKUP_LOCK:
+        try:
+            # 1. Export fresh unmodified snapshot from active database
+            data = export_backup_data(DB_FILE)
+            if not data or not (data.get("emails") or data.get("contacts") or data.get("templates")):
+                return False, "No active database data found to backup."
+
+            root_dir = os.path.dirname(os.path.abspath(__file__))
+            backup_path = os.path.join(root_dir, "sellomize_backup.json")
+
+            # 2. Write exact JSON snapshot without any modifications
+            with open(backup_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            # 3. Also sync into local SQLite for offline disaster-recovery safety
+            try:
+                prev_env = os.environ.get("SELLOMIZE_FORCE_SQLITE")
+                os.environ["SELLOMIZE_FORCE_SQLITE"] = "1"
+                import_backup_data(data, db_path=os.path.join(root_dir, "email_system.db"))
+                if prev_env is not None:
+                    os.environ["SELLOMIZE_FORCE_SQLITE"] = prev_env
+                else:
+                    os.environ.pop("SELLOMIZE_FORCE_SQLITE", None)
+            except Exception as e_sql:
+                logger.warning(f"Local SQLite sync note: {e_sql}")
+
+            # 4. Check git status for sellomize_backup.json
+            cmd_diff = ["git", "status", "--porcelain", "sellomize_backup.json"]
+            res_diff = subprocess.run(cmd_diff, cwd=root_dir, capture_output=True, text=True, timeout=15)
+            if not res_diff.stdout.strip():
+                return True, "Backup is already up-to-date with GitHub (no changes detected)."
+
+            # 5. Git add, commit, push
+            ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            msg = commit_msg or f"chore(backup): auto-update database snapshot [{ts}]"
+
+            subprocess.run(["git", "add", "sellomize_backup.json"], cwd=root_dir, check=True, timeout=15)
+            subprocess.run(["git", "commit", "-m", msg], cwd=root_dir, check=True, timeout=20)
+            push_res = subprocess.run(["git", "push", "origin", "main"], cwd=root_dir, capture_output=True, text=True, timeout=30)
+
+            if push_res.returncode == 0:
+                return True, f"Successfully pushed database backup to GitHub ({len(data.get('emails', []))} emails, {len(data.get('contacts', []))} contacts)."
+            else:
+                return False, f"Git push failed: {push_res.stderr or push_res.stdout}"
+        except Exception as ex:
+            logger.error(f"Error in push_backup_to_github: {ex}")
+            return False, str(ex)
+
+def auto_push_backup_to_github_async():
+    """Non-blocking background thread worker to auto-push backup to GitHub."""
+    threading.Thread(target=push_backup_to_github, daemon=True).start()
+
 # ------------------------------------------------------------------------------
 # SYSTEM CONFIGURATION HELPERS (Cached to Minimize Supabase Egress)
 # ------------------------------------------------------------------------------
@@ -1073,6 +1144,17 @@ def invalidate_config_cache():
     with _CONFIG_CACHE_LOCK:
         _CONFIG_CACHE.clear()
         _CONFIG_CACHE_LOADED_AT = 0.0
+
+def _decrypt_config_val_if_needed(val: Optional[str]) -> Optional[str]:
+    if val and str(val).startswith("gAAAAA"):
+        try:
+            from security import decrypt_smtp_password
+            dec, fail = decrypt_smtp_password(str(val))
+            if not fail and dec:
+                return dec
+        except Exception:
+            pass
+    return val
 
 def get_config(key: str, default: Optional[str] = None, db_path: str = DB_FILE) -> Optional[str]:
     global _CONFIG_CACHE, _CONFIG_CACHE_LOADED_AT
@@ -1097,7 +1179,7 @@ def get_config(key: str, default: Optional[str] = None, db_path: str = DB_FILE) 
                 with _CONFIG_CACHE_LOCK:
                     _CONFIG_CACHE_LOADED_AT = now
                     for r in rows:
-                        _CONFIG_CACHE[r["key"]] = (r["value"], now)
+                        _CONFIG_CACHE[r["key"]] = (_decrypt_config_val_if_needed(r["value"]), now)
                     if key in _CONFIG_CACHE:
                         return _CONFIG_CACHE[key][0]
                     else:
@@ -1106,7 +1188,8 @@ def get_config(key: str, default: Optional[str] = None, db_path: str = DB_FILE) 
 
             cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
             row = cursor.fetchone()
-            val = row["value"] if row else default
+            raw_val = row["value"] if row else default
+            val = _decrypt_config_val_if_needed(raw_val)
             if is_default_db:
                 with _CONFIG_CACHE_LOCK:
                     _CONFIG_CACHE[key] = (val, now)

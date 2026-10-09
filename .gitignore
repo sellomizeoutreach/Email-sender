@@ -26,5 +26,4 @@ env/
 .idea/
 Thumbs.db
 *.log
-sellomize_backup.json
 sellomize_db_config.json
